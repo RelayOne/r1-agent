@@ -695,9 +695,7 @@ export type InvokeMethod =
   | "skill_get"
   // Approval queue + scheduler (R1D-10 UI)
   // First-launch onboarding (R1D-11.6)
-  | "onboarding_pick_data_dir"
-  | "onboarding_start_demo"
-  | "onboarding_save_api_key"
+  | "app_open_folder_picker"
   // Daemon liveness probe (R1D settings panel)
   | "daemon_status"
   | "daemon_install_command"

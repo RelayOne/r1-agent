@@ -12,25 +12,20 @@
 // completion it triggers a page reload, which lets `mount()` re-evaluate
 // the `r1.onboarded` flag and proceed to the grid.
 //
-// IPC verbs touched: `onboarding_pick_data_dir`, `onboarding_start_demo`.
-// Both go through the shared `invokeStub` shim under the R1D-11 phase
-// tag — real Tauri dispatch lands in R1D-1.2 / R1D-11.1.
+// Host parity truth:
+//   • data-directory browsing is live via the registered
+//     `app_open_folder_picker` host verb.
+//   • demo session seeding is NOT wired in this desktop build.
+//   • provider keys are stored in the WebView's localStorage fallback;
+//     no host vault onboarding verb is registered yet.
 
 import { invokeStub } from "../ipc-stub";
-import type {
-  OnboardingDataDirResult,
-  OnboardingDemoResult,
-  OnboardingSaveApiKeyResult,
-} from "../types/ipc";
 
-// localStorage fallback key — used only when the Tauri-backed vault
-// verb (`onboarding_save_api_key`) returns the dev-stub default.
-// Spec residual: the Rust-side OS-keyring vault wiring lands in a
-// sister PR (audit/scan-ts-stubs.md item #5). Until then keys live
-// in this prefixed key. NEVER persist the raw key in plaintext on
-// the production Tauri path; the host vault path takes precedence
-// because invokeStub returns the host's response when Tauri is
-// available, falling through to the empty default only in dev/vitest.
+// localStorage fallback key — used by this preview build because the
+// host does not register an onboarding vault-save verb yet. Keys live
+// in this prefixed slot so the dashboard can reuse them after the
+// wizard completes. A host-side OS-keyring path still needs to land
+// separately.
 const LOCAL_API_KEY_PREFIX = "r1.onboarding.api_key.";
 
 const ONBOARDED_KEY = "r1.onboarded";
@@ -68,6 +63,10 @@ interface WizardState {
   demoStatus: "idle" | "starting" | "ok" | "error";
   demoMessage: string;
   pickerBusy: boolean;
+}
+
+interface FolderPickerResult {
+  path?: string | null;
 }
 
 function loadStartingStep(): number {
@@ -239,14 +238,16 @@ export function mountOnboarding(target: HTMLElement): void {
       state.pickerBusy = true;
       render();
       try {
-        const result = await invokeStub<OnboardingDataDirResult>(
-          "onboarding_pick_data_dir",
+        const result = await invokeStub<FolderPickerResult>(
+          "app_open_folder_picker",
           "R1D-11",
-          { path: state.dataDir, valid: true },
-          { current: state.dataDir },
+          { path: state.dataDir },
+          { params: { title: "Choose R1 data directory" } },
         );
-        if (result.path) state.dataDir = result.path;
-        state.dataDirError = result.valid ? "" : result.message ?? "Directory not usable.";
+        if (result.path) {
+          state.dataDir = result.path;
+          state.dataDirError = "";
+        }
       } finally {
         state.pickerBusy = false;
         render();
@@ -332,7 +333,7 @@ export function mountOnboarding(target: HTMLElement): void {
     const keyLabel = document.createElement("label");
     keyLabel.className = "r1-onboarding-key-label";
     keyLabel.htmlFor = "r1-onboarding-apikey";
-    keyLabel.textContent = "API key (stored locally in vault)";
+    keyLabel.textContent = "API key (stored locally in this preview build)";
     keyField.appendChild(keyLabel);
 
     const keyInput = document.createElement("input");
@@ -401,90 +402,20 @@ export function mountOnboarding(target: HTMLElement): void {
     const help = document.createElement("p");
     help.className = "r1-onboarding-help";
     help.textContent =
-      'The "Hello R1" demo walks through a SOW, a verification descent, and a ledger inspection so the panels are populated when you land on the dashboard.';
+      'The "Hello R1" demo is not wired in this desktop build yet. You can start a real session from the dashboard after onboarding.';
     body.appendChild(help);
 
-    const toggleRow = document.createElement("label");
-    toggleRow.className = "r1-onboarding-toggle";
-
-    const toggle = document.createElement("input");
-    toggle.type = "checkbox";
-    toggle.checked = state.demoEnabled;
-    toggle.addEventListener("change", () => {
-      state.demoEnabled = toggle.checked;
-      if (!toggle.checked) {
-        state.demoStatus = "idle";
-        state.demoMessage = "";
-      }
-      render();
-    });
-    toggleRow.appendChild(toggle);
-
-    const toggleLabel = document.createElement("span");
-    toggleLabel.textContent = "Start the Hello R1 demo session";
-    toggleRow.appendChild(toggleLabel);
-
-    body.appendChild(toggleRow);
-
-    if (state.demoStatus === "starting") {
-      const note = document.createElement("p");
-      note.className = "r1-onboarding-help";
-      note.textContent = "Spawning demo session...";
-      body.appendChild(note);
-    } else if (state.demoStatus === "ok") {
-      const note = document.createElement("p");
-      note.className = "r1-onboarding-success";
-      note.textContent = state.demoMessage || "Demo session ready.";
-      body.appendChild(note);
-    } else if (state.demoStatus === "error") {
-      const note = document.createElement("p");
-      note.className = "r1-onboarding-error";
-      note.textContent = state.demoMessage || "Demo could not start.";
-      body.appendChild(note);
-    }
-
-    const advance = async (): Promise<void> => {
-      if (!state.demoEnabled) {
-        setStep(4);
-        return;
-      }
-      state.demoStatus = "starting";
-      state.demoMessage = "";
-      render();
-      try {
-        const result = await invokeStub<OnboardingDemoResult>(
-          "onboarding_start_demo",
-          "R1D-11",
-          { ok: true },
-          { provider: state.providerId, data_dir: state.dataDir },
-        );
-        if (result.ok) {
-          state.demoStatus = "ok";
-          state.demoMessage = result.session_id
-            ? `Demo session ${result.session_id} ready.`
-            : "Demo session ready.";
-          render();
-          setStep(4);
-        } else {
-          state.demoStatus = "error";
-          state.demoMessage = "Demo did not start; you can retry from the dashboard.";
-          render();
-        }
-      } catch {
-        state.demoStatus = "error";
-        state.demoMessage = "Demo did not start; you can retry from the dashboard.";
-        render();
-      }
-    };
+    const note = document.createElement("p");
+    note.className = "r1-onboarding-help";
+    note.textContent =
+      "This step is read-only for now; dashboard session creation is the first truthful path in this build.";
+    body.appendChild(note);
 
     renderFooter({
       showBack: true,
       primary: {
-        label: state.demoEnabled ? "Start demo and continue" : "Skip demo",
-        action: () => {
-          void advance();
-        },
-        disabled: state.demoStatus === "starting",
+        label: "Continue",
+        action: () => setStep(4),
       },
     });
   }
@@ -503,7 +434,7 @@ export function mountOnboarding(target: HTMLElement): void {
     const rows: Array<[string, string]> = [
       ["Data dir", state.dataDir || DEFAULT_DATA_DIR],
       ["Provider", provider?.name ?? state.providerId],
-      ["Demo", state.demoEnabled ? "started" : "skipped"],
+      ["Demo", "unavailable in this build"],
     ];
     rows.forEach(([k, v]) => {
       const dt = document.createElement("dt");
@@ -566,17 +497,11 @@ export function mountOnboarding(target: HTMLElement): void {
  *      situation isn't silent — the input does not get persisted
  *      because keyless providers don't have a vault slot.
  *
- *   2. Tauri runtime present and `onboarding_save_api_key` is wired
- *      on the host: the host writes to its OS-keyring vault and
- *      returns `{ ok: true, vault_id }`. We DO NOT write the raw key
- *      to localStorage in this path — the host owns it.
- *
- *   3. Tauri runtime missing or verb returns the dev-stub default
- *      (`ok: false`): write the raw key to localStorage under the
- *      LOCAL_API_KEY_PREFIX so the WebView can re-read it once the
- *      Settings → Providers panel mounts. Spec residual — the
- *      Rust-side vault wiring lands in a sister PR
- *      (audit/scan-ts-stubs.md item #5).
+ *   2. This desktop build does not register a host onboarding vault
+ *      verb, so required-key providers persist the raw key to
+ *      localStorage under LOCAL_API_KEY_PREFIX. This is explicitly a
+ *      preview-build fallback so the dashboard can reuse the key after
+ *      onboarding; a host vault path still needs to land separately.
  *
  * Empty keys for required-key providers fail with `ok:false` so the
  * caller can surface the message inline. The Next button is also
@@ -601,21 +526,9 @@ export async function persistApiKey(
     return { ok: false, message: "API key is required for this provider." };
   }
 
-  // The dev-stub default flips to ok:false so the localStorage
-  // fallback path runs in non-Tauri environments. Real Tauri runs
-  // return whatever the host says.
-  const result = await invokeStub<OnboardingSaveApiKeyResult>(
-    "onboarding_save_api_key",
-    "R1D-7",
-    { ok: false, message: "vault verb not yet wired" },
-    { provider, key: trimmed },
-  );
-
-  if (result.ok) return result;
-
-  // Dev-stub fallback: persist locally so the next session can
-  // pick up the key. Host-tier vault encryption is the right home
-  // for this; sister PR.
+  // Truthful current behavior: persist locally so the next session can
+  // pick up the key. Host-tier vault encryption is the right home for
+  // this, but the onboarding host verb is not registered in this build.
   try {
     const slot = `${LOCAL_API_KEY_PREFIX}${provider}`;
     window.localStorage.setItem(slot, trimmed);
