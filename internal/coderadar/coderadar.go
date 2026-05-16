@@ -196,7 +196,7 @@ func (c *Client) EmitBatch(ctx context.Context, events []Event) error {
 		return fmt.Errorf("coderadar: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-coderadar-key", c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("User-Agent", "r1-coderadar/1.0")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -245,9 +245,29 @@ func eventToPayload(ev Event, svc, env string) eventPayload {
 		CorrelationID: ev.CorrelationID,
 		TenantID:      ev.TenantID,
 		LatencyMs:     ev.LatencyMs,
-		Tags:          ev.Props,
+		Tags:          stringifyProps(ev.Props),
 		RuntimeCtx: map[string]any{
 			"event_name": ev.Name,
 		},
 	}
+}
+
+func stringifyProps(props map[string]any) map[string]any {
+	if len(props) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(props))
+	for key, value := range props {
+		switch typed := value.(type) {
+		case string:
+			out[key] = typed
+		case fmt.Stringer:
+			out[key] = typed.String()
+		case nil:
+			out[key] = ""
+		default:
+			out[key] = fmt.Sprint(value)
+		}
+	}
+	return out
 }
