@@ -287,7 +287,7 @@ fn build_help_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Submenu<R>> 
 
     // On Linux + Windows, About lives under Help.
     #[cfg(not(target_os = "macos"))]
-    {
+    let builder = {
         let sep = PredefinedMenuItem::separator(app)?;
         let about = PredefinedMenuItem::about(
             app,
@@ -298,8 +298,8 @@ fn build_help_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Submenu<R>> 
                     .build(),
             ),
         )?;
-        builder = builder.item(&sep).item(&about);
-    }
+        builder.item(&sep).item(&about)
+    };
 
     builder.build()
 }
