@@ -555,10 +555,9 @@ export interface ProviderRow {
 }
 
 /**
- * Result of the `provider_test` stub. `ok` is the success flag the UI
- * renders as a pill; `latency_ms` is the round-trip time; `model` is
- * the model the endpoint reports back; `message` carries a one-line
- * diagnostic when the test fails.
+ * Provider connectivity result shape retained for future host wiring.
+ * This branch's desktop host does not currently expose a callable
+ * `provider_test` verb.
  */
 export interface ProviderTestResult {
   ok: boolean;
@@ -703,12 +702,6 @@ export type InvokeMethod =
   | "skill_uninstall"
   | "skill_install_pack"
   | "skill_invoke"
-  // Settings: providers / vault / governance (R1D-7)
-  | "provider_test"
-  | "vault_list"
-  | "vault_set"
-  | "vault_delete"
-  | "gov_set"
   // MCP servers (R1D-8)
   | "mcp_list"
   | "mcp_add"
@@ -727,13 +720,9 @@ export type InvokeMethod =
   | "onboarding_pick_data_dir"
   | "onboarding_start_demo"
   | "onboarding_save_api_key"
-  // Daemon liveness probe + autostart toggles (R1D settings panel)
+  // Daemon liveness probe (R1D settings panel)
   | "daemon_status"
-  | "autostart_is_enabled"
-  | "autostart_enable"
-  | "autostart_disable"
-  // UI preference setters (R1D settings panel)
-  | "prefs_set_lane_density"
+  | "daemon_install_command"
   // WebView convenience (cached in Rust host; not a JSON-RPC verb)
   | "session_list";
 
