@@ -144,6 +144,39 @@ describe("session-view — R1D-2 streaming truthfulness", () => {
 
     cleanup(root);
   });
+
+  it("does not render assistant output in live mode until runtime events arrive", async () => {
+    vi.resetModules();
+    Object.defineProperty(window, "__TAURI__", {
+      value: {},
+      configurable: true,
+    });
+    const { renderPanel: renderStreamingPanel } = await import("./panels/session-view");
+
+    const root = makeRoot();
+    renderStreamingPanel(root);
+    await flushUi();
+
+    click(root.querySelector('[data-role="new-session"]'));
+    await flushUi();
+
+    const input = root.querySelector<HTMLTextAreaElement>('[data-role="composer-input"]');
+    expect(input).not.toBeNull();
+    input!.value = "Describe the lane rail";
+
+    const form = root.querySelector<HTMLFormElement>('[data-role="composer"]');
+    expect(form).not.toBeNull();
+    form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flushUi();
+
+    const transcript = root.querySelector('[data-role="transcript"]');
+    expect(transcript?.textContent).toContain("Describe the lane rail");
+    expect(transcript?.textContent).not.toContain("stub mode does not synthesize assistant output");
+    expect(transcript?.textContent).not.toContain("I received your message.");
+    expect(root.querySelectorAll(".r1-sv-turn-assistant")).toHaveLength(0);
+
+    cleanup(root);
+  });
 });
 
 // -----------------------------------------------------------------------
