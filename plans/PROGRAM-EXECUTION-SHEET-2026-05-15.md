@@ -1,11 +1,13 @@
 # Program Execution Sheet
 
-Use this file as the single source of truth for finishing the remaining cross-repo program.
+**Historical note:** this file was the original bootstrap sheet. The canonical live supervisor file is now [plans/PROGRAM-DAG-2026-05-15.md](/home/eric/repos/r1-agent/plans/PROGRAM-DAG-2026-05-15.md:1), which carries the current branch/live-state truth and the promotion-critical DAG.
+
+Use this file only as historical bootstrap detail when the canonical DAG points back here for older implementation context.
 
 Fresh Codex session instruction:
 
 ```text
-Do this: /home/eric/repos/r1-agent/plans/PROGRAM-EXECUTION-SHEET-2026-05-15.md
+Do this: /home/eric/repos/r1-agent/plans/PROGRAM-DAG-2026-05-15.md
 ```
 
 If the current checkout does not contain this file, use the same path in the clean worktree created from `origin/dev`.

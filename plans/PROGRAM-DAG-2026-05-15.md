@@ -1,36 +1,63 @@
-# PROGRAM DAG — multi-repo, multi-agent execution sheet
+# PROGRAM DAG — canonical multi-agent supervisor sheet
 
-**Last updated:** 2026-05-15
-**Canonical branch baseline:** `origin/dev`
-**Current observed branch tip when this file was written:** `3545054f`
-**Purpose:** give a fresh Codex supervisor a single source of truth for running a large parallel program across `r1-agent`, `coderadar`, and `sites`, with explicit write ownership, hard dependencies, validation gates, and end conditions.
+**Last updated:** 2026-05-19
+**Canonical repo for this file:** `r1-agent`
+**Canonical controller worktree:** `/home/eric/repos/r1-agent-program-sheet`
+**Controller branch:** `codex/program-sheet-2026-05-15`
+**Current controller SHA:** `f13576f7db384444cae8a4522e6087aa07451588`
 
-This file replaces older narrative planning. It is written as a real DAG for many subagents, not as a roadmap memo.
+Fresh Codex session instruction:
 
-## 1. Ground truth snapshot
+```text
+Do this: /home/eric/repos/r1-agent/plans/PROGRAM-DAG-2026-05-15.md
+```
 
-These statements are the baseline assumptions the DAG is built on.
+If the primary checkout does not yet contain the latest copy of this file, use the same path in the clean controller worktree above.
 
-- `r1-agent` is the primary integration repo.
-- `coderadar` is the in-house analytics system of record we are trying to extend far enough to replace third-party GTM/product analytics surfaces.
-- `sites` owns the public marketing/browser-side `r1.run` event surface and deploy pipeline.
-- Public dev rollout may lag `origin/dev` by one revision; deployment confirmation is a separate node from code push.
-- Desktop truth work has already landed substantial **read-only / unavailable-state corrections** for unsupported host surfaces.
-- The desktop host already exposes some real verbs; the UI must only claim those verbs.
-- Cloudflare DNS was previously verified healthy; DNS is not the current critical path.
-- Deploy-path CodeRadar secret fallback was previously verified truthful in source and in live GCP.
+This file is the canonical supervisor DAG. Older execution sheets are historical unless they explicitly point back here.
 
-## 2. Program goal
+## 1. Current truth snapshot
 
-Drive the repos from "partially truthful, partially scaffolded, mixed live/stub state" to:
+These are not guesses. They are the currently confirmed baseline as of 2026-05-19.
 
-1. product analytics and attribution truth across `sites` + `r1-agent`
-2. desktop host/UI parity to the end of the currently planned desktop scope
-3. operator/admin/runtime/deploy truth in docs and code
-4. reproducible dev -> staging -> main promotion gates
-5. explicit handling of operator-gated and curator-gated work that cannot be honestly delegated away
+- `r1-agent origin/dev` and the controller branch are both at `f13576f7db384444cae8a4522e6087aa07451588`.
+- `r1-agent origin/staging` and `origin/main` are both at `c3bfbee2bbab56bc21d4f115a6dc7bcaf1d1116e`.
+- Public `dev` is live and matches `origin/dev`:
+  - `api.dev.r1.run` -> `f13576f`
+  - `admin.dev.r1.run` -> `f13576f`
+  - `platform.dev.r1.run` -> `f13576f`
+  - `downloads.dev.r1.run` -> `f13576f`
+- Public `staging` does **not** match `origin/staging`:
+  - expected `c3bfbee`
+  - actual `api.staging.r1.run` -> `4dcd5ef`
+- Public `prod` does **not** match `origin/main`:
+  - expected `c3bfbee`
+  - actual `api.r1.run` -> `d536eb0`
+- Promotion PR `#310` (`dev -> staging`) is open and blocked:
+  - `mergeStateStatus: BLOCKED`
+  - `reviewDecision: REVIEW_REQUIRED`
+  - head SHA `f13576f7db384444cae8a4522e6087aa07451588`
+- The current PR blockers are concrete:
+  - GitHub Actions `desktop-augmentation` e2e jobs failed on all three OSes
+  - Cloud Build required check `r1-agent-pr (relayone-488319)` failed in the `race` step, after the normal `test` step already passed
+- The `desktop-augmentation` e2e suite currently assumes custom tauri-driver HTTP endpoints from [desktop/tests/e2e/helpers/tauri-driver-session.ts](/home/eric/repos/r1-agent/desktop/tests/e2e/helpers/tauri-driver-session.ts:106), but the corresponding app-side hooks and events are not present in `desktop/src` or `desktop/src-tauri`.
+- Cloudflare DNS is not the current critical path.
 
-## 3. Repo set
+## 2. Program objective
+
+Finish the remaining program with maximum safe parallelism, but do it in the correct order:
+
+1. clear the real promotion blockers
+2. promote `dev -> staging -> main` truthfully
+3. continue the long-tail completion program across `r1-agent`, `coderadar`, and `sites`
+4. keep docs and handoffs trailing live truth, never leading it
+
+This means the DAG has **two layers**:
+
+- **Layer A:** promotion-critical DAG
+- **Layer B:** long-tail completion DAG after promotion is unblocked
+
+## 3. Repo and environment set
 
 Primary write repos:
 
@@ -43,111 +70,226 @@ Read-only reference repos unless a concrete bug proves otherwise:
 - `actium-git`
 - `actium-studio`
 
-Infra surface, not a code repo:
+Infra surfaces:
 
 - GCP project `relayone-488319`
-- Cloudflare `r1.run` zone
+- Cloudflare `r1.run`
+- GitHub repo `RelayOne/r1-agent`
 
-## 4. Supervisor rules
+## 4. Status legend
 
-All agents and worktrees follow these rules.
-
-### 4.1 File ownership
-
-- One lane owns one disjoint write set.
-- No worker reverts or rewrites another worker's changes.
-- If a lane needs another lane's files, it stops and reports a dependency instead of crossing the boundary.
-
-### 4.2 TDD discipline
-
-Every implementation lane follows this order:
-
-1. add or tighten a failing test for the exact gap
-2. implement the smallest real fix
-3. run focused local validation
-4. run one lane-specific smoke or integration check
-5. hand back exact truth now made true
-
-### 4.3 Merge rules
-
-- Workers never merge to `dev`.
-- Workers merge only into the integration branch in their repo.
-- The controller merges one lane at a time after reviewer validation.
-- Public docs merge only after the code they describe is merged or live.
-
-### 4.4 Validation rules
-
-- Any test or lint command that may fail should be run with `|| true` when collecting output.
-- Every lane must finish with `git diff --check`.
-- Any deploy-impacting lane requires a live verification node after merge.
-
-## 5. Branch and worktree conventions
-
-### 5.1 Controller branches
-
-- `r1-agent`: `codex/program-integration-YYYY-MM-DD`
-- `coderadar`: `codex/coderadar-program-integration-YYYY-MM-DD`
-- `sites`: `codex/sites-program-integration-YYYY-MM-DD`
-
-### 5.2 Worker branch naming
-
-Use `codex/<lane-id>-YYYY-MM-DD`.
-
-Examples:
-
-- `codex/r1-desktop-memory-2026-05-15`
-- `codex/cr-lifecycle-2026-05-15`
-- `codex/sites-funnel-stitch-2026-05-15`
-
-### 5.3 Worktree naming
-
-Use `/home/eric/repos/<repo>-<lane-name>`.
-
-Examples:
-
-- `/home/eric/repos/r1-agent-desktop-runtime`
-- `/home/eric/repos/coderadar-lifecycle`
-- `/home/eric/repos/sites-funnels`
-
-## 6. Status legend
-
-- `DONE`: already merged and validated in the program baseline
+- `DONE`: merged and validated in the current baseline
 - `READY`: executable now with no unmet hard dependency
-- `SOFT-BLOCKED`: executable now against a temporary contract, but must rebase before merge
+- `SOFT-BLOCKED`: can start now, but must rebase or wait before merge
 - `BLOCKED`: do not start until dependency lands
-- `OPERATOR`: cannot be honestly completed by coding agents alone
-- `CURATION`: human corpus/content work, not a pure coding lane
+- `OPERATOR`: requires human/operator approval or external action
+- `CURATION`: not a pure coding lane
 
-## 7. Current completed baseline
+## 5. Supervisor rules
 
-These are already complete enough that new agents should treat them as baseline, not rediscover them.
+Every worker and subagent must follow these rules:
 
-### 7.1 `r1-agent` completed truth lanes
+1. Own a disjoint write set.
+2. Start with a failing test or a concrete reproduced runtime gap.
+3. Implement the smallest real fix.
+4. Run focused validation plus one integration or smoke check.
+5. End with `git diff --check`.
+6. Report:
+   - repo
+   - branch
+   - worktree
+   - files changed
+   - tests added
+   - tests run
+   - live checks run
+   - blockers
+   - exact truth now made true
 
-- `R1D-4` current truthful slice: skill catalog is read-only and only claims `skill_list` + `skill_get`
-- `R1D-5` current truthful slice: ledger browser is read-only and only claims `ledger_list_events` + `ledger_get_node`
-- `R1D-6` current truthful slice: memory browser is read-only and only claims `memory_list_scopes` + `memory_query`
-- `R1D-7` current truthful slice: settings only claims daemon host support; other sections are explicit unavailable/read-only
-- `R1D-8` current truthful slice: MCP panel is explicit unavailable
-- `R1D-9` current truthful slice: observability is explicit unavailable
-- `R1D-10` current truthful slice: approval queue and scheduler are explicit unavailable
-- `R1D-11.6` current truthful slice: onboarding uses the real folder picker, demo is unavailable, provider key persistence is local-only in this build
-- `R1D-2` regression coverage now proves live mode does not fabricate assistant output before runtime events
+Controller-only actions:
 
-### 7.2 `coderadar` completed baseline
+- merge worker branches
+- run deploys
+- mutate live GCP state
+- open or merge promotion PRs
+- advance `origin/dev`, `origin/staging`, `origin/main`
+- update final docs and handoffs
 
-- ingest contract work landed earlier
-- person/attribution read-path repair landed earlier
+## 6. Canonical worktrees
 
-### 7.3 `sites` completed baseline
+Use the clean controller worktree for integration:
 
-- browser CodeRadar loader and attribution propagation landed earlier
-- deploy-topology truth was already corrected earlier
+- `/home/eric/repos/r1-agent-program-sheet`
 
-## 8. End-to-end DAG
+Suggested worker worktrees if they are not already present:
+
+`r1-agent`
+
+- `/home/eric/repos/r1-agent-ci-race`
+- `/home/eric/repos/r1-agent-desktop-e2e`
+- `/home/eric/repos/r1-agent-promotion`
+- `/home/eric/repos/r1-agent-docs-truth`
+- `/home/eric/repos/r1-agent-desktop-runtime`
+- `/home/eric/repos/r1-agent-desktop-host`
+
+`coderadar`
+
+- `/home/eric/repos/coderadar-lifecycle-engine`
+- `/home/eric/repos/coderadar-revenue-support`
+- `/home/eric/repos/coderadar-dashboard-stitch`
+
+`sites`
+
+- `/home/eric/repos/sites-funnel-stitch`
+- `/home/eric/repos/sites-deploy-truth`
+
+## 7. Layer A — promotion-critical DAG
+
+This is the real critical path now. Anything else is secondary until these nodes are green.
 
 ```text
-ROOT-0 freeze-truth
+ROOT-0 truth-freeze
+  -> CI-1 race-gate
+  -> CI-2 desktop-e2e-truth
+  -> PROMOTE-1 dev-pr-checks
+
+CI-1 -> REVIEW-1 code-review
+CI-2 -> REVIEW-1 code-review
+PROMOTE-1 -> PROMOTE-2 merge-dev-to-staging
+
+REVIEW-1 -> PROMOTE-1
+PROMOTE-2 -> DEPLOY-1 staging-live-confirm
+DEPLOY-1 -> PROMOTE-3 open-staging-to-main
+PROMOTE-3 -> DEPLOY-2 prod-live-confirm
+DEPLOY-2 -> DOCS-1 truth-sync
+```
+
+### 7.1 Layer A node meanings
+
+#### ROOT-0 — truth-freeze
+
+- Status: `READY`
+- Repo: all
+- Owner: controller
+- Goal:
+  - re-check branch SHAs
+  - re-check live versions
+  - re-check PR `#310` state
+  - re-check Cloud Build failure and GitHub e2e failure truth before changing code
+- Required commands:
+  - `git fetch --all --prune`
+  - `gh pr view 310 --json ...`
+  - `bash scripts/promote-r1.sh confirm-live dev || true`
+  - `bash scripts/promote-r1.sh confirm-live staging || true`
+  - `bash scripts/promote-r1.sh confirm-live prod || true`
+
+#### CI-1 — race-gate
+
+- Status: `READY`
+- Repo: `r1-agent`
+- Suggested branch: `codex/r1-ci-race-2026-05-19`
+- Goal:
+  - identify and fix the exact `go test -race ./...` failure that breaks the required Cloud Build `r1-agent-pr` check
+- Known truth:
+  - Cloud Build `bbb4f91b-1928-4271-a17d-e8f63bf0215c` already passed the normal `test` step
+  - the failure is in step `#7` `race`
+  - the earlier `cmd/r1` runtime-subprocess blocker is already fixed in `f13576f7`
+- Owned paths:
+  - any Go test or Go source paths proven to be responsible for the race failure
+  - likely candidates include `cmd/r1`, `internal/daemon`, `internal/mcp`, or adjacent packages only if reproduced
+- Forbidden paths:
+  - desktop TS/Tauri files
+  - docs except lane-local scratch notes
+- Reproduction commands:
+  - `go test -race ./cmd/r1 -count=1 -timeout=600s -v || true`
+  - `go test -race ./internal/daemon -count=20 -v || true`
+  - if those pass, widen carefully to package groups instead of blindly editing unrelated code
+- Exit condition:
+  - local reproduction shows the failing race is gone
+  - a new PR/check run no longer fails the race step
+
+#### CI-2 — desktop-e2e-truth
+
+- Status: `READY`
+- Repo: `r1-agent`
+- Suggested branch: `codex/r1-desktop-e2e-truth-2026-05-19`
+- Goal:
+  - resolve the desktop e2e gate truthfully
+- Known failure evidence:
+  - Linux/macOS: `fetch failed` / `ECONNREFUSED 127.0.0.1:4444`
+  - Windows: `tauri-driver testState failed: 404`
+  - test helper assumes driver endpoints in [desktop/tests/e2e/helpers/tauri-driver-session.ts](/home/eric/repos/r1-agent/desktop/tests/e2e/helpers/tauri-driver-session.ts:107)
+  - expected events such as `test.windows.list`, `primary-window.closed`, and `test.drive-lanes.completed` appear in e2e tests only, not in app implementation
+- Decision rule:
+  - if the app already has nearly all required hooks, implement the missing hooks
+  - if the hooks are still speculative and the product truth is already “partial desktop”, downgrade the workflow gate so PR merges are not blocked by non-existent app support
+- Owned paths:
+  - [.github/workflows/desktop-augmentation.yml](/home/eric/repos/r1-agent/.github/workflows/desktop-augmentation.yml:1)
+  - [desktop/tests/e2e/helpers/tauri-driver-session.ts](/home/eric/repos/r1-agent/desktop/tests/e2e/helpers/tauri-driver-session.ts:1)
+  - [desktop/tests/e2e/helpers/desktop-fixtures.ts](/home/eric/repos/r1-agent/desktop/tests/e2e/helpers/desktop-fixtures.ts:1)
+  - app-side desktop paths only if implementing the missing hooks for real
+- Forbidden paths:
+  - unrelated backend Go packages
+  - broad docs except lane-local notes
+- Exit condition:
+  - the e2e gate is truthful
+  - either the tests pass because the hooks are real, or the workflow no longer claims/block-merges on a feature surface that is not implemented
+
+#### PROMOTE-1 — dev-pr-checks
+
+- Status: `BLOCKED`
+- Depends on: `CI-1`, `CI-2`, `REVIEW-1`
+- Repo: `r1-agent`
+- Goal:
+  - get PR `#310` to a mergeable state with green required checks
+- Required truth:
+  - do not merge by bypassing the broken checks unless the check definitions themselves were truthfully changed in-code and pushed
+
+#### PROMOTE-2 — merge-dev-to-staging
+
+- Status: `BLOCKED`
+- Depends on: `PROMOTE-1`
+- Goal:
+  - merge PR `#310`
+  - advance `origin/staging`
+
+#### DEPLOY-1 — staging-live-confirm
+
+- Status: `BLOCKED`
+- Depends on: `PROMOTE-2`
+- Goal:
+  - ensure public staging matches `origin/staging`
+- Required checks:
+  - `bash scripts/promote-r1.sh confirm-live staging || true`
+
+#### PROMOTE-3 — open-staging-to-main
+
+- Status: `BLOCKED`
+- Depends on: `DEPLOY-1`
+- Goal:
+  - open or update the `staging -> main` promotion PR only after staging is actually live
+
+#### DEPLOY-2 — prod-live-confirm
+
+- Status: `BLOCKED`
+- Depends on: `PROMOTE-3`
+- Goal:
+  - confirm public prod matches `origin/main`
+- Required checks:
+  - `bash scripts/promote-r1.sh confirm-live prod || true`
+
+#### DOCS-1 — truth-sync
+
+- Status: `BLOCKED`
+- Depends on: `DEPLOY-2`
+- Goal:
+  - update handoff/docs after staging and prod truth is confirmed, not before
+
+## 8. Layer B — long-tail completion DAG
+
+These are still real remaining scopes, but they are not the reason promotion is currently blocked.
+
+```text
+ROOT-0 truth-freeze
   -> CR-1 lifecycle-engine
   -> CR-2 revenue-support
   -> CR-3 dashboard-stitch
@@ -188,491 +330,74 @@ R1-DSK-8 -> R1-DSK-11
 R1-DSK-9 -> R1-DSK-11
 R1-DSK-10 -> R1-DSK-11
 
-all code lanes -> REVIEW-1 code-review
-deploy-impacting lanes -> REVIEW-2 live-smoke
-desktop lanes -> REVIEW-3 desktop-e2e
-
-REVIEW-1 + REVIEW-2 + REVIEW-3 -> DOCS-1 final-truth-sync
-DOCS-1 -> PROMOTE-1 dev-confirm
-PROMOTE-1 -> PROMOTE-2 staging
-PROMOTE-2 -> PROMOTE-3 main
-PROMOTE-3 -> OP-1 release-and-store
-PROMOTE-3 -> CUR-1 benchmark-corpus
+all long-tail code lanes -> REVIEW-2 code-review
+deploy-impacting lanes -> REVIEW-3 live-smoke
+desktop lanes -> REVIEW-4 desktop-validation
+REVIEW-2 + REVIEW-3 + REVIEW-4 -> DOCS-2 long-tail-truth-sync
 ```
 
-## 9. Immediate maximum-parallel frontier
+### 8.1 Long-tail completed baseline
 
-These lanes can all start now without waiting on each other.
+Treat these as already landed baseline, not open work:
 
-### Ready now
+- `R1D-2` session stream regression coverage that prevents fabricated output before real events
+- `R1D-4` skill catalog truthful read-only slice
+- `R1D-5` ledger truthful read-only slice
+- `R1D-6` memory truthful read-only slice
+- `R1D-7` settings truthful daemon-only slice
+- `R1D-8` MCP truthful unavailable slice
+- `R1D-9` observability truthful unavailable slice
+- `R1D-10` approval/scheduler truthful unavailable slice
+- `R1D-11.6` onboarding truthful local-only slice
+- CodeRadar ingest contract and person/attribution baseline
+- `sites` CodeRadar loader and attribution propagation baseline
+
+### 8.2 Long-tail ready frontier
+
+These lanes can still be worked in parallel once controller bandwidth exists:
 
 - `CR-1` CodeRadar lifecycle engine
 - `CR-2` CodeRadar revenue/support
 - `CR-3` CodeRadar dashboard stitch
-- `SITES-1` marketing funnel stitch
-- `SITES-2` sites deploy verification
-- `R1-ADM-1` operator panel hardening
-- `R1-DSK-1` runtime event stream / live session transport
-- `R1-DSK-4` skill mutation host support
-- `R1-DSK-5` ledger write-path support
-- `R1-DSK-6` memory write-path support
-- `R1-DSK-7` provider/vault host support
-- `R1-DSK-8` MCP host support
-- `R1-DSK-9` observability host support
+- `SITES-1` funnel stitch
+- `SITES-2` deploy verification
+- `R1-ADM-1` operator panels
+- `R1-DSK-1` runtime stream
+- `R1-DSK-4` skill mutations
+- `R1-DSK-5` ledger write-paths
+- `R1-DSK-6` memory write-paths
+- `R1-DSK-7` provider/vault host
+- `R1-DSK-8` MCP host
+- `R1-DSK-9` observability host
 - `R1-INF-1` promotion pipeline
 - `R1-BEN-1` benchmark infra
 
-### Soft-blocked but can prototype now
+## 9. Exact supervisor handoff format
 
-- `R1-GTM-1` backend lifecycle cutover against provisional CodeRadar contract
-- `R1-GTM-2` revenue/support cutover against provisional CodeRadar contract
-- `R1-DSK-2` SOW graph completion can start on UI side before full runtime stream lands
-- `R1-DSK-3` failure-classification UI can start on UI side before full runtime stream lands
-- `R1-DSK-10` approval/scheduler host work can start on Tauri registration side before full multi-session runtime work lands
+Every worker should return exactly this:
 
-## 10. Node registry
-
-Each node below is written so a supervisor can hand it to a subagent with minimal extra interpretation.
-
-### ROOT-0 — freeze-truth
-
-- Status: `READY`
-- Repo: all
-- Owner: controller only
-- Goal: record the exact SHAs, live revisions, current deploy versions, and current open-lane state before starting a new wave
-- Outputs:
-  - `r1-agent` branch SHA
-  - `coderadar` branch SHA
-  - `sites` branch SHA
-  - public dev versions for `api`, `admin`, `platform`, `downloads`
-  - current dashboard of completed nodes
-- Tests:
-  - `git rev-parse`
-  - `git ls-remote`
-  - `curl /livez` or `/v1/version`
-
-### CR-1 — CodeRadar lifecycle engine
-
-- Status: `READY`
-- Repo: `coderadar`
-- Own paths:
-  - lifecycle tables
-  - journey/campaign state machine
-  - lifecycle APIs
-  - delivery event models
-- Forbidden paths:
-  - `sites`
-  - `r1-agent`
-- Goal:
-  - make a real minimal lifecycle engine inside CodeRadar so `r1-agent` can stop pretending Customer.io-like flows are already replaced
-- Tests:
-  - trigger -> queued delivery -> sent / failed transition tests
-  - suppression / opt-out tests
-  - query visibility tests
-- Exit:
-  - one real lifecycle journey path exists and is queryable
-
-### CR-2 — CodeRadar revenue/support
-
-- Status: `READY`
-- Repo: `coderadar`
-- Own paths:
-  - revenue/billing aggregation
-  - support/ticket linkage
-  - dashboard query surfaces for business metrics
-- Goal:
-  - provide enough operator-facing revenue/support telemetry for `r1-admin`
-- Tests:
-  - billing aggregation tests
-  - support event linkage tests
-- Exit:
-  - business/operator reporting can be fed from CodeRadar data
-
-### CR-3 — CodeRadar dashboard stitch
-
-- Status: `READY`
-- Repo: `coderadar`
-- Own paths:
-  - dashboard query views
-  - funnel/cohort dashboards
-  - attribution and cross-surface reporting
-- Depends on:
-  - `SITES-1` for funnel events
-- Goal:
-  - make acquisition -> activation -> mission-success views actually explorable
-
-### SITES-1 — marketing funnel stitch
-
-- Status: `READY`
-- Repo: `sites`
-- Own paths:
-  - `sites/r1` browser event capture
-  - attribution propagation
-  - funnel naming alignment with CodeRadar and `r1-agent`
-- Goal:
-  - make browser-side acquisition and CTA events stitch cleanly into product analytics
-- Tests:
-  - site build
-  - event helper checks
-  - attribution propagation checks
-
-### SITES-2 — sites deploy verification
-
-- Status: `READY`
-- Repo: `sites`
-- Own paths:
-  - sites Cloud Build config
-  - rsync deploy scripts
-  - site deploy docs comments only if needed
-- Goal:
-  - keep marketing deploy truth reproducible to the end
-- Exit:
-  - controller can confirm exactly which deploy path is canonical for each public site surface
-
-### R1-GTM-1 — backend lifecycle cutover
-
-- Status: `SOFT-BLOCKED`
-- Repo: `r1-agent`
-- Own paths:
-  - backend lifecycle subscribers
-  - lifecycle transport wiring
-  - service env config
-- Depends on:
-  - `CR-1`
-- Goal:
-  - stop relying on third-party lifecycle assumptions where CodeRadar can now own them
-
-### R1-GTM-2 — revenue/support cutover
-
-- Status: `SOFT-BLOCKED`
-- Repo: `r1-agent`
-- Own paths:
-  - revenue/support reporting integration
-  - operator-facing telemetry use
-- Depends on:
-  - `CR-2`
-  - `SITES-1`
-- Goal:
-  - route operator/business surfaces to the new in-house telemetry backend
-
-### R1-ADM-1 — operator panels
-
-- Status: `READY`
-- Repo: `r1-agent`
-- Own paths:
-  - `services/r1-admin`
-  - admin handlers and templates
-- Depends on:
-  - `CR-3` for full funnel/business depth, but can start earlier for structural hardening
-- Goal:
-  - finish real operator panels and stop leaving obvious placeholders
-- Tests:
-  - focused `go test ./services/r1-admin/...`
-  - authenticated route smoke
-
-### R1-DSK-1 — runtime event stream
-
-- Status: `READY`
-- Repo: `r1-agent`
-- Own paths:
-  - `desktop/src-tauri/src/*` runtime transport
-  - `desktop/src/panels/session-view.ts`
-  - focused `r1d-2` tests if behavior changes
-- Goal:
-  - satisfy the real critical path for desktop: streamed runtime events and end-to-end session truth
-- Blocks:
-  - `R1-DSK-2`
-  - `R1-DSK-3`
-  - `R1-DSK-10`
-
-### R1-DSK-2 — SOW graph completion
-
-- Status: `SOFT-BLOCKED`
-- Repo: `r1-agent`
-- Own paths:
-  - `desktop/src/panels/sow-tree.ts`
-  - graph visualization files
-- Depends on:
-  - `R1-DSK-1` for full live AC
-- Goal:
-  - land `R1D-3.2` dependency graph visualization and complete the SOW surface
-
-### R1-DSK-3 — failure-classification UI
-
-- Status: `SOFT-BLOCKED`
-- Repo: `r1-agent`
-- Own paths:
-  - verification descent and failure UI
-  - associated test files
-- Depends on:
-  - `R1-DSK-1` for full live AC
-- Goal:
-  - finish `R1D-3.5`
-
-### R1-DSK-4 — skill mutation host support
-
-- Status: `READY`
-- Repo: `r1-agent`
-- Own paths:
-  - skill host verbs in `desktop/src-tauri/src/ipc.rs`
-  - `desktop/src/panels/skill-catalog.ts`
-  - `desktop/src/types/ipc.d.ts`
-  - focused `r1d-4` tests
-- Goal:
-  - either implement real skill mutation/test verbs or keep the panel read-only and explicitly mark the unresolved subfeatures
-
-### R1-DSK-5 — ledger write-path support
-
-- Status: `READY`
-- Repo: `r1-agent`
-- Own paths:
-  - ledger mutation verbs
-  - ledger verify/export/shred surfaces
-  - focused `r1d-5` tests
-- Goal:
-  - move `R1D-5` from read-only truthful slice to full planned capability
-
-### R1-DSK-6 — memory write-path support
-
-- Status: `READY`
-- Repo: `r1-agent`
-- Own paths:
-  - memory history/import/delete host verbs
-  - `desktop/src/panels/memory-inspector.ts`
-  - focused `r1d-6` tests
-- Goal:
-  - move `R1D-6` from read-only truthful slice to full planned capability
-
-### R1-DSK-7 — provider/vault host support
-
-- Status: `READY`
-- Repo: `r1-agent`
-- Own paths:
-  - settings provider/vault/governance/autostart handlers in Rust host
-  - `desktop/src/panels/settings.ts`
-  - focused `r1d-7` tests
-- Goal:
-  - make the settings panel actually host-backed rather than permanently downgraded
-
-### R1-DSK-8 — MCP host support
-
-- Status: `READY`
-- Repo: `r1-agent`
-- Own paths:
-  - MCP handler registration
-  - `desktop/src/panels/mcp-servers.ts`
-  - focused `r1d-8` tests
-- Goal:
-  - turn MCP from unavailable to real host-backed functionality
-
-### R1-DSK-9 — observability host support
-
-- Status: `READY`
-- Repo: `r1-agent`
-- Own paths:
-  - observability dashboard host verbs
-  - `desktop/src/panels/observability.ts`
-  - focused `r1d-9` tests
-- Goal:
-  - turn observability from unavailable to real host-backed telemetry views
-
-### R1-DSK-10 — approval/scheduler host support
-
-- Status: `SOFT-BLOCKED`
-- Repo: `r1-agent`
-- Own paths:
-  - approval/scheduler verbs
-  - queue/scheduler panels
-  - focused `r1d-10` tests
-- Depends on:
-  - `R1-DSK-1` for full runtime correctness
-- Goal:
-  - finish `R1D-10` beyond unavailable placeholders
-
-### R1-DSK-11 — packaging/signing/release
-
-- Status: `BLOCKED`
-- Repo: `r1-agent`
-- Own paths:
-  - desktop packaging
-  - signing/notarization/release automation
-  - first-launch polish where needed
-- Depends on:
-  - `R1-DSK-4`
-  - `R1-DSK-5`
-  - `R1-DSK-6`
-  - `R1-DSK-7`
-  - `R1-DSK-8`
-  - `R1-DSK-9`
-  - `R1-DSK-10`
-- Goal:
-  - move from truthful partial desktop to releasable desktop
-
-### R1-INF-1 — promotion pipeline
-
-- Status: `READY`
-- Repo: `r1-agent`
-- Own paths:
-  - deploy scripts
-  - Cloud Build triggers
-  - promotion docs comments only if needed
-- Goal:
-  - make dev -> staging -> main promotion reproducible and test-gated
-- Exit:
-  - controller can promote with a scriptable, validated path
-
-### R1-BEN-1 — benchmark infra
-
-- Status: `READY`
-- Repo: `r1-agent`
-- Own paths:
-  - benchmark trigger scripts
-  - benchmark YAML
-  - corpus tooling only
-- Goal:
-  - get benchmark infra truthful and runnable
-- Note:
-  - corpus authoring itself remains `CURATION`
-
-### REVIEW-1 — code review
-
-- Status: `READY`
-- Owner: reviewer agent
-- Goal:
-  - reject fake capabilities, missing tests, wrong contracts, and docs-over-code
-
-### REVIEW-2 — live smoke
-
-- Status: `READY`
-- Owner: reviewer agent
-- Goal:
-  - confirm deploy-impacting merges actually show up at live endpoints
-
-### REVIEW-3 — desktop end-to-end
-
-- Status: `READY`
-- Owner: reviewer agent
-- Goal:
-  - run aggregated desktop tests and, where possible, manual/runtime smoke for Tauri-backed flows
-
-### DOCS-1 — final truth sync
-
-- Status: `BLOCKED`
-- Repo: `r1-agent`
-- Own paths:
-  - `README.md`
-  - `docs/*`
-  - `plans/HANDOFF.md`
-  - any new truth-state plan files
-- Depends on:
-  - all merged code and live verification nodes
-- Goal:
-  - docs become a trailing truth pass, not speculative project management
-
-### PROMOTE-1 — dev confirm
-
-- Status: `BLOCKED`
-- Owner: controller
-- Goal:
-  - confirm `origin/dev` SHA equals live dev version for touched services
-
-### PROMOTE-2 — staging
-
-- Status: `BLOCKED`
-- Owner: controller + operator
-- Goal:
-  - merge/push staging only after dev-confirm is green and smoke-tested
-
-### PROMOTE-3 — main
-
-- Status: `BLOCKED`
-- Owner: controller + operator
-- Goal:
-  - merge/push main only after staging is green and smoke-tested
-
-### OP-1 — release and store
-
-- Status: `OPERATOR`
-- Goal:
-  - app store submissions, signing keys, notarization approvals, release toggles
-
-### CUR-1 — benchmark corpus
-
-- Status: `CURATION`
-- Goal:
-  - complete the deferred benchmark corpus authoring effort
-
-## 11. Validation matrix
-
-### `r1-agent` desktop lanes
-
-- `cd desktop && npx vitest run <focused-tests> || true`
-- `cd desktop && npm run typecheck || true`
-- `git diff --check`
-
-### `r1-agent` Go/backend lanes
-
-- focused `go test ./path/... -count=1 || true`
-- `go build` for touched entrypoints when relevant
-- live endpoint smoke for deploy-impacting changes
-
-### `coderadar`
-
-- focused ingest/query/unit tests
-- dashboard query smoke
-
-### `sites`
-
-- `npm run build`
-- event helper checks
-- attribution propagation checks
-- edge confirmation when deployed
-
-## 12. Merge order
-
-Recommended merge order for the next major waves:
-
-1. `R1-DSK-1`, `R1-DSK-4`, `R1-DSK-5`, `R1-DSK-6`, `R1-DSK-7`, `R1-DSK-8`, `R1-DSK-9`
-2. `R1-DSK-2`, `R1-DSK-3`, `R1-DSK-10`
-3. `CR-1`, `CR-2`, `CR-3`
-4. `SITES-1`, `SITES-2`
-5. `R1-GTM-1`, `R1-GTM-2`
-6. `R1-ADM-1`
-7. `R1-INF-1`, `R1-BEN-1`
-8. `R1-DSK-11`
-9. `DOCS-1`
-10. `PROMOTE-1`, `PROMOTE-2`, `PROMOTE-3`
-
-## 13. Handoff template for each worker
-
-Every worker must return exactly this shape:
-
-- `lane_id`
+- `lane`
 - `repo`
-- `worktree`
 - `branch`
-- `files_changed`
-- `tests_added`
-- `tests_run`
-- `live_checks_run`
-- `dependencies_hit`
-- `merge_risks`
-- `exact_truth_now_made_true`
+- `worktree`
+- `files changed`
+- `tests added`
+- `tests run`
+- `live checks run`
+- `blockers`
+- `merge risk`
+- `exact truth now made true`
 
-## 14. Fresh-session command
+## 10. Current next actions
 
-For a new Codex session, the supervisor prompt should be:
+If a fresh Codex session starts from this file, it should do these first:
 
-```text
-Do this: /home/eric/repos/r1-agent/plans/PROGRAM-DAG-2026-05-15.md
-```
+1. Re-run `ROOT-0`.
+2. Inspect PR `#310` check state and confirm it is still blocked by `CI-1` and `CI-2`.
+3. Split work immediately into:
+   - one lane for `CI-1 race-gate`
+   - one lane for `CI-2 desktop-e2e-truth`
+4. Do not start staging/main promotion work until those two are green.
+5. Only after `PROMOTE-2` and `DEPLOY-1` succeed should the session spend controller time on long-tail completion lanes.
 
-The supervisor should then:
-
-1. read this file first
-2. freeze current SHAs and live versions
-3. open controller worktrees
-4. spawn the maximum non-overlapping `READY` lanes
-5. keep the critical path moving locally while side lanes run
-6. merge only after review gates pass
-
+That is the correct end-to-end ordering from the current truth state.
