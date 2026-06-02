@@ -53,7 +53,7 @@ build_from_source() {
     git clone --depth 1 "https://github.com/${REPO}.git" "${tmp_dir}/r1"
 
     info "Building..."
-    (cd "${tmp_dir}/r1" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/r1-bin" ./cmd/r1)
+    (cd "${tmp_dir}/r1" && go build -tags sqlite_fts5 -trimpath -ldflags="-s -w" -o "${tmp_dir}/r1-bin" ./cmd/r1)
     (cd "${tmp_dir}/r1" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/r1-acp-bin" ./cmd/r1-acp)
 
     for pair in "${tmp_dir}/r1-bin:${BINARY}" "${tmp_dir}/r1-acp-bin:r1-acp"; do

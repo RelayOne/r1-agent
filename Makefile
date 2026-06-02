@@ -13,7 +13,7 @@ ci: build test vet lint-chdir
 # ./bin/ so build artifacts do not clutter the repo root.
 build:
 	mkdir -p bin
-	go build -o ./bin/r1 ./cmd/r1
+	go build -tags sqlite_fts5 -o ./bin/r1 ./cmd/r1
 	go build -o ./bin/r1-acp ./cmd/r1-acp
 
 # Run all tests

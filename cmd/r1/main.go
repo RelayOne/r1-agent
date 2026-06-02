@@ -51,6 +51,7 @@ import (
 	litellmPkg "github.com/RelayOne/r1/internal/litellm"
 	"github.com/RelayOne/r1/internal/logging"
 	stokeMCP "github.com/RelayOne/r1/internal/mcp"
+	"github.com/RelayOne/r1/internal/memory"
 	"github.com/RelayOne/r1/internal/metrics"
 	"github.com/RelayOne/r1/internal/model"
 	"github.com/RelayOne/r1/internal/modelsource"
@@ -427,6 +428,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			Worktrees:        sharedWorktrees,
 			State:            ts,
 			Wisdom:           wisdomStore,
+			Memory:           openCrossSessionMemory(absRepo),
 			BuildCommand:     cfg.BuildCommand,
 			TestCommand:      cfg.TestCommand,
 			LintCommand:      cfg.LintCommand,
@@ -6545,6 +6547,19 @@ type buildRunConfigOpts struct {
 	EventBus    *hub.Bus
 }
 
+// openCrossSessionMemory loads the same .r1/agent-memory.json file the in-task
+// memory tools write to, so learnings persisted by prior sessions are recalled
+// at task start. app.Orchestrator.Run folds the recalled entries into wisdom,
+// which is injected into the execute prompt. Returns nil on error so a missing
+// or unreadable store simply disables cross-session recall rather than failing.
+func openCrossSessionMemory(absRepo string) *memory.Store {
+	s, err := memory.NewStore(memory.Config{Path: filepath.Join(absRepo, ".r1", "agent-memory.json")})
+	if err != nil {
+		return nil
+	}
+	return s
+}
+
 func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claudeBin, codexBin, claudeConfigDir, codexHome, buildCmd, testCmd, lintCmd string, pools *subscriptions.Manager, worktrees *worktree.Manager, state *taskstate.TaskState, wisdomStore *wisdom.Store, onEvent func(stream.Event), opts *buildRunConfigOpts) app.RunConfig {
 	cfg := app.RunConfig{
 		RepoRoot:         absRepo,
@@ -6564,6 +6579,7 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		Worktrees:        worktrees,
 		State:            state,
 		Wisdom:           wisdomStore,
+		Memory:           openCrossSessionMemory(absRepo),
 		BuildCommand:     buildCmd,
 		TestCommand:      testCmd,
 		LintCommand:      lintCmd,
