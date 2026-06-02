@@ -12,6 +12,7 @@ import (
 	"github.com/RelayOne/r1/internal/convergence"
 	"github.com/RelayOne/r1/internal/config"
 	"github.com/RelayOne/r1/internal/env"
+	"github.com/RelayOne/r1/internal/governance"
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/plugins"
 	"github.com/RelayOne/r1/internal/costtrack"
@@ -112,12 +113,25 @@ type RunConfig struct {
 	// actively hides the worker's writes from the reviewer until the
 	// merge runs — which is AFTER review. See workflow.Engine.InPlace.
 	InPlace bool
+
+	// GovernanceEnabled turns on the V2 governance layer (durable bus +
+	// ledger + deterministic supervisor) for this run. Default OFF. When
+	// either this flag or policy.Governance.Enabled is set AND EventBus is
+	// non-nil, app.New constructs a governance.Governor and registers its
+	// hub subscriber so cost / task events flow into the governance stack.
+	GovernanceEnabled bool
+
+	// GovernanceBudgetUSD is the mission cost budget the governance budget
+	// rule evaluates accumulated spend against. <= 0 disables budget-rule
+	// emission.
+	GovernanceBudgetUSD float64
 }
 
 // Orchestrator coordinates policy loading, engine selection, worktree management, and verification for a task.
 type Orchestrator struct {
-	cfg    RunConfig
-	policy config.Policy
+	cfg      RunConfig
+	policy   config.Policy
+	governor *governance.Governor // V2 governance bridge (nil = disabled)
 }
 
 // New creates an Orchestrator from the given config, loading and validating the policy file.
@@ -195,7 +209,32 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 		}
 	}
 
-	return &Orchestrator{cfg: cfg, policy: policy}, nil
+	orch := &Orchestrator{cfg: cfg, policy: policy}
+
+	// V2 governance layer (default OFF). Construct only when explicitly
+	// enabled (via RunConfig flag or policy) AND a hub event bus exists
+	// to observe. Failure to construct the Governor is non-fatal: the v1
+	// runtime continues unaffected.
+	if cfg.EventBus != nil && (cfg.GovernanceEnabled || policy.Governance.Enabled) {
+		stateDir := r1dir.JoinFor(cfg.RepoRoot)
+		missionID := cfg.WorktreeName
+		if missionID == "" {
+			missionID = cfg.TaskType
+		}
+		if missionID == "" {
+			missionID = "mission"
+		}
+		budget := cfg.GovernanceBudgetUSD
+		g, gerr := governance.New(context.Background(), stateDir, missionID, budget)
+		if gerr != nil {
+			fmt.Fprintf(os.Stderr, "[governance] warning: failed to start governance layer: %v\n", gerr)
+		} else {
+			cfg.EventBus.Register(g.HubSubscriber())
+			orch.governor = g
+		}
+	}
+
+	return orch, nil
 }
 
 // DefaultPolicyYAML returns the default Stoke policy as a YAML string.
@@ -205,6 +244,16 @@ func DefaultPolicyYAML() string {
 
 // Run executes the full workflow: auto-detects build commands, sets up worktrees, and runs plan/execute/verify phases.
 func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
+	// Release the V2 governance layer (supervisor + ledger + bus) when
+	// the run finishes. No-op when governance is disabled (governor nil).
+	if o.governor != nil {
+		defer func() {
+			if err := o.governor.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "[governance] warning: close failed: %v\n", err)
+			}
+		}()
+	}
+
 	// Enforce RBAC: check that the identity has build:execute permission.
 	if o.cfg.RBACPolicy != nil {
 		if err := o.cfg.RBACPolicy.Check(o.cfg.RBACIdentity, rbac.PermBuildExecute); err != nil {

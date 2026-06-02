@@ -223,6 +223,14 @@ type Policy struct {
 	// promptguard.<phase>.action).
 	PromptGuard PromptGuardConfig `json:"promptguard,omitempty" yaml:"promptguard,omitempty"`
 
+	// Governance carries the V2 governance-layer enable switch loaded from
+	// the top-level `governance:` block in r1.policy.yaml. Parsed by the
+	// yaml.v3-backed loader in governance_config.go; the custom line-scanner
+	// in parsePolicyYAML skips the `governance:` section the same way it
+	// skips `mcp_servers:` / `cortex:`. Default OFF — when disabled the
+	// governance Governor is never constructed and has zero runtime impact.
+	Governance GovernanceConfig `json:"governance,omitempty" yaml:"governance,omitempty"`
+
 	// verificationExplicit is true when the YAML/JSON had a verification section.
 	// This distinguishes "all gates intentionally disabled" from "section omitted."
 	verificationExplicit bool
@@ -247,6 +255,19 @@ func DefaultHonestyConfig() HonestyConfig {
 		CheckImports:  true,
 		CoTMonitoring: true,
 	}
+}
+
+// GovernanceConfig controls the V2 governance layer (bus + ledger +
+// supervisor). Default OFF: when Enabled is false the runtime constructs
+// no Governor and the change is zero-impact.
+type GovernanceConfig struct {
+	Enabled bool `json:"enabled" yaml:"enabled"`
+}
+
+// DefaultGovernanceConfig returns the default governance configuration:
+// disabled. The V2 governance layer must be opted into explicitly.
+func DefaultGovernanceConfig() GovernanceConfig {
+	return GovernanceConfig{Enabled: false}
 }
 
 // SkillsConfig controls skill injection behavior.
@@ -393,7 +414,9 @@ func LoadPolicy(path string) (Policy, error) {
 			return Policy{}, err
 		}
 		// Detect whether the JSON had a verification section.
-		var probe struct{ Verification *json.RawMessage `json:"verification"` }
+		var probe struct {
+			Verification *json.RawMessage `json:"verification"`
+		}
 		json.Unmarshal(raw, &probe)
 		p.verificationExplicit = probe.Verification != nil
 		return normalizePolicy(p), nil
@@ -444,6 +467,14 @@ func LoadPolicy(path string) (Policy, error) {
 		return Policy{}, err
 	}
 	p.PromptGuard.ToolInput = toolInput
+	// Parse the governance top-level block (if any) via yaml.v3; the
+	// custom line-scanner above skips its contents. Absent block yields
+	// the zero GovernanceConfig (Enabled:false) — the safe default.
+	governance, err := parseGovernanceBlock(raw)
+	if err != nil {
+		return Policy{}, err
+	}
+	p.Governance = governance
 	return normalizePolicy(p), nil
 }
 
@@ -556,6 +587,12 @@ func parsePolicyYAML(input string) (Policy, error) {
 			// skips its contents and leaves parsing to
 			// parseThrottlingBlock (yaml.v3). See
 			// specs/per-tool-throttling.md T1.
+			continue
+		case section == "governance":
+			// governance is a small nested-map block (governance.enabled);
+			// the custom scanner skips its contents and leaves parsing to
+			// parseGovernanceBlock (yaml.v3). Mirrors the cortex / throttling
+			// skip pattern above.
 			continue
 		case section == "phases" && indent == 2 && strings.HasSuffix(text, ":"):
 			currentPhase = strings.TrimSuffix(text, ":")
