@@ -13,6 +13,22 @@ faked. Present to user for triage.
 
 ---
 
+## UPDATE — same session (after user triage)
+
+User directed: tackle B1 next; apply doc fixes (B4 relabel + B6 counts); explain B5/B7 before touching. Resulting status:
+
+- F1 FTS5 — FIXED, commit 72053d5f.
+- F2 memory bridge — FIXED, commit 72053d5f.
+- B4 embeddings — FIXED (honest relabel), commit 301068d6. vecindex package doc now states results are lexical bag-of-words, not neural; names the upgrade path.
+- B1 governance — FIRST SLICE DONE + verified, commit c5e5e787. New internal/governance.Governor constructs durable bus + ledger + supervisor (all MissionRules, Start()), plus a hub->bus bridge so cost events fire the budget rule and task events write ledger nodes. Default-OFF via RunConfig.GovernanceEnabled / policy.Governance.Enabled. 4/4 governance tests pass; config + all supervisor packages still green. Remaining B1 (next sessions): more event mappings, ledger/loops transitions, trust/second-opinion rule (needs review nodes), --governance CLI flag, default-on rollout + live-run integration test.
+- B5 CloudSwarm — RESOLVED as intentional (no code change). --output stream-json is an external-orchestrator wire contract: main.go:1731 says it is "Consumed by Multica, OpenACP, and other orchestrators"; internal/skill/compat/cloudswarm.go and provider/correlation_wire.go shape output for CloudSwarm's loader. The local binary is a thin emitter by design; the external fleet dispatches. Audit "SCAFFOLD" label corrected to "intentional thin-client wire format."
+- B7 shell hooks — RESOLVED as operator tooling (no code change). The untracked install-hook-precision-refinements.sh / install-override-protocol.sh are the installers that populate .claude/hooks/ (+ .checksums). The missing hooks are "not installed in this checkout," not bit-rotted product. Fix = run the installers (operator action). Go-level merge gates are intact independent of these.
+- B6 doc counts — BLOCKED at the harness permission layer: CLAUDE.md edits return "directory denied by permission settings", which conversational approval cannot lift. Exact diff handed to user (183 internal / 52 node types / 11 categories / 34 rules / 10 bench).
+- B2 cortex / B3 mapping — still BLOCKED (multi-day); specs above unchanged.
+- I1 test isolation — confirmed live this session: go test ./cmd/r1 leaked ~120 r1.test serve daemons that ran git in the repo root and raced .git/index.lock. Still open.
+
+---
+
 ## STATUS: FIXED (commit: 72053d5f)
 
 ### F1 — FTS5 compiled out of every shipped binary → activated
