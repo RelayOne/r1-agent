@@ -1,7 +1,12 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-06-03 -->
 <!-- CREATED: 2026-06-03 -->
 <!-- DEPENDS_ON: cortex-core (done) -->
 <!-- BUILD_ORDER: 3 -->
+<!-- REVIEW: Codex (GPT) cross-model PASS after fix loop (HIGH: Start-error cortex leak, C13). Self-review also caught + fixed a two-workspace bug (lobes wrote to a Workspace MidturnNote never drained) via an additive cortex.Config.Workspace + regression test (C9). Full gate: go build + vet ./... + test ./... all exit 0, cortex default-on. -->
+<!-- ITEM 11 (CLAUDE.md key-design note) — OPERATOR ACTION: CLAUDE.md is harness-permission-blocked to agents; one-line note handed to operator. -->
+<!-- ITEM 7 (per-lobe policy.Cortex gating) — MVP all-4-deterministic-on (spec-sanctioned); full per-lobe gating is additive future work. schema_test default profile preserved. -->
+<!-- HOLISTIC: production-readiness/collision/playwright N/A — internal Go agent-loop wiring. -->
 
 # Cortex Activation — Implementation Spec
 
