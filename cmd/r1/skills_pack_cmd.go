@@ -1415,15 +1415,29 @@ func refreshSkillPackSource(repoRoot, sourcePath string, gitRefresh map[string]s
 	}
 	// If rev-parse --show-toplevel walked UP into an enclosing repo (the pack
 	// dir has no own .git), the resolved gitRoot is a strict ancestor of the
-	// requested sourcePath. Pulling here would target the enclosing repo (e.g.
-	// the operator's real /home/eric/repos/r1-agent), so treat it as no-git and
-	// skip the pull entirely. Use abs+clean paths and the separator-aware
-	// pathWithin boundary check (not a raw strings.HasPrefix). Only pull when
-	// gitRoot IS the pack dir's own repo (gitRoot == sourcePath, or sourcePath
-	// lives inside gitRoot via its own .git — preserved by the paths below).
+	// requested sourcePath. Two distinct shapes share this strict-ancestor
+	// relationship and MUST be told apart:
+	//
+	//   DANGER  — a plain pack dir nested inside an UNRELATED enclosing repo
+	//             (e.g. .r1/skills/packs/foo inside /home/eric/repos/r1-agent).
+	//             gitRoot is the operator's real repo and sits ABOVE the managed
+	//             skills/packs library. Pulling here would operate on a repo the
+	//             pack does not belong to, so skip as SkippedNoGit.
+	//
+	//   LEGIT   — a pack that lives in a SUBDIR of its own dedicated checkout
+	//             (the clone landed inside the managed skills/packs library, and
+	//             the pack is rooted somewhere beneath it). gitRoot is that
+	//             dedicated checkout and sits WITHIN the managed library tree.
+	//             This is the pack's own repo and MUST still be pulled.
+	//
+	// Distinguish the two by the managed-library boundary: skip only when the
+	// strict-ancestor gitRoot escapes OUTSIDE every managed skills/packs base
+	// directory. A gitRoot that resides within a managed base is a dedicated
+	// pack checkout and stays pullable. Use abs+clean paths and the
+	// separator-aware pathWithin boundary check (not a raw strings.HasPrefix).
 	if ancestor, err := gitRootIsAncestorOfPack(gitRoot, sourcePath); err != nil {
 		return skillPackRefreshState{}, err
-	} else if ancestor {
+	} else if ancestor && !gitRootWithinManagedPackLibrary(repoRoot, gitRoot) {
 		return skillPackRefreshState{PullStatus: skillPackPullStatusSkippedNoGit}, nil
 	}
 	if state, ok := gitRefresh[gitRoot]; ok {
@@ -1488,6 +1502,39 @@ func gitRootIsAncestorOfPack(gitRoot, dir string) (bool, error) {
 		return false, nil
 	}
 	return pathWithin(rootAbs, dirAbs), nil
+}
+
+// managedPackLibraryDirs returns the skills/packs library base directories that
+// the resolver treats as managed pack storage: the canonical/legacy libraries
+// under both the repo root and the user's home. These mirror the parents of
+// skillPackCandidates(); a clone that lands inside one of them is a dedicated
+// pack checkout the resolver owns, not an unrelated enclosing repo.
+func managedPackLibraryDirs(repoRoot string) []string {
+	dirs := []string{
+		filepath.Join(repoRoot, r1dir.Canonical, "skills", "packs"),
+		filepath.Join(repoRoot, r1dir.Legacy, "skills", "packs"),
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		dirs = append(dirs,
+			filepath.Join(home, r1dir.Canonical, "skills", "packs"),
+			filepath.Join(home, r1dir.Legacy, "skills", "packs"),
+		)
+	}
+	return dirs
+}
+
+// gitRootWithinManagedPackLibrary reports whether gitRoot resides within (at or
+// below) any managed skills/packs library base. When true, a strict-ancestor
+// gitRoot is a dedicated pack checkout that was cloned into managed storage and
+// should still be pulled; when false, the strict-ancestor gitRoot is an
+// unrelated enclosing repo (e.g. the operator's real repo) that must be skipped.
+func gitRootWithinManagedPackLibrary(repoRoot, gitRoot string) bool {
+	for _, base := range managedPackLibraryDirs(repoRoot) {
+		if pathWithin(base, gitRoot) {
+			return true
+		}
+	}
+	return false
 }
 
 func gitHasUpstream(dir string) (bool, error) {

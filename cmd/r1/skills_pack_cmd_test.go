@@ -968,6 +968,93 @@ func TestUpdateSkillPackPullsExternalGitSourceAndInstallsNewDependency(t *testin
 	}
 }
 
+// TestRefreshSkillPackSourcePullsNestedOwnCheckout proves the regression fix:
+// a pack that lives in a SUBDIR of its OWN dedicated checkout (the clone landed
+// inside the managed skills/packs library, gitRoot is a strict ancestor of the
+// pack dir) STILL pulls and is NOT misclassified as SkippedNoGit.
+func TestRefreshSkillPackSourcePullsNestedOwnCheckout(t *testing.T) {
+	sandboxHome(t)
+	home := os.Getenv("HOME")
+
+	// Bare upstream the dedicated checkout tracks.
+	remote := filepath.Join(t.TempDir(), "nested-pack.git")
+	runGit(t, filepath.Dir(remote), "init", "--bare", remote)
+
+	// Seed the upstream from an author clone.
+	author := filepath.Join(t.TempDir(), "author")
+	runGit(t, filepath.Dir(author), "clone", remote, author)
+	runGit(t, author, "config", "user.name", "Test User")
+	runGit(t, author, "config", "user.email", "test@example.com")
+	writePackFixture(t, filepath.Join(author, "nested", "pack"), "nested-pack", nil)
+	runGit(t, author, "add", ".")
+	runGit(t, author, "commit", "-m", "seed nested pack")
+	runGit(t, author, "push", "-u", "origin", "HEAD")
+
+	// Dedicated checkout cloned INTO the managed home library. The pack itself
+	// is a subdir of the checkout, so gitRoot (the checkout) is a strict
+	// ancestor of sourcePath but lives WITHIN the managed skills/packs base.
+	// git clone configures branch.<name>.remote/merge automatically, so the
+	// checkout already has a tracking upstream (mirrors the external-pull test).
+	checkout := filepath.Join(home, ".r1", "skills", "packs", "nested-pack-checkout")
+	if err := os.MkdirAll(filepath.Dir(checkout), 0o755); err != nil {
+		t.Fatalf("MkdirAll(managed packs base): %v", err)
+	}
+	runGit(t, filepath.Dir(checkout), "clone", remote, checkout)
+	sourcePath := filepath.Join(checkout, "nested", "pack")
+
+	// repoRoot is an unrelated temp dir so the repo-local early guard does not
+	// short-circuit; this drives the gitRoot strict-ancestor branch.
+	repoRoot := t.TempDir()
+	gitRefresh := make(map[string]skillPackRefreshState)
+	state, err := refreshSkillPackSource(repoRoot, sourcePath, gitRefresh)
+	if err != nil {
+		t.Fatalf("refreshSkillPackSource() error = %v", err)
+	}
+	if state.PullStatus == skillPackPullStatusSkippedNoGit {
+		t.Fatalf("nested own-checkout pack wrongly SkippedNoGit (regression): %#v", state)
+	}
+	if state.PullStatus != skillPackPullStatusPulled {
+		t.Fatalf("PullStatus = %q, want %q", state.PullStatus, skillPackPullStatusPulled)
+	}
+	if state.GitRoot != checkout {
+		t.Fatalf("GitRoot = %q, want dedicated checkout %q", state.GitRoot, checkout)
+	}
+}
+
+// TestRefreshSkillPackSourceSkipsUnrelatedEnclosingRepo proves the danger case
+// stays protected: a plain pack dir (no own .git) nested inside an UNRELATED
+// enclosing repo, where gitRoot escapes OUTSIDE every managed skills/packs
+// library, is SkippedNoGit and never targets the enclosing repo.
+func TestRefreshSkillPackSourceSkipsUnrelatedEnclosingRepo(t *testing.T) {
+	sandboxHome(t)
+
+	// Unrelated enclosing repo (stand-in for the operator's real repo). The pack
+	// dir is a plain subdir with no own .git, so rev-parse walks up to here.
+	enclosing, _ := newTempGitRepo(t)
+	sourcePath := filepath.Join(enclosing, "sub", "plain-pack")
+	if err := os.MkdirAll(sourcePath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(pack): %v", err)
+	}
+
+	// repoRoot is a separate temp dir so the repo-local early guard does not
+	// short-circuit; this forces the gitRoot strict-ancestor branch to decide.
+	repoRoot := t.TempDir()
+	gitRefresh := make(map[string]skillPackRefreshState)
+	state, err := refreshSkillPackSource(repoRoot, sourcePath, gitRefresh)
+	if err != nil {
+		t.Fatalf("refreshSkillPackSource() error = %v", err)
+	}
+	if state.PullStatus != skillPackPullStatusSkippedNoGit {
+		t.Fatalf("PullStatus = %q, want %q (unrelated enclosing repo must skip)", state.PullStatus, skillPackPullStatusSkippedNoGit)
+	}
+	if state.GitRoot == enclosing {
+		t.Fatalf("GitRoot leaked unrelated enclosing repo %q", enclosing)
+	}
+	if len(gitRefresh) != 0 {
+		t.Fatalf("gitRefresh recorded the enclosing repo, want empty: %#v", gitRefresh)
+	}
+}
+
 func writePackFixture(t *testing.T, packDir, name string, dependencies []string) {
 	t.Helper()
 
