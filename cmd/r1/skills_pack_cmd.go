@@ -1413,6 +1413,19 @@ func refreshSkillPackSource(repoRoot, sourcePath string, gitRefresh map[string]s
 	if !ok {
 		return skillPackRefreshState{PullStatus: skillPackPullStatusSkippedNoGit}, nil
 	}
+	// If rev-parse --show-toplevel walked UP into an enclosing repo (the pack
+	// dir has no own .git), the resolved gitRoot is a strict ancestor of the
+	// requested sourcePath. Pulling here would target the enclosing repo (e.g.
+	// the operator's real /home/eric/repos/r1-agent), so treat it as no-git and
+	// skip the pull entirely. Use abs+clean paths and the separator-aware
+	// pathWithin boundary check (not a raw strings.HasPrefix). Only pull when
+	// gitRoot IS the pack dir's own repo (gitRoot == sourcePath, or sourcePath
+	// lives inside gitRoot via its own .git — preserved by the paths below).
+	if ancestor, err := gitRootIsAncestorOfPack(gitRoot, sourcePath); err != nil {
+		return skillPackRefreshState{}, err
+	} else if ancestor {
+		return skillPackRefreshState{PullStatus: skillPackPullStatusSkippedNoGit}, nil
+	}
 	if state, ok := gitRefresh[gitRoot]; ok {
 		return state, nil
 	}
@@ -1451,6 +1464,30 @@ func gitTopLevel(dir string) (string, bool, error) {
 		return "", false, fmt.Errorf("git rev-parse --show-toplevel in %q: %w: %s", dir, err, strings.TrimSpace(text))
 	}
 	return strings.TrimSpace(string(out)), true, nil
+}
+
+// gitRootIsAncestorOfPack reports whether gitRoot is a STRICT ancestor of the
+// requested pack dir — i.e. the pack dir has no own .git and rev-parse walked
+// up into an enclosing repo. It cleans+absolutizes both paths and uses the
+// separator-aware pathWithin boundary check (not a raw strings.HasPrefix) so
+// that sibling dirs sharing a path prefix (e.g. ".../packfoo" vs ".../pack")
+// are not falsely classified as ancestors. Equal paths (gitRoot == dir, the
+// pack dir's own repo root) return false so real pulls still happen.
+func gitRootIsAncestorOfPack(gitRoot, dir string) (bool, error) {
+	rootAbs, err := filepath.Abs(gitRoot)
+	if err != nil {
+		return false, fmt.Errorf("resolve git toplevel %q: %w", gitRoot, err)
+	}
+	dirAbs, err := filepath.Abs(dir)
+	if err != nil {
+		return false, fmt.Errorf("resolve pack dir %q: %w", dir, err)
+	}
+	rootAbs = filepath.Clean(rootAbs)
+	dirAbs = filepath.Clean(dirAbs)
+	if rootAbs == dirAbs {
+		return false, nil
+	}
+	return pathWithin(rootAbs, dirAbs), nil
 }
 
 func gitHasUpstream(dir string) (bool, error) {
