@@ -1,7 +1,10 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-06-03 -->
 <!-- CREATED: 2026-06-03 -->
 <!-- DEPENDS_ON: (none) -->
 <!-- BUILD_ORDER: 1 -->
+<!-- REVIEW: Claude self-review (same-family fallback; Codex hung/timed out) verdict=pass critical=0 high=0; direct evidence: go test -race -count=3 ./cmd/r1 green + behavioral hermeticity proof -->
+<!-- HOLISTIC: production-readiness/collision-check/playwright N/A — internal Go test-infrastructure, no UI/marketing/billing/browser surface -->
 
 # cmd/r1 Test Isolation — Implementation Spec
 
