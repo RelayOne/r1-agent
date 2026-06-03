@@ -91,3 +91,31 @@ func newTempGitRepo(t *testing.T) (dir, head string) {
 	head = gitCommitAllAt(t, dir, "initial commit")
 	return dir, head
 }
+
+// sandboxHome isolates HOME (and the env the skill-pack resolver reads) onto
+// fresh temp dirs so skill-pack git ops can't walk into the real repo. It
+// points HOME, R1_HOME, XDG_CONFIG_HOME, and XDG_DATA_HOME at independent
+// t.TempDir() directories for the duration of the test. Mirrors the legal
+// pattern at skills_pack_cmd_test.go:882 t.Setenv("HOME", home).
+func sandboxHome(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("R1_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+}
+
+// shortCtlDir replaces t.TempDir() for ctl socket binding. t.TempDir() bakes
+// the 46-char test name into the path, overflowing the 108-byte sun_path limit
+// (measured 112). A short /tmp/rctlXXXXXXXXX root keeps the total well under
+// 104, guaranteeing len(dir)+len("/stoke-<mode>-<12hex>.sock") < 104. The
+// returned directory is removed at test cleanup.
+func shortCtlDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "rctl")
+	if err != nil {
+		t.Fatalf("shortCtlDir: MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
