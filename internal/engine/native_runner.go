@@ -605,12 +605,12 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 // (PreWarmInterval: time.Hour). Returns nil (logging a warning) on any
 // construction error so the run proceeds without the cortex.
 func buildDeterministicCortex(sessionID string, eventBus *hub.Bus, p provider.Provider, systemPrompt string, toolDefs []provider.ToolDef) *cortex.Cortex {
-	shell, err := cortex.New(cortex.Config{SessionID: sessionID, EventBus: eventBus, Provider: p})
-	if err != nil {
-		slog.Warn("cortex shell construction failed; proceeding without cortex", "err", err)
-		return nil
-	}
-	ws := shell.Workspace()
+	// Create the Workspace FIRST so the Lobes (which capture the pointer at
+	// construction) and the Cortex that drains it via MidturnNote share ONE
+	// Workspace. Passing it through cortex.Config.Workspace is what makes the
+	// agentloop CortexHook see the Lobes' Notes (the MCP backend instead reads
+	// a shell Workspace via wrappedBackend; here the loop reads live.workspace).
+	ws := cortex.NewWorkspace(eventBus, nil)
 
 	memStore, err := memory.NewStore(memory.Config{})
 	if err != nil {
@@ -631,6 +631,7 @@ func buildDeterministicCortex(sessionID string, eventBus *hub.Bus, p provider.Pr
 		EventBus:            eventBus,
 		Provider:            p,
 		Lobes:               lobeList,
+		Workspace:           ws,
 		PreWarmInterval:     time.Hour,
 		PreWarmSystemPrompt: systemPrompt,
 		PreWarmTools:        toolDefs,
