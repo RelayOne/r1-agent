@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,14 +12,21 @@ import (
 	"time"
 
 	"github.com/RelayOne/r1/internal/agentloop"
+	"github.com/RelayOne/r1/internal/cortex"
+	antitrunclobe "github.com/RelayOne/r1/internal/cortex/lobes/antitrunc"
+	"github.com/RelayOne/r1/internal/cortex/lobes/memoryrecall"
+	"github.com/RelayOne/r1/internal/cortex/lobes/rulecheck"
+	"github.com/RelayOne/r1/internal/cortex/lobes/walkeeper"
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/mcp"
+	"github.com/RelayOne/r1/internal/memory"
 	"github.com/RelayOne/r1/internal/plan"
 	"github.com/RelayOne/r1/internal/provider"
 	"github.com/RelayOne/r1/internal/rules"
 	rulesenforcer "github.com/RelayOne/r1/internal/rules/enforcer"
 	"github.com/RelayOne/r1/internal/stream"
 	"github.com/RelayOne/r1/internal/tools"
+	"github.com/RelayOne/r1/internal/wisdom"
 )
 
 // MCPRegistry is the minimal surface the native runner needs from
@@ -472,12 +480,38 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		}
 	}
 
+	// Cortex: wire the 4 deterministic parallel-cognition lobes (memoryrecall,
+	// walkeeper, rulecheck, antitrunc) into the loop via agentloop.Config.Cortex
+	// (default-on via --cortex). SAFETY for default-on: the midturn Round barrier
+	// is bounded by RoundDeadline (default 2s, enforced by round.go's time.After
+	// arm), so an active cortex can never hang the hot loop -- a slow round
+	// degrades to a partial/empty note block; PreEndTurnGate does no waiting. On
+	// any construction or Start error we proceed WITHOUT the cortex (never abort
+	// the run). One event bus is shared between loop and cortex so EventModelPostCall
+	// reaches the cortex BudgetTracker.
+	eventBus := n.EventBus
+	if spec.CortexEnabled {
+		if eventBus == nil {
+			eventBus = hub.New()
+		}
+		if live := buildDeterministicCortex(spec.WorkerLogContext.SessionID, eventBus, p, systemPrompt, toolDefs); live != nil {
+			if err := live.Start(ctx); err != nil {
+				slog.Warn("cortex start failed; proceeding without it", "err", err)
+			} else {
+				cfg.Cortex = live
+				// Fresh ctx so a cancelled run ctx doesn't truncate the bounded
+				// (10s) cortex shutdown.
+				defer live.Stop(context.Background())
+			}
+		}
+	}
+
 	// Create and configure the loop
 	loop := agentloop.New(p, cfg, toolDefs, handler)
 
-	// Wire hub event bus for tool use events
-	if n.EventBus != nil {
-		loop.SetEventBus(n.EventBus)
+	// Wire hub event bus for tool use events (shared with the cortex when active)
+	if eventBus != nil {
+		loop.SetEventBus(eventBus)
 	}
 
 	// Wire streaming events if callback provided
@@ -562,6 +596,52 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 // package and runs `pnpm exec tsc --noEmit` in THAT directory,
 // so per-package tsconfigs are respected in monorepos — a case
 // the old flat-bash build command used to miss.
+// buildDeterministicCortex constructs a *cortex.Cortex holding the 4
+// deterministic lobes (memoryrecall, walkeeper, rulecheck, antitrunc) against a
+// shared shell Workspace, using the REAL provider for the Router (not the inert
+// stub the MCP backend uses). Mirrors the proven construction in
+// cmd/r1/mcp_serve_runtime.go. The durable bus is nil in this MVP (walkeeper /
+// rulecheck degrade to no-ops); the pre-warm pump is suppressed
+// (PreWarmInterval: time.Hour). Returns nil (logging a warning) on any
+// construction error so the run proceeds without the cortex.
+func buildDeterministicCortex(sessionID string, eventBus *hub.Bus, p provider.Provider, systemPrompt string, toolDefs []provider.ToolDef) *cortex.Cortex {
+	shell, err := cortex.New(cortex.Config{SessionID: sessionID, EventBus: eventBus, Provider: p})
+	if err != nil {
+		slog.Warn("cortex shell construction failed; proceeding without cortex", "err", err)
+		return nil
+	}
+	ws := shell.Workspace()
+
+	memStore, err := memory.NewStore(memory.Config{})
+	if err != nil {
+		slog.Warn("cortex memory store failed; proceeding without cortex", "err", err)
+		return nil
+	}
+	wisStore := wisdom.NewStore()
+
+	lobeList := []cortex.Lobe{
+		memoryrecall.NewMemoryRecallLobe(ws, memStore, wisStore, eventBus),
+		walkeeper.NewWALKeeperLobe(eventBus, nil, ws, walkeeper.WALFraming{}),
+		rulecheck.NewRuleCheckLobe(nil, ws),
+		antitrunclobe.NewAntiTruncLobe(ws, "", ""),
+	}
+
+	live, err := cortex.New(cortex.Config{
+		SessionID:           sessionID,
+		EventBus:            eventBus,
+		Provider:            p,
+		Lobes:               lobeList,
+		PreWarmInterval:     time.Hour,
+		PreWarmSystemPrompt: systemPrompt,
+		PreWarmTools:        toolDefs,
+	})
+	if err != nil {
+		slog.Warn("cortex live construction failed; proceeding without cortex", "err", err)
+		return nil
+	}
+	return live
+}
+
 func runEcosystemGate(ctx context.Context, repoDir string) string {
 	// Discover modified files. We prefer `git status --porcelain`
 	// because it includes both staged and unstaged changes as
