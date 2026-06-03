@@ -49,6 +49,11 @@ const (
 // RunConfig holds all parameters needed to execute a single task through the workflow engine.
 type RunConfig struct {
 	RepoRoot         string
+	// CortexEnabled wires the 4 deterministic cortex lobes into the native
+	// loop. Shared junction the CLI (BuildConfig) and chat REPL paths both
+	// feed; propagated to workflow.Engine -> RunSpec. Default-on lives at the
+	// CLI flag (--cortex), not the zero-value.
+	CortexEnabled    bool
 	PolicyPath       string
 	Task             string
 	TaskType         string
@@ -346,6 +351,7 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 
 	wf := workflow.Engine{
 		RepoRoot:         o.cfg.RepoRoot,
+		CortexEnabled:    o.cfg.CortexEnabled,
 		Task:             o.cfg.Task,
 		TaskType:         taskType,
 		TaskVerification: o.cfg.TaskVerification,

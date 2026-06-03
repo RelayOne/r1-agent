@@ -100,6 +100,7 @@ type TaskHook interface {
 // Engine drives the plan/execute/verify workflow loop for a single task, including retries and merge.
 type Engine struct {
 	RepoRoot         string
+	CortexEnabled    bool // wire deterministic cortex lobes into the native loop (threaded to RunSpec)
 	Task             string
 	TaskType         model.TaskType
 	TaskVerification []string // per-task verification checklist from planner
@@ -1672,6 +1673,7 @@ func readFileForReviewPrompt(filePath string, src []byte) string {
 func (e Engine) buildSpec(phase engine.PhaseSpec, handle worktree.Handle) engine.RunSpec {
 	return engine.RunSpec{
 		Prompt:            phase.Prompt,
+		CortexEnabled:     e.CortexEnabled,
 		WorktreeDir:       handle.Path,
 		RuntimeDir:        handle.RuntimeDir,
 		Mode:              e.AuthMode,
