@@ -117,6 +117,7 @@ type BuildConfig struct {
 	Governance       bool    // force-enable the V2 governance layer (default on via policy)
 	NoGovernance     bool    // kill-switch: disable the V2 governance layer for this run
 	GovernanceBudget float64 // governance budget in USD (0 = unset; build flow has no budget)
+	CortexEnabled    bool    // enable the 4 deterministic cortex lobes (default on via --cortex)
 	Timeout          time.Duration
 	EnvBackend       string // execution environment: inproc, docker, fly, ember
 	EnvImage         string // base image for container/VM environments
@@ -443,6 +444,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			GovernanceEnabled:   cfg.Governance,
 			GovernanceDisabled:  cfg.NoGovernance,
 			GovernanceBudgetUSD: cfg.GovernanceBudget,
+			CortexEnabled:       cfg.CortexEnabled,
 			Environ:             buildEnv,
 			EnvHandle:           buildEnvHandle,
 			RunnerMode:          cfg.RunnerMode,
@@ -1191,6 +1193,8 @@ func buildCmd(args []string) {
 	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution (tries multiple strategies per task)")
 	governance := fs.Bool("governance", false, "Force-enable the V2 governance layer (default on via policy)")
 	noGovernance := fs.Bool("no-governance", false, "Kill-switch: disable the V2 governance layer for this run")
+	cortexEnabled := fs.Bool("cortex", true, "Enable parallel-cognition deterministic lobes (default on; --cortex=false or --no-cortex to disable)")
+	noCortex := fs.Bool("no-cortex", false, "Disable the cortex lobes for this run")
 	envBackend := fs.String("env", "", "Execution environment: inproc, docker, fly, ember (default: from config or inproc)")
 	envImage := fs.String("env-image", "", "Base image for container/VM environments")
 	envSize := fs.String("env-size", "", "Machine size for cloud environments (e.g. performance-4x)")
@@ -1396,6 +1400,7 @@ func buildCmd(args []string) {
 				RepoMap:            tuiRepoMap,
 				GovernanceEnabled:  *governance,
 				GovernanceDisabled: *noGovernance,
+				CortexEnabled:      *cortexEnabled && !*noCortex,
 			}
 
 			tuiExecFn := func(ctx context.Context, task plan.Task) scheduler.TaskResult {
@@ -1475,6 +1480,7 @@ func buildCmd(args []string) {
 		SpecExec:        *specExec,
 		Governance:      *governance,
 		NoGovernance:    *noGovernance,
+		CortexEnabled:   *cortexEnabled && !*noCortex,
 		Timeout:         *timeout,
 		EnvBackend:      *envBackend,
 		EnvImage:        *envImage,
@@ -1701,6 +1707,8 @@ func sowCmd(args []string) {
 	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution")
 	governance := fs.Bool("governance", false, "Force-enable the V2 governance layer (default on via policy)")
 	noGovernance := fs.Bool("no-governance", false, "Kill-switch: disable the V2 governance layer for this run")
+	cortexEnabled := fs.Bool("cortex", true, "Enable parallel-cognition deterministic lobes (default on; --cortex=false or --no-cortex to disable)")
+	noCortex := fs.Bool("no-cortex", false, "Disable the cortex lobes for this run")
 	// SOW builds are long-running (hours-to-days for large SOWs). Hard timeout
 	// is disabled by default; supervisor handles liveness. Set --timeout to a
 	// non-zero duration to re-enable a safety ceiling.
@@ -3430,6 +3438,7 @@ func sowCmd(args []string) {
 			Governance:       *governance,
 			NoGovernance:     *noGovernance,
 			GovernanceBudget: *costBudget,
+			CortexEnabled:    *cortexEnabled && !*noCortex,
 			Timeout:          *timeout,
 			RunnerMode:       *runnerMode,
 			NativeAPIKey:     *nativeAPIKey,
@@ -6565,6 +6574,7 @@ type buildRunConfigOpts struct {
 	GovernanceEnabled   bool
 	GovernanceDisabled  bool
 	GovernanceBudgetUSD float64
+	CortexEnabled       bool
 }
 
 // openCrossSessionMemory loads the same .r1/agent-memory.json file the in-task
@@ -6615,6 +6625,7 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		cfg.GovernanceEnabled = opts.GovernanceEnabled
 		cfg.GovernanceDisabled = opts.GovernanceDisabled
 		cfg.GovernanceBudgetUSD = opts.GovernanceBudgetUSD
+		cfg.CortexEnabled = opts.CortexEnabled
 	}
 	return cfg
 }
