@@ -121,6 +121,11 @@ type RunConfig struct {
 	// hub subscriber so cost / task events flow into the governance stack.
 	GovernanceEnabled bool
 
+	// GovernanceDisabled is the kill-switch: when true the Governor is never
+	// constructed even if policy/flag enable it. This lets --no-governance
+	// override a default-on policy.
+	GovernanceDisabled bool
+
 	// GovernanceBudgetUSD is the mission cost budget the governance budget
 	// rule evaluates accumulated spend against. <= 0 disables budget-rule
 	// emission.
@@ -215,7 +220,7 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 	// enabled (via RunConfig flag or policy) AND a hub event bus exists
 	// to observe. Failure to construct the Governor is non-fatal: the v1
 	// runtime continues unaffected.
-	if cfg.EventBus != nil && (cfg.GovernanceEnabled || policy.Governance.Enabled) {
+	if cfg.EventBus != nil && !cfg.GovernanceDisabled && (cfg.GovernanceEnabled || policy.Governance.Enabled) {
 		stateDir := r1dir.JoinFor(cfg.RepoRoot)
 		missionID := cfg.WorktreeName
 		if missionID == "" {
