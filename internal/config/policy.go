@@ -234,6 +234,12 @@ type Policy struct {
 	// verificationExplicit is true when the YAML/JSON had a verification section.
 	// This distinguishes "all gates intentionally disabled" from "section omitted."
 	verificationExplicit bool
+
+	// governanceExplicit is true when the YAML/JSON had a governance section.
+	// Mirrors verificationExplicit: it distinguishes "operator explicitly set
+	// governance.enabled (possibly to false)" from "section omitted." When the
+	// section is omitted, normalizePolicy defaults Governance.Enabled to true.
+	governanceExplicit bool
 }
 
 // HonestyConfig controls the 7-layer Honesty Judge.
@@ -264,8 +270,14 @@ type GovernanceConfig struct {
 	Enabled bool `json:"enabled" yaml:"enabled"`
 }
 
-// DefaultGovernanceConfig returns the default governance configuration:
-// disabled. The V2 governance layer must be opted into explicitly.
+// DefaultGovernanceConfig returns the bare governance configuration value
+// with Enabled:false. NOTE: this is the explicit-off constructor for callers
+// that want the governance layer disabled. It is NOT the parse-path default.
+// When a policy is loaded via LoadPolicy/AutoLoadPolicy and the `governance:`
+// section is omitted, normalizePolicy flips Governance.Enabled to true (the
+// V2 governance layer is default-ON), mirroring the verificationExplicit
+// "absent vs explicit-false" trick. Setting `governance:\n  enabled: false`
+// in the policy honors the off intent (governanceExplicit becomes true).
 func DefaultGovernanceConfig() GovernanceConfig {
 	return GovernanceConfig{Enabled: false}
 }
@@ -413,12 +425,14 @@ func LoadPolicy(path string) (Policy, error) {
 		if err = json.Unmarshal(raw, &p); err != nil {
 			return Policy{}, err
 		}
-		// Detect whether the JSON had a verification section.
+		// Detect whether the JSON had a verification / governance section.
 		var probe struct {
 			Verification *json.RawMessage `json:"verification"`
+			Governance   *json.RawMessage `json:"governance"`
 		}
 		json.Unmarshal(raw, &probe)
 		p.verificationExplicit = probe.Verification != nil
+		p.governanceExplicit = probe.Governance != nil
 		return normalizePolicy(p), nil
 	}
 	p, err := parsePolicyYAML(trimmed)
@@ -470,11 +484,12 @@ func LoadPolicy(path string) (Policy, error) {
 	// Parse the governance top-level block (if any) via yaml.v3; the
 	// custom line-scanner above skips its contents. Absent block yields
 	// the zero GovernanceConfig (Enabled:false) — the safe default.
-	governance, err := parseGovernanceBlock(raw)
+	governance, governancePresent, err := parseGovernanceBlock(raw)
 	if err != nil {
 		return Policy{}, err
 	}
 	p.Governance = governance
+	p.governanceExplicit = governancePresent
 	return normalizePolicy(p), nil
 }
 
@@ -535,6 +550,13 @@ func normalizePolicy(p Policy) Policy {
 	// If a user wrote verification: with all fields false, honor that intent.
 	if !p.verificationExplicit && !p.Verification.Build && !p.Verification.Tests && !p.Verification.Lint && !p.Verification.CrossModelReview && !p.Verification.ScopeCheck {
 		p.Verification = d.Verification
+	}
+	// Governance defaults ON when the section was never explicitly provided.
+	// If a user wrote governance: with enabled: false, honor that intent
+	// (governanceExplicit is true and this branch is skipped). Mirrors the
+	// verificationExplicit "absent vs explicit-false" trick above.
+	if !p.governanceExplicit {
+		p.Governance.Enabled = true
 	}
 	// Apply skill defaults if not explicitly configured
 	if p.Skills.TokenBudget == 0 {
