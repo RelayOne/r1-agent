@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -1015,13 +1014,11 @@ func updatedPackEntry(t *testing.T, result *skillPackUpdateResult, packName stri
 	return skillPackUpdateEntry{}
 }
 
+// runGit shells out to real git for skill-pack tests that drive raw git
+// operations (bare init, clone, push) against multiple directories. It
+// delegates to the shared runGitIn helper so cmd.Dir is set explicitly and a
+// fixed author/committer identity is applied on every invocation.
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s (dir=%q): %v\n%s", strings.Join(args, " "), dir, err, string(out))
-	}
+	runGitIn(t, dir, args...)
 }
