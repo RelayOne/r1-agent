@@ -6,8 +6,21 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 )
+
+// sunPathMax is the longest socket path (excluding the trailing NUL) that
+// net.Listen("unix", ...) can bind on the current platform. The kernel's
+// sockaddr_un.sun_path field is 108 bytes on Linux and 104 bytes on
+// Darwin/BSD; reserving one byte for the NUL terminator yields a usable max
+// of 107 on Linux and 103 on Darwin/BSD.
+func sunPathMax() int {
+	if runtime.GOOS == "darwin" {
+		return 103 // sun_path 104 incl NUL on Darwin/BSD
+	}
+	return 107 // sun_path 108 incl NUL on Linux
+}
 
 // Server listens on a Unix socket (and optionally HTTP -- deferred) and
 // dispatches Requests to the per-verb Handlers in Opts.
@@ -30,12 +43,13 @@ func StartServer(opts Opts) (*Server, error) {
 		return nil, errors.New("sessionctl: SessionID required")
 	}
 	path := socketPath(opts.SocketDir, opts.SessionID)
-	// Fail fast on over-long socket paths: the kernel's sockaddr_un.sun_path
-	// field is bounded (Linux 108, Darwin/BSD 104 bytes), and net.Listen would
-	// otherwise surface only an opaque "bind: invalid argument". Use the
-	// smaller cross-platform limit (104) so the error is named explicitly.
-	if len(path) >= 104 {
-		return nil, fmt.Errorf("sessionctl: socket path %d bytes exceeds 104-byte sun_path limit: %s", len(path), path)
+	// Fail fast on genuinely-unbindable socket paths: the kernel's
+	// sockaddr_un.sun_path field is bounded (Linux 108, Darwin/BSD 104 bytes),
+	// and net.Listen would otherwise surface only an opaque "bind: invalid
+	// argument". The limit is platform-aware so we reject only paths that the
+	// current OS could not bind -- on Linux paths up to 107 bytes bind fine.
+	if max := sunPathMax(); len(path) > max {
+		return nil, fmt.Errorf("sessionctl: socket path %d bytes exceeds %d-byte sun_path limit: %s", len(path), max, path)
 	}
 	// Prune stale socket -- a leftover file from a crashed server would
 	// otherwise make net.Listen fail with "address already in use".
