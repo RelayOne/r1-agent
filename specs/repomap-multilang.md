@@ -1,7 +1,10 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-06-03 -->
 <!-- CREATED: 2026-06-03 -->
 <!-- DEPENDS_ON: (none) -->
 <!-- BUILD_ORDER: 4 -->
+<!-- REVIEW: Codex (GPT) cross-model PASS first-pass, 0 findings. Full gate: go build + vet + go test ./... all exit 0. Go path byte-identical (7 existing tests pass); Python + TS fixtures prove non-empty ranked maps. Single commit R1 (cb21d792). -->
+<!-- HOLISTIC: production-readiness/collision/playwright N/A — internal Go library. -->
 
 # Language-Agnostic Repo Map (audit B3) — Implementation Spec
 
