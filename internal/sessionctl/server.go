@@ -2,6 +2,7 @@ package sessionctl
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -29,6 +30,13 @@ func StartServer(opts Opts) (*Server, error) {
 		return nil, errors.New("sessionctl: SessionID required")
 	}
 	path := socketPath(opts.SocketDir, opts.SessionID)
+	// Fail fast on over-long socket paths: the kernel's sockaddr_un.sun_path
+	// field is bounded (Linux 108, Darwin/BSD 104 bytes), and net.Listen would
+	// otherwise surface only an opaque "bind: invalid argument". Use the
+	// smaller cross-platform limit (104) so the error is named explicitly.
+	if len(path) >= 104 {
+		return nil, fmt.Errorf("sessionctl: socket path %d bytes exceeds 104-byte sun_path limit: %s", len(path), path)
+	}
 	// Prune stale socket -- a leftover file from a crashed server would
 	// otherwise make net.Listen fail with "address already in use".
 	_ = os.Remove(path)
