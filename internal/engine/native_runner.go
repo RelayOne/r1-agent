@@ -497,6 +497,10 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		if live := buildDeterministicCortex(spec.WorkerLogContext.SessionID, eventBus, p, systemPrompt, toolDefs); live != nil {
 			if err := live.Start(ctx); err != nil {
 				slog.Warn("cortex start failed; proceeding without it", "err", err)
+				// Stop the partially-initialized cortex so any goroutines / hub
+				// subscriptions spawned before the failure don't leak for the
+				// rest of the run. Fresh ctx (bounded internally to 10s).
+				_ = live.Stop(context.Background())
 			} else {
 				cfg.Cortex = live
 				// Fresh ctx so a cancelled run ctx doesn't truncate the bounded
