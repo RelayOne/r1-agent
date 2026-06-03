@@ -2243,13 +2243,25 @@ func (e Engine) emitEventAsync(ev *hub.Event) {
 // after evidence.ReviewPass is set and before the dissent early-return, so both
 // agree and dissent verdicts are emitted. The pass/dissent signal is carried in
 // LifecycleEvent.State ("agree" when pass, "dissent" otherwise) so the Governor
-// can read it without a new event field. Nil-safe via emitEventAsync.
+// can read it without a new event field.
+//
+// This emit is SYNCHRONOUS (emitEvent -> hub.Emit) rather than fire-and-forget
+// (emitEventAsync -> hub.EmitAsync). With EmitAsync, the entire Emit call —
+// including the point at which the Governor's ModeObserve subscriber that writes
+// the "review.agree" ledger node is dispatched — is itself deferred to an
+// unscheduled goroutine, so there is NO happens-before relationship with the
+// later EventTaskCompleted emit that publishes worker.declaration.done. If the
+// declaration were observed first, trust.completion_requires_second_opinion would
+// false-fire on approved work. Using synchronous Emit dispatches the review's
+// observe handler before this helper returns and before the workflow proceeds to
+// task completion, so review.agree is recorded ahead of the declaration.
+// Nil-safe via emitEvent (no-op when e.EventBus == nil).
 func (e Engine) emitReviewEvent(name, reviewEngine string, pass bool) {
 	state := "dissent"
 	if pass {
 		state = "agree"
 	}
-	e.emitEventAsync(&hub.Event{
+	e.emitEvent(context.Background(), &hub.Event{
 		Type:   hub.EventVerifyCrossModelReview,
 		TaskID: name,
 		Phase:  "review",
