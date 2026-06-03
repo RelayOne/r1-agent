@@ -1,7 +1,11 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-06-03 -->
 <!-- CREATED: 2026-06-03 -->
 <!-- DEPENDS_ON: (extends commit c5e5e787 governance first slice) -->
 <!-- BUILD_ORDER: 2 -->
+<!-- REVIEW: Codex (GPT) cross-model PASS after fix loop — found 2 HIGH (async trust-rule race G15, budget<=0 contract G16), both fixed + re-reviewed clean. Full gate: go test ./... = 0 failures, governance default-on. -->
+<!-- ITEM 7 (ledger/loops 7-state) DEFERRED — spec marked it optional/stretch; trust fix does not depend on it. -->
+<!-- HOLISTIC: production-readiness/collision/playwright N/A — internal Go governance wiring. -->
 
 # Governance Activation — Wire the V2 Governance Layer Into the Live Mission Path (Default-On + Kill-Switch)
 
