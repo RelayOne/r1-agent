@@ -172,6 +172,14 @@ func (g *Governor) onCost(ev *hub.Event) {
 		return
 	}
 
+	// budgetUSD <= 0 disables budget-rule emission (see New's doc contract:
+	// the budget rule treats a non-positive budget as a no-op). Short-circuit
+	// before publishing so no mission.budget.update is emitted on default-on
+	// runs with no configured governance budget.
+	if g.budgetUSD <= 0 {
+		return
+	}
+
 	g.mu.Lock()
 	g.spentUSD += ev.Model.CostUSD
 	spent := g.spentUSD
@@ -363,6 +371,15 @@ func (g *Governor) publishLifecycle(eventType, taskID string) {
 // spent_usd == budget_usd (100% used) when the v1 runtime reports the budget
 // has been exceeded, so the budget rule escalates.
 func (g *Governor) onBudgetExceeded() {
+	// budgetUSD <= 0 disables budget-rule emission entirely (mirrors the
+	// New doc contract and the budget rule's non-positive-budget no-op).
+	// Without this guard a default-on run with no configured budget would
+	// synthesize a spurious spent_usd=0,budget_usd=0 update that can trip
+	// the budget rule. Short-circuit before publishing.
+	if g.budgetUSD <= 0 {
+		return
+	}
+
 	payload, err := json.Marshal(map[string]float64{
 		"spent_usd":  g.budgetUSD,
 		"budget_usd": g.budgetUSD,

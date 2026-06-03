@@ -351,20 +351,15 @@ func TestActivation_NoBudgetSafety(t *testing.T) {
 		t.Errorf("expected >=1 decision node at budget 0, got %d", len(n))
 	}
 
-	// With budget 0 the budget rule must no-op: no budget action events.
-	// (The Governor still publishes "mission.budget.update" carrier events on
-	// cost / budget-exceeded; the rule, however, must not escalate. We assert
-	// no escalation action — supervisor.* — is produced. The mission.budget.*
-	// carriers themselves are benign and may appear.)
+	// With budget 0 the budget-event path is a hard no-op: the Governor must
+	// NOT publish any "mission.budget.*" event at all — neither the raw
+	// "mission.budget.update" carrier (from onCost / onBudgetExceeded) nor any
+	// derived budget-rule action. budgetUSD <= 0 short-circuits emission before
+	// publishing (see onCost / onBudgetExceeded guards), mirroring New's doc
+	// contract that a non-positive budget disables budget-rule emission.
 	if pollFor(budgetEvents, func(es []bus.Event) bool {
 		for _, e := range es {
-			// Any budget rule ACTION would be a supervisor.* event; the raw
-			// carrier is "mission.budget.update". Treat presence of an
-			// escalation/warning derived event as a failure signal only if it
-			// is a rule action. The carrier update is expected, so we only
-			// fail on derived warning/escalation types.
-			if strings.HasPrefix(string(e.Type), "mission.budget.") &&
-				e.Type != "mission.budget.update" {
+			if strings.HasPrefix(string(e.Type), "mission.budget.") {
 				return true
 			}
 		}
@@ -374,6 +369,51 @@ func TestActivation_NoBudgetSafety(t *testing.T) {
 		for _, e := range budgetEvents() {
 			seen = append(seen, string(e.Type))
 		}
-		t.Fatalf("expected no budget rule events at budget 0; saw: %s", strings.Join(seen, ", "))
+		t.Fatalf("expected no mission.budget.* events at budget 0; saw: %s", strings.Join(seen, ", "))
+	}
+}
+
+// TestActivation_BudgetExceededNoEmitAtZeroBudget pins the budget<=0 no-op
+// contract for the EventCostBudgetExceeded path specifically: with budget 0,
+// driving an explicit budget-exceeded hub event must publish NO
+// mission.budget.update carrier and NO derived budget-rule action
+// (supervisor.* / mission.budget.*). Without the onBudgetExceeded guard this
+// path would synthesize a spurious spent_usd=0,budget_usd=0 update that can
+// trip the budget rule on default-on runs with no configured budget.
+func TestActivation_BudgetExceededNoEmitAtZeroBudget(t *testing.T) {
+	g := newTestGovernor(t, 0)
+	sub := g.HubSubscriber()
+
+	budgetEvents, cancelBudget := collect(t, g.Bus(), "mission.budget.")
+	defer cancelBudget()
+	supEvents, cancelSup := collect(t, g.Bus(), "supervisor.")
+	defer cancelSup()
+
+	if resp := sub.Handler(context.Background(), &hub.Event{Type: hub.EventCostBudgetExceeded}); resp != nil {
+		t.Errorf("handler returned non-nil response for %s (observe mode must be nil)", hub.EventCostBudgetExceeded)
+	}
+
+	// Give any (incorrect) emission + rule evaluation ~1s to appear.
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(budgetEvents()) > 0 || len(supEvents()) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if got := budgetEvents(); len(got) > 0 {
+		var seen []string
+		for _, e := range got {
+			seen = append(seen, string(e.Type))
+		}
+		t.Fatalf("budget-exceeded at budget 0 published mission.budget.* events; saw: %s", strings.Join(seen, ", "))
+	}
+	if got := supEvents(); len(got) > 0 {
+		var seen []string
+		for _, e := range got {
+			seen = append(seen, string(e.Type))
+		}
+		t.Fatalf("budget-exceeded at budget 0 triggered a budget-rule action; saw supervisor.*: %s", strings.Join(seen, ", "))
 	}
 }
