@@ -842,7 +842,7 @@ func TestUninstallSkillPackRejectsNonSymlinkTargets(t *testing.T) {
 }
 
 func TestUpdateSkillPackSkipsRepoLocalGitPullAndRelinksDependencies(t *testing.T) {
-	t.Parallel()
+	sandboxHome(t)
 
 	repo := t.TempDir()
 	writePackFixture(t, filepath.Join(repo, ".r1", "skills", "packs", "base-pack"), "base-pack", nil)
@@ -857,6 +857,22 @@ func TestUpdateSkillPackSkipsRepoLocalGitPullAndRelinksDependencies(t *testing.T
 	}
 	if len(result.PulledGitDirs) != 0 {
 		t.Fatalf("PulledGitDirs = %v, want empty", result.PulledGitDirs)
+	}
+	const realRepoPath = "/home/eric/repos/r1-agent"
+	for _, dir := range result.PulledGitDirs {
+		if dir == realRepoPath || strings.Contains(dir, realRepoPath) {
+			t.Fatalf("PulledGitDirs contains real repo path %q: %q", realRepoPath, dir)
+		}
+	}
+	for _, pack := range result.UpdatedPacks {
+		for _, exposed := range []string{
+			pack.CanonicalLinkPath,
+			pack.LegacyLinkPath,
+		} {
+			if exposed == realRepoPath || strings.Contains(exposed, realRepoPath) {
+				t.Fatalf("pack %s exposes real repo path %q: %q", pack.PackName, realRepoPath, exposed)
+			}
+		}
 	}
 	for _, pack := range result.UpdatedPacks {
 		if pack.PullStatus != skillPackPullStatusSkippedRepoLocal {
