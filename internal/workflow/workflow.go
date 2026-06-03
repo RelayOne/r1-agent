@@ -1472,6 +1472,11 @@ func (e Engine) runCrossModelReview(
 	}
 
 	evidence.ReviewPass = verdict.Pass
+	// Emit the cross-model review verdict to the hub. This MUST precede the
+	// dissent early-return below so that a dissent verdict (verdict.Pass == false)
+	// still produces an EventVerifyCrossModelReview event for the Governor to
+	// observe. Nil-safe via emitEventAsync (no-op when e.EventBus == nil).
+	e.emitReviewEvent(name, evidence.ReviewEngine, verdict.Pass)
 	if !verdict.Pass {
 		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
 		e.Worktrees.Cleanup(ctx, handle)
@@ -2231,6 +2236,29 @@ func (e Engine) emitEventAsync(ev *hub.Event) {
 	if e.EventBus != nil {
 		e.EventBus.EmitAsync(ev)
 	}
+}
+
+// emitReviewEvent emits exactly one hub.EventVerifyCrossModelReview carrying the
+// cross-model review verdict. It is invoked from runCrossModelReview immediately
+// after evidence.ReviewPass is set and before the dissent early-return, so both
+// agree and dissent verdicts are emitted. The pass/dissent signal is carried in
+// LifecycleEvent.State ("agree" when pass, "dissent" otherwise) so the Governor
+// can read it without a new event field. Nil-safe via emitEventAsync.
+func (e Engine) emitReviewEvent(name, reviewEngine string, pass bool) {
+	state := "dissent"
+	if pass {
+		state = "agree"
+	}
+	e.emitEventAsync(&hub.Event{
+		Type:   hub.EventVerifyCrossModelReview,
+		TaskID: name,
+		Phase:  "review",
+		Model:  &hub.ModelEvent{Provider: reviewEngine},
+		Lifecycle: &hub.LifecycleEvent{
+			Entity: "review",
+			State:  state,
+		},
+	})
 }
 
 // buildSemdiffInputs builds old/new content pairs for semantic diff analysis
