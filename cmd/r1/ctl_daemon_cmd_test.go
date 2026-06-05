@@ -307,8 +307,11 @@ func TestCtl_UnixSocketPreferred(t *testing.T) {
 	// When the daemon advertises a unix socket that's reachable,
 	// pickClientAndURL routes through unix transport and drops the
 	// Bearer header (peer-cred handles auth).
-	dir := t.TempDir()
+	dir := shortCtlDir(t)
 	sockPath := filepath.Join(dir, "test.sock")
+	if len(sockPath) >= 104 {
+		t.Fatalf("socket path %d>=104: %s", len(sockPath), sockPath)
+	}
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatalf("listen unix: %v", err)
@@ -359,8 +362,11 @@ func TestCtl_LoopbackFallback(t *testing.T) {
 // response. No mocks: the test exercises pickClientAndURL +
 // httpDoCtlVia + dialUnix end-to-end against the real transport.
 func TestCtl_UnixSocketEndToEnd(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortCtlDir(t)
 	sockPath := filepath.Join(dir, "r1.sock")
+	if len(sockPath) >= 104 {
+		t.Fatalf("socket path %d>=104: %s", len(sockPath), sockPath)
+	}
 
 	// Real HTTP server bound to the unix socket. It records the
 	// request path + Authorization header so we can confirm the

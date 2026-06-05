@@ -8,65 +8,27 @@ import (
 	"testing"
 )
 
-// initGitRepoWithCommit creates a fresh git repo under dir with a
-// single commit containing `initial content` at README.md. Returns
-// the HEAD sha. Used by P2-5 resume-compat tests.
+// initGitRepoWithCommit creates a fresh git repo under dir (caller-owned, so
+// state files can live alongside the .git) with a single commit containing a
+// tracked README.md. Returns the full HEAD sha. Used by P2-5 resume-compat
+// tests. Delegates the git mechanics to the shared testhelpers helpers.
 func initGitRepoWithCommit(t *testing.T, dir string, msg string) string {
 	t.Helper()
-	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
-	}
-	run("init", "-q", "-b", "main")
+	gitInitAt(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	run("add", "README.md")
-	run("commit", "-q", "-m", msg)
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("rev-parse: %v", err)
-	}
-	sha := string(out)
-	if len(sha) >= 40 {
-		sha = sha[:40]
-	}
-	return sha
+	return gitCommitAllAt(t, dir, msg)
 }
 
+// appendCommit writes filename under dir and creates an additional commit,
+// returning the new full HEAD sha. Delegates to the shared helpers.
 func appendCommit(t *testing.T, dir, filename, msg string) string {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, filename), []byte("y"), 0o600); err != nil {
 		t.Fatalf("append file: %v", err)
 	}
-	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
-	}
-	run("add", filename)
-	run("commit", "-q", "-m", msg)
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = dir
-	out, _ := cmd.Output()
-	sha := string(out)
-	if len(sha) >= 40 {
-		sha = sha[:40]
-	}
-	return sha
+	return gitCommitAllAt(t, dir, msg)
 }
 
 func TestSimpleLoopState_SaveLoadRoundTrip(t *testing.T) {

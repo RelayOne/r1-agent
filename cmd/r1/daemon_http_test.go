@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -159,23 +160,36 @@ func TestResolveDaemonEndpoint_SpawnFailure(t *testing.T) {
 //     it alive.
 //   - cmd.Start() returns nil on success; the child process is real.
 //
-// We intercept os.Executable() by setting argv[0] to /bin/true (or a
-// test fixture). The child exits immediately because /bin/true treats
-// "serve" as an unknown argument and exits 0.
+// The child is the test binary itself (os.Executable()), re-exec'd via
+// the realSpawnDaemonWith seam with "-test.run=^$" so it matches ZERO
+// tests and "-test.timeout=2s" as a backstop. The child exits almost
+// immediately (no tests to run); we still register a cleanup that kills
+// its Setsid process group and reaps it, so zero r1.test serve-style
+// children leak even if the OS is slow to reap the detached child.
 func TestRealSpawnDaemon_LaunchesDetachedProcess(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("test fixture relies on POSIX /bin/true; Windows path is covered by TASK-42 daemon_http_windows.go inspection")
+		t.Skip("test fixture relies on POSIX Setsid detach; Windows path is covered by TASK-42 daemon_http_windows.go inspection")
 	}
-	// Drive realSpawnDaemon directly. os.Executable() returns the test
-	// binary; passing "serve" to it makes Go's testing flag parser
-	// reject the arg and exit non-zero. Either way we just need
-	// cmd.Start to succeed and the child to terminate (we don't wait
-	// for it; the OS reaps it after Setsid). The test asserts that
-	// realSpawnDaemon returns nil — i.e. the syscalls (open
-	// /dev/null + Start with detach attrs) succeeded against the
-	// real OS.
-	if err := realSpawnDaemon(); err != nil {
-		t.Fatalf("realSpawnDaemon: %v", err)
+	// Drive the spawn through the seam so the re-exec'd child is the test
+	// binary running zero tests, instead of an actual `<exe> serve` that
+	// would fork a real daemon. We just need cmd.Start to succeed against
+	// the real OS (open /dev/null + Start with detach attrs).
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	proc, err := realSpawnDaemonWith(exe, []string{"-test.run=^$", "-test.timeout=2s"})
+	// Reap the whole Setsid process group: the child is detached into its
+	// own group, so a negative PID signals the group. Wait() releases the
+	// kernel resources so no r1.test child leaks past this test.
+	t.Cleanup(func() {
+		if proc != nil {
+			_ = syscall.Kill(-proc.Pid, syscall.SIGKILL)
+			_, _ = proc.Wait()
+		}
+	})
+	if err != nil {
+		t.Fatalf("realSpawnDaemonWith: %v", err)
 	}
 	// Sanity check: os.DevNull is the constant we expect to open.
 	// This catches accidental edits that swap it for a hardcoded path.

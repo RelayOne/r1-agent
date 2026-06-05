@@ -7,7 +7,13 @@
 // - "HTTP server" finds net/http, gin, fiber, express
 //
 // This is a lightweight in-process vector index using cosine similarity.
-// It works with any embedding provider (OpenAI, Voyage, local).
+// It works with any embedding provider (OpenAI, Voyage, local) via EmbedFunc.
+//
+// NOTE ON "EMBEDDINGS": the cosine math here is real, but every production
+// caller currently supplies BagOfWordsEmbed — i.e. lexical TF vectors, NOT
+// neural embeddings. So today this is lexical (bag-of-words) similarity, not
+// semantic/embedding-based retrieval. Wiring a neural EmbedFunc (OpenAI/Voyage/
+// local) is the upgrade path; until then, treat results as lexical.
 // The index stores pre-computed vectors and supports incremental updates.
 package vecindex
 

@@ -50,8 +50,8 @@ type chatInteractiveConfig struct {
 	NativeModel     string
 	NativeBaseURL   string
 	// CortexEnabled toggles parallel-cognition Lobes (cortex-core spec 1).
-	// Default off; spec 2 (cortex-concerns) owns the actual Cortex
-	// construction + wire-up that consumes this flag.
+	// Default on; wired by cortex-activation (this spec) — threaded into the
+	// REPL's app.RunConfig so it reaches the native loop.
 	CortexEnabled bool
 }
 
@@ -89,7 +89,7 @@ func runChatInteractiveCmd(args []string) error {
 	nativeAPIKey := fs.String("native-api-key", "", "Anthropic API key for native runner")
 	nativeModel := fs.String("native-model", "claude-sonnet-4-6", "Model for native runner")
 	nativeBaseURL := fs.String("native-base-url", "", "Base URL for native runner")
-	cortexEnabled := fs.Bool("cortex", false, "Enable parallel-cognition Lobes (cortex-core spec 1; off by default)")
+	cortexEnabled := fs.Bool("cortex", true, "Enable parallel-cognition deterministic Lobes (default on; --cortex=false to disable)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -315,6 +315,7 @@ func (s *chatInteractiveSession) runWorkflow(ctx context.Context, task string, p
 
 	orchestrator, err := app.New(app.RunConfig{
 		RepoRoot:        s.cfg.RepoRoot,
+		CortexEnabled:   s.cfg.CortexEnabled,
 		Task:            task,
 		PlanOnly:        planOnly,
 		AuthMode:        s.cfg.AuthMode,
