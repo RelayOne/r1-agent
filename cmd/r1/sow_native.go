@@ -3866,6 +3866,16 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 		HoneypotCheckFn:      honeypotCheck,
 	}
 
+	// When MCP exposure is enabled (R1_SOW_MCP=1), mark the worker as a
+	// trusted caller so the registry exposes trusted-server tools (the
+	// Substrate codegen server is declared trust: trusted in the policy).
+	// The registry is fail-closed: without this the trust gate hides
+	// trusted-server tools from the worker, so the flag must set both the
+	// registry (main.go) and the per-dispatch trust label here.
+	if os.Getenv("R1_SOW_MCP") == "1" {
+		spec.WorkerTrust = "trusted"
+	}
+
 	start := time.Now()
 	result, err := cfg.Runner.Run(ctx, spec, func(ev stream.Event) {
 		// DeltaText is the model's raw streaming output — including
