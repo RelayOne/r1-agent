@@ -10,8 +10,8 @@ import (
 // called at daemon-startup time without racing the hot path. Both
 // fields are independently optional.
 type emitterState struct {
-	emitBusEvent      func(tool string, scope Scope, principal string, retryAfter time.Duration)
-	captureCodeRadar  func(ctx context.Context, tool string, scope Scope, principal string, retryAfter time.Duration)
+	emitBusEvent     func(tool string, scope Scope, principal string, retryAfter time.Duration)
+	captureCodeRadar func(ctx context.Context, tool string, scope Scope, principal string, retryAfter time.Duration)
 }
 
 // WireBusEmitter installs a callback the throttle gate invokes on

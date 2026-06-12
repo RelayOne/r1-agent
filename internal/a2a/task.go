@@ -38,13 +38,13 @@ import (
 type TaskStatus string
 
 const (
-	TaskSubmitted    TaskStatus = "submitted"
-	TaskWorking      TaskStatus = "working"
+	TaskSubmitted     TaskStatus = "submitted"
+	TaskWorking       TaskStatus = "working"
 	TaskInputRequired TaskStatus = "input-required"
-	TaskCompleted    TaskStatus = "completed"
-	TaskFailed       TaskStatus = "failed"
-	TaskCanceled     TaskStatus = "canceled"
-	TaskRejected     TaskStatus = "rejected"
+	TaskCompleted     TaskStatus = "completed"
+	TaskFailed        TaskStatus = "failed"
+	TaskCanceled      TaskStatus = "canceled"
+	TaskRejected      TaskStatus = "rejected"
 )
 
 // AllTaskStatuses returns the 7 declared statuses in
@@ -114,9 +114,9 @@ const MaxHistoryEntries = 256
 // forbidden. Mirrors the a2a spec's state diagram.
 var taskTransitions = map[TaskStatus]map[TaskStatus]bool{
 	TaskSubmitted: {
-		TaskWorking:   true, // agent picked up
-		TaskRejected:  true, // agent rejected before starting
-		TaskCanceled:  true, // submitter canceled before start
+		TaskWorking:  true, // agent picked up
+		TaskRejected: true, // agent rejected before starting
+		TaskCanceled: true, // submitter canceled before start
 	},
 	TaskWorking: {
 		TaskInputRequired: true,

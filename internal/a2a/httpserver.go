@@ -9,14 +9,14 @@
 //
 // Routes:
 //
-//   GET  /.well-known/agent-card.json  → the Agent Card, JSON-encoded (A2A v1.0 canonical)
-//   GET  /.well-known/agent.json       → HTTP 308 Permanent Redirect to the
-//                                         canonical path (legacy, kept alive
-//                                         for 30 days after v1.0 landing;
-//                                         sunset 2026-05-22)
-//   POST /a2a/rpc                      → JSON-RPC 2.0 dispatch to
-//                                         a2a.task.submit / .status / .cancel
-//   GET  /healthz                      → simple liveness check
+//	GET  /.well-known/agent-card.json  → the Agent Card, JSON-encoded (A2A v1.0 canonical)
+//	GET  /.well-known/agent.json       → HTTP 308 Permanent Redirect to the
+//	                                      canonical path (legacy, kept alive
+//	                                      for 30 days after v1.0 landing;
+//	                                      sunset 2026-05-22)
+//	POST /a2a/rpc                      → JSON-RPC 2.0 dispatch to
+//	                                      a2a.task.submit / .status / .cancel
+//	GET  /healthz                      → simple liveness check
 //
 // Auth: optional bearer token gate via `Authorization: Bearer
 // <token>` on the /a2a/rpc endpoint. The agent card is ALWAYS
@@ -75,7 +75,9 @@ const LegacyCardPath = "/.well-known/agent.json"
 //
 // The returned Server's Handler() can be mounted into a
 // larger mux via:
-//   mux.Handle("/", a2aSrv.Handler())
+//
+//	mux.Handle("/", a2aSrv.Handler())
+//
 // or the server can be run standalone via ListenAndServe.
 func NewServer(card AgentCard, store TaskStore, token string) *Server {
 	s := &Server{card: card, store: store, token: token}
@@ -173,9 +175,9 @@ func (s *Server) handleCard(w http.ResponseWriter, r *http.Request) {
 // handleRPC dispatches JSON-RPC 2.0 method calls to the
 // Task handlers. Methods:
 //
-//   a2a.task.submit   → HandleSubmit
-//   a2a.task.status   → HandleStatus
-//   a2a.task.cancel   → HandleCancel
+//	a2a.task.submit   → HandleSubmit
+//	a2a.task.status   → HandleStatus
+//	a2a.task.cancel   → HandleCancel
 func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
