@@ -24,7 +24,7 @@ import (
 // TestStartSessionCtlServer_Listens checks that the helper binds a real
 // socket and answers a `status` round-trip with OK=true.
 func TestStartSessionCtlServer_Listens(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortCtlDir(t)
 	t.Setenv("STOKE_CTL_DIR", dir)
 
 	srv, sessID := startSessionCtlServer("run", "")
@@ -32,6 +32,9 @@ func TestStartSessionCtlServer_Listens(t *testing.T) {
 		t.Fatalf("startSessionCtlServer returned nil; expected listener bound under %s", dir)
 	}
 	defer srv.Close()
+	if len(srv.SocketPath()) >= 104 {
+		t.Fatalf("socket path %d>=104: %s", len(srv.SocketPath()), srv.SocketPath())
+	}
 	if sessID == "" {
 		t.Fatalf("expected non-empty session id")
 	}
@@ -57,7 +60,7 @@ func TestStartSessionCtlServer_Listens(t *testing.T) {
 // default Status callback embeds the mode the caller passed in. This
 // is what `r1 status` renders in the MODE column.
 func TestStartSessionCtlServer_DefaultStatus_ModeMatches(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortCtlDir(t)
 	t.Setenv("STOKE_CTL_DIR", dir)
 
 	srv, sessID := startSessionCtlServer("chat", "")
@@ -65,6 +68,9 @@ func TestStartSessionCtlServer_DefaultStatus_ModeMatches(t *testing.T) {
 		t.Fatal("startSessionCtlServer returned nil")
 	}
 	defer srv.Close()
+	if len(srv.SocketPath()) >= 104 {
+		t.Fatalf("socket path %d>=104: %s", len(srv.SocketPath()), srv.SocketPath())
+	}
 
 	sock := filepath.Join(dir, "stoke-"+sessID+".sock")
 	resp, err := sessionctl.Call(sock, sessionctl.Request{
@@ -101,7 +107,7 @@ func TestStartSessionCtlServer_DefaultStatus_ModeMatches(t *testing.T) {
 // TestStartSessionCtlServer_CustomDir verifies STOKE_CTL_DIR routes the
 // socket file into the requested directory and not /tmp.
 func TestStartSessionCtlServer_CustomDir(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortCtlDir(t)
 	t.Setenv("STOKE_CTL_DIR", dir)
 
 	srv, sessID := startSessionCtlServer("ship", "")
@@ -109,6 +115,9 @@ func TestStartSessionCtlServer_CustomDir(t *testing.T) {
 		t.Fatal("startSessionCtlServer returned nil")
 	}
 	defer srv.Close()
+	if len(srv.SocketPath()) >= 104 {
+		t.Fatalf("socket path %d>=104: %s", len(srv.SocketPath()), srv.SocketPath())
+	}
 
 	want := filepath.Join(dir, "stoke-"+sessID+".sock")
 	if _, err := os.Stat(want); err != nil {

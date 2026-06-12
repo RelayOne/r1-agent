@@ -1,5 +1,28 @@
 # Decisions Log
 
+## 2026-06-03 — audit remediation (activation specs)
+
+### D-2026-06-03-01 — Governance default-ON with kill-switch
+Context: audit finding B1 — supervisor/ledger/bus had zero runtime callers; "V2 governance" governed nothing. Decision: wire it into the live run path and ship DEFAULT-ON, with a --no-governance flag + policy kill-switch and non-fatal Governor construction (failure leaves the v1 runtime unaffected). Rationale: the entire point of the layer is to actually govern real missions; blast radius is bounded by the kill-switch and non-fatal construction. Backing: specs/governance-activation.md, commit c5e5e787 (first slice).
+
+### D-2026-06-03-02 — Cortex default-ON with --no-cortex kill-switch
+Context: audit finding B2 — cortex (~9k lines) never assigned to agentloop.Config.Cortex and never Start()ed. Decision: wire *cortex.Cortex (4 deterministic lobes, real provider for the Router) into the native loop + chat REPL, DEFAULT-ON with a --no-cortex kill-switch. Rationale: safe because the MidturnNote Round barrier is bounded by RoundDeadline (~2s, round.go:133) so it cannot hang the hot loop; deterministic lobes only (no LLM 'all' mode). Backing: specs/cortex-activation.md.
+
+### D-2026-06-03-03 — Build a multi-language repomap fallback (not relabel)
+Context: audit finding B3 — repomap.Build is Go-only (goast), so the ranked map injected into execute prompts is empty for non-Go repos, undercutting the "complete agnostic" claim. Decision: build a language-agnostic fallback (symindex + depgraph/regex imports into the existing PageRank) rather than just relabeling the claim. Rationale: PageRank is already language-neutral and the multi-lang data sources exist, so the cost is low and it makes the agnostic claim true. Backing: specs/repomap-multilang.md.
+
+### D-2026-06-03-04 — Acceptance bar = synthetic integration tests
+Context: live claude/codex missions need API keys + CLIs absent in the build sandbox. Decision: the activation specs' acceptance is proven by driving SYNTHETIC lifecycle events through the real wired path and asserting ledger nodes written + supervisor rules fired + cortex notes produced — no live LLM. Rationale: fully verifiable in CI/sandbox; a live end-to-end run is deferred to an environment that has keys/CLIs. Backing: all 4 activation specs.
+
+### D-2026-06-03-05 — CloudSwarm stream-json is an intentional external-orchestrator contract
+Context: audit finding B5 labeled `r1 run --output stream-json` "SCAFFOLD" (announce-only). Evidence (main.go:1731 "Consumed by Multica, OpenACP, and other orchestrators"; internal/skill/compat/cloudswarm.go) shows it is an intentional thin-client wire format; the external fleet dispatches. Decision: no code change; relabel as intentional. 
+
+### D-2026-06-03-06 — Missing .claude/hooks shell scripts are operator tooling
+Context: audit finding B7 — ~40 enforce-*.sh/detect-*.sh referenced by SessionStart are absent. The untracked install-hook-precision-refinements.sh / install-override-protocol.sh are their installers. Decision: no product code change; fix = run the installers (operator action). The Go-level merge gates are the real enforcement and are intact.
+
+### D-2026-06-03-07 — CLAUDE.md count corrections are an operator action
+Context: audit finding B6 — CLAUDE.md package-map counts are stale (should be 183 internal / 52 node types / 11 categories / 34 rules / 10 bench). CLAUDE.md edits are denied at the harness permission layer to agents. Decision: operator applies the corrections (sed provided in audit/remediation-triage-2026-06-02.md).
+
 ## 2026-05-04 — web-chat-ui (spec 6) decisions
 
 ### D-2026-05-04-01 — eslint custom rule `require-data-testid`

@@ -35,7 +35,7 @@ func (s *ctlTestSession) Close() { _ = s.srv.Close() }
 // concurrent tests never collide.
 func newCtlTestSession(t *testing.T, handlers map[string]sessionctl.Handler) *ctlTestSession {
 	t.Helper()
-	dir := t.TempDir()
+	dir := shortCtlDir(t)
 	sid := fmt.Sprintf("test-%d-%d", os.Getpid(), time.Now().UnixNano())
 	srv, err := sessionctl.StartServer(sessionctl.Opts{
 		SocketDir: dir,
@@ -51,7 +51,7 @@ func newCtlTestSession(t *testing.T, handlers map[string]sessionctl.Handler) *ct
 // ---- status -----------------------------------------------------------------
 
 func TestStatus_DiscoveryEmpty(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortCtlDir(t)
 	var out, errBuf bytes.Buffer
 	code := runStatusCmd([]string{"--ctl-dir", dir}, &out, &errBuf)
 	if code != 0 {
