@@ -14,10 +14,13 @@ package repomap
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/RelayOne/r1/internal/depgraph"
 	"github.com/RelayOne/r1/internal/goast"
+	"github.com/RelayOne/r1/internal/symindex"
 )
 
 // Symbol represents a code symbol (function, type, method, const).
@@ -105,6 +108,14 @@ func Build(root string) (*RepoMap, error) {
 		rm.buildCallGraphEdges(analysis)
 	}
 
+	// Non-Go repos: goast yields no files. Fall back to language-agnostic
+	// symbol/import extraction (symindex + depgraph) so the SAME ranking and
+	// render pipeline runs for Python/TS/JS/etc. Only fires when goast produced
+	// zero files, so any repo with >=1 parseable Go file is byte-identical.
+	if len(rm.Files) == 0 {
+		rm.buildFromSymindex(root)
+	}
+
 	// Build reverse import edges
 	rm.buildReverseEdges()
 
@@ -115,6 +126,87 @@ func Build(root string) (*RepoMap, error) {
 	rm.collectSymbols()
 
 	return rm, nil
+}
+
+// buildFromSymindex populates rm.Files for a non-Go repo using symindex
+// (multi-language symbols: AST for Go, regex for Python/TS/JS/etc.) and depgraph
+// (multi-language imports), so the unchanged buildReverseEdges/rankFiles/
+// collectSymbols pipeline can rank and render non-Go repositories. Best-effort:
+// on extraction error it leaves rm.Files as-is (Build still returns a valid,
+// possibly-empty map and nil error, matching the prior non-Go behavior).
+func (rm *RepoMap) buildFromSymindex(root string) {
+	idx, err := symindex.Build(root)
+	if err != nil {
+		return
+	}
+	for _, f := range idx.Files() {
+		node := rm.Files[f]
+		if node == nil {
+			node = &FileNode{Path: f, Package: pkgKey(f)}
+			rm.Files[f] = node
+		}
+		for _, s := range idx.InFile(f) {
+			if !s.Exported || s.Kind == symindex.KindField {
+				continue
+			}
+			node.Symbols = append(node.Symbols, Symbol{
+				Name:      s.Name,
+				Kind:      symKindToString(s.Kind),
+				File:      f,
+				Line:      s.Line,
+				Package:   node.Package,
+				Signature: sigFor(s),
+			})
+		}
+	}
+
+	// Attach language-specific imports (best-effort) only to files symindex
+	// already indexed; depgraph may include importless modules symindex skipped.
+	if dg, derr := depgraph.Build(root, nil); derr == nil && dg != nil {
+		for path, n := range dg.Nodes {
+			if node, ok := rm.Files[path]; ok {
+				node.Imports = n.Imports
+			}
+		}
+	}
+}
+
+// pkgKey derives a non-empty package key for a relative path so reverse-edge /
+// relevance matching can attempt to group files by directory. Best-effort for
+// regex languages (dotted Python / relative TS imports rarely match exactly,
+// so ranking falls back to the symbol-count bonus).
+func pkgKey(rel string) string { return filepath.Base(filepath.Dir(rel)) }
+
+// sigFor returns a symbol's signature only for func/method kinds (matching the
+// goast path, which sets Signature only for functions/methods).
+func sigFor(s symindex.Symbol) string {
+	if s.Kind == symindex.KindFunction || s.Kind == symindex.KindMethod {
+		return s.Signature
+	}
+	return ""
+}
+
+// symKindToString maps symindex symbol kinds to the repomap string kinds the
+// Render switch expects (mirrors goastKindToString). repomap has no "class"
+// string, so classes render as "type".
+func symKindToString(k symindex.SymbolKind) string {
+	switch k {
+	case symindex.KindFunction:
+		return "func"
+	case symindex.KindMethod:
+		return "method"
+	case symindex.KindType:
+		return "type"
+	case symindex.KindClass:
+		return "type"
+	case symindex.KindInterface:
+		return "interface"
+	case symindex.KindVariable:
+		return "var"
+	case symindex.KindConstant:
+		return "const"
+	}
+	return "var"
 }
 
 func goastKindToString(k goast.SymbolKind) string {

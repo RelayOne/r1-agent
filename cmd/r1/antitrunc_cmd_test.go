@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -49,33 +48,20 @@ func TestListPatterns_DumpsCatalog(t *testing.T) {
 	}
 }
 
-// initRepo creates a tmp git repo with the supplied subjects/bodies.
-// Returns the repo dir.
+// initRepo creates a tmp git repo with the supplied subjects/bodies as a
+// chain of empty commits. Returns the repo dir. Git mechanics delegate to the
+// shared testhelpers helpers (fixed identity, explicit cmd.Dir).
 func initRepo(t *testing.T, changes []struct{ Subject, Body string }) string {
 	t.Helper()
 	dir := t.TempDir()
-	run := func(args ...string) {
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		out, err := c.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	run("init", "-q")
-	run("config", "user.email", "test@example.com")
-	run("config", "user.name", "Test")
-	run("commit", "--allow-empty", "-m", "initial")
+	gitInitAt(t, dir)
+	runGitIn(t, dir, "commit", "--allow-empty", "-q", "-m", "initial")
 	for _, c := range changes {
 		msg := c.Subject
 		if c.Body != "" {
 			msg += "\n\n" + c.Body
 		}
-		cmd := exec.Command("git", "commit", "--allow-empty", "-m", msg)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git commit: %v\n%s", err, out)
-		}
+		runGitIn(t, dir, "commit", "--allow-empty", "-q", "-m", msg)
 	}
 	return dir
 }

@@ -197,28 +197,14 @@ func TestRunTaskCmdNoExecutorRegistered(t *testing.T) {
 // integration tests. Fails the test on any git failure.
 func seedGitRepo(t *testing.T, dir, path, content string) {
 	t.Helper()
-	gitCmd := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@x",
-			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@x",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	gitCmd("init", "-q")
-	gitCmd("config", "commit.gpgsign", "false")
-	gitCmd("config", "user.email", "t@x")
-	gitCmd("config", "user.name", "test")
+	gitInitAt(t, dir)
+	// commit.gpgsign=false guards against an operator global config that
+	// would otherwise block the commit in a hermetic test.
+	runGitIn(t, dir, "config", "commit.gpgsign", "false")
 	if err := os.WriteFile(filepath.Join(dir, path), []byte(content), 0o644); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
-	gitCmd("add", ".")
-	gitCmd("commit", "-q", "-m", "init")
+	gitCommitAllAt(t, dir, "init")
 }
 
 // commitChange overwrites path with content, stages, and commits.
@@ -228,21 +214,7 @@ func commitChange(t *testing.T, dir, path, content, msg string) {
 	if err := os.WriteFile(filepath.Join(dir, path), []byte(content), 0o644); err != nil {
 		t.Fatalf("write change: %v", err)
 	}
-	gitCmd := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@x",
-			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@x",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	gitCmd("add", ".")
-	gitCmd("commit", "-q", "-m", msg)
+	gitCommitAllAt(t, dir, msg)
 }
 
 // TestGitDiffSinceCapturesUnifiedDiff covers the gitDiffSince helper

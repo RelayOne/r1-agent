@@ -110,7 +110,17 @@ func realSpawnDaemon() error {
 	if err != nil {
 		return fmt.Errorf("resolve exe: %w", err)
 	}
-	cmd := exec.Command(exe, "serve")
+	// Discard the *os.Process so production behavior + signature are
+	// byte-identical: still spawns a detached `<exe> serve`.
+	_, err = realSpawnDaemonWith(exe, []string{"serve"})
+	return err
+}
+
+// realSpawnDaemonWith is the injectable test seam for realSpawnDaemon: it
+// builds and starts the detached child for the given exe/args and returns
+// the started *os.Process so tests can capture + reap it.
+func realSpawnDaemonWith(exe string, args []string) (*os.Process, error) {
+	cmd := exec.Command(exe, args...)
 	// Detach from our process group so the child survives a Ctrl-C
 	// of the parent. applyDetachAttrs is platform-specific
 	// (Setsid on POSIX, CREATE_NEW_PROCESS_GROUP on Windows).
@@ -121,7 +131,7 @@ func realSpawnDaemon() error {
 	// kernel keeps the FD live for the child).
 	devnull, derr := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if derr != nil {
-		return fmt.Errorf("open %s: %w", os.DevNull, derr)
+		return nil, fmt.Errorf("open %s: %w", os.DevNull, derr)
 	}
 	cmd.Stdin = devnull
 	cmd.Stdout = devnull
@@ -129,10 +139,10 @@ func realSpawnDaemon() error {
 
 	if err := cmd.Start(); err != nil {
 		_ = devnull.Close()
-		return fmt.Errorf("start: %w", err)
+		return nil, fmt.Errorf("start: %w", err)
 	}
 	_ = devnull.Close()
-	return nil
+	return cmd.Process, nil
 }
 
 // waitForDiscovery polls daemon.json until it appears (returning the
