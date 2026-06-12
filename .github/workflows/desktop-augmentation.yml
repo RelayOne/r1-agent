@@ -15,6 +15,19 @@
 # E2E job runs after the three above succeed, on each of macOS-latest
 # / ubuntu-24.04 / windows-latest. Spec §11.5 says the e2e suite
 # blocks merge on red.
+#
+# TRUTH NOTE (CI-2 desktop-e2e-truth, 2026-06-12): the app currently
+# ships NO test-mode driver surface, so every spec under
+# desktop/tests/e2e/ is skipped-with-reason (see
+# audit/desktop-e2e-truth-2026-06-12.md). What this e2e job REALLY
+# verifies today: (a) the Tauri app compiles in the release profile on
+# all three OSes — the only CI leg that builds release — and (b) the
+# Playwright harness compiles and collects with a deterministic
+# 12-skipped/0-failed split. The tauri-driver install/start glue was
+# removed: the old harness never spoke WebDriver to it (it POSTed
+# invented verbs that tauri-driver does not serve), and tauri-driver
+# does not support macOS at all. Restore a real driver setup when the
+# test-mode surface lands (PROGRAM-DAG-2026-05-15 Layer B).
 
 name: desktop-augmentation
 
@@ -142,50 +155,14 @@ jobs:
         run: bash desktop/scripts/copy-r1-binaries.sh
       - name: npm install (workspace root)
         run: npm install --workspaces --include-workspace-root
-      - name: Install tauri-driver
-        run: cargo install tauri-driver --locked
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps
-        working-directory: desktop
-      - name: cargo tauri build (debug)
+      # No tauri-driver install/start and no Playwright-browser download:
+      # the specs use a custom harness (no browser fixtures), all specs
+      # are currently skipped-with-reason, and the previous driver glue
+      # was never actually exercised (see TRUTH NOTE in the header).
+      - name: cargo build (release)
         working-directory: desktop
         run: cargo build --release
-      - name: Run Playwright e2e
+      - name: Run Playwright e2e (collect + skip split)
         working-directory: desktop
-        env:
-          # Cargo's target/ is at desktop/target/ (the workspace root is
-          # `desktop/`, set in desktop/Cargo.toml). Playwright runs from
-          # `desktop/` (working-directory above), so the binary's
-          # path-relative-to-cwd is target/release/r1-desktop, NOT
-          # ../target/release/r1-desktop. The earlier ../ value pointed
-          # at a non-existent repo-root/target/ path and produced
-          # `spawn ENOENT` for every spec.
-          R1_DESKTOP_BINARY: target/release/r1-desktop
-          R1_TAURI_DRIVER_PORT: '4444'
-        run: |
-          # tauri-driver was unpublished from npm in 2026; it now ships
-          # exclusively as a Rust crate. The earlier "Install tauri-driver"
-          # step `cargo install tauri-driver --locked` puts the binary on
-          # $PATH via $CARGO_HOME/bin (added by dtolnay/rust-toolchain).
-          # Invoke that binary directly — `npx tauri-driver` would hit the
-          # registry and fail with E404.
-          tauri-driver --port=$R1_TAURI_DRIVER_PORT &
-          DRIVER_PID=$!
-          # Poll /status until tauri-driver is ready instead of a fixed
-          # 2s sleep — flaked under load. Bail after ~10s of polling
-          # but stay best-effort: if the driver never binds we still
-          # fall through to playwright (which then surfaces its own
-          # connection error). Matches the prior `kill ... || true`
-          # contract: don't let the bash glue mask test outcomes.
-          # Closes audit/scan-ci-infra.md desktop-augmentation
-          # hardcoded-sleep finding.
-          DRIVER_URL="http://127.0.0.1:${R1_TAURI_DRIVER_PORT}/status"
-          for _ in 1 2 3 4 5 6 7 8 9 10; do
-            if curl -fs --max-time 1 "$DRIVER_URL" >/dev/null 2>&1; then
-              break
-            fi
-            sleep 1
-          done
-          npx playwright test
-          kill $DRIVER_PID || true
+        run: npx playwright test
         shell: bash

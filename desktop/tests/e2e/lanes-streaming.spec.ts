@@ -19,6 +19,19 @@ import {
   type DesktopApp,
 } from "./helpers/desktop-fixtures";
 
+// SKIPPED-WITH-REASON (CI-2 desktop-e2e-truth, 2026-06-12): the desktop
+// app exposes NO test-mode driver surface. These specs require the
+// fake-daemon drive hooks `test.drive-lanes.started/completed`,
+// `test.lane-trace.dump`, `test.overflow-lane.completed` and
+// `[data-role="drive-lanes"|"trace-lanes"|"overflow-lane"]` driver
+// verbs — none implemented in desktop/src or desktop/src-tauri
+// (audit/desktop-e2e-truth-2026-06-12.md). Un-skip only when a real
+// test-mode surface lands; never fabricate hook responses.
+test.skip(
+  true,
+  "app has no test-mode driver surface (test.drive-lanes.*, test.lane-trace.dump) — see audit/desktop-e2e-truth-2026-06-12.md (CI-2)",
+);
+
 const DURATION_S = 30;
 const HZ_PER_LANE = 10;
 const LANE_COUNT = 4;
