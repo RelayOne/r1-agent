@@ -20,6 +20,20 @@ import {
   type DesktopApp,
 } from "./helpers/desktop-fixtures";
 
+// SKIPPED-WITH-REASON (CI-2 desktop-e2e-truth, 2026-06-12): the desktop
+// app exposes NO test-mode driver surface. These specs require the
+// driver-only debug verbs/events `test.windows.list`,
+// `primary-window.closed`, `popout.opened` / `popout.closed` and
+// `[data-role="popout-lane"|"close-primary-window"|"close-popout"]`
+// routes — none implemented in desktop/src or desktop/src-tauri
+// (audit/desktop-e2e-truth-2026-06-12.md). popout.rs is real, but has
+// no test enumeration hook. Un-skip only when a real test-mode surface
+// lands; never fabricate hook responses.
+test.skip(
+  true,
+  "app has no test-mode driver surface (test.windows.list, primary-window.closed, popout.* events) — see audit/desktop-e2e-truth-2026-06-12.md (CI-2)",
+);
+
 interface OpenWindow {
   label: string;
   url: string;

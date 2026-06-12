@@ -555,10 +555,9 @@ export interface ProviderRow {
 }
 
 /**
- * Result of the `provider_test` stub. `ok` is the success flag the UI
- * renders as a pill; `latency_ms` is the round-trip time; `model` is
- * the model the endpoint reports back; `message` carries a one-line
- * diagnostic when the test fails.
+ * Provider connectivity result shape retained for future host wiring.
+ * This branch's desktop host does not currently expose a callable
+ * `provider_test` verb.
  */
 export interface ProviderTestResult {
   ok: boolean;
@@ -674,17 +673,9 @@ export type InvokeMethod =
   // Ledger
   | "ledger_get_node"
   | "ledger_list_events"
-  | "ledger_sessions"
-  | "ledger_timeline"
-  | "ledger_verify"
-  | "ledger_shred"
-  | "ledger_export"
   // Memory
   | "memory_list_scopes"
   | "memory_query"
-  | "memory_history"
-  | "memory_import"
-  | "memory_delete"
   // Cost
   | "cost_get_current"
   | "cost_get_history"
@@ -699,54 +690,22 @@ export type InvokeMethod =
   | "session_cancel"
   | "skill_list"
   | "skill_get"
-  | "skill_install"
-  | "skill_uninstall"
-  | "skill_install_pack"
-  | "skill_invoke"
-  // Settings: providers / vault / governance (R1D-7)
-  | "provider_test"
-  | "vault_list"
-  | "vault_set"
-  | "vault_delete"
-  | "gov_set"
-  // MCP servers (R1D-8)
-  | "mcp_list"
-  | "mcp_add"
-  | "mcp_remove"
-  | "mcp_test"
-  | "mcp_invoke_tool"
-  // Observability dashboard (R1D-9)
-  | "obs_kpis"
-  | "obs_latency_histogram"
-  | "obs_skill_counts"
-  | "obs_error_timeline"
-  | "obs_export_csv"
-  | "obs_relaygate_reconcile"
   // Approval queue + scheduler (R1D-10 UI)
-  | "approval_list"
-  | "approval_decide"
-  | "schedule_list"
-  | "schedule_create"
-  | "schedule_update"
-  | "schedule_delete"
-  | "schedule_run_now"
   // First-launch onboarding (R1D-11.6)
-  | "onboarding_pick_data_dir"
-  | "onboarding_start_demo"
-  | "onboarding_save_api_key"
-  // Daemon liveness probe + autostart toggles (R1D settings panel)
+  | "app_open_folder_picker"
+  // Daemon liveness probe (R1D settings panel)
   | "daemon_status"
-  | "autostart_is_enabled"
-  | "autostart_enable"
-  | "autostart_disable"
-  // UI preference setters (R1D settings panel)
-  | "prefs_set_lane_density"
+  | "daemon_install_command"
   // WebView convenience (cached in Rust host; not a JSON-RPC verb)
   | "session_list";
 
 // ---------------------------------------------------------------------
 // MCP servers panel (R1D-8)
 // ---------------------------------------------------------------------
+
+// Data shapes are retained here for future host wiring, but this
+// branch does not expose any `mcp_*` invoke methods. The panel renders
+// an explicit unavailable state instead of calling missing IPC verbs.
 
 /** One configured MCP server entry. */
 export interface MCPServer {
@@ -805,6 +764,10 @@ export interface MCPOkResult {
 // ---------------------------------------------------------------------
 // Observability dashboard (R1D-9)
 // ---------------------------------------------------------------------
+
+// Data shapes are retained here for future host wiring, but this
+// branch does not expose any `obs_*` invoke methods. The panel renders
+// an explicit unavailable state instead of calling missing IPC verbs.
 
 /** Time-range tokens accepted by every obs IPC. */
 export type ObsRange = "1h" | "24h" | "7d" | "30d";
@@ -870,6 +833,10 @@ export interface RelayGateReconcileResult {
 // ---------------------------------------------------------------------
 // Approval queue + scheduler (R1D-10 UI)
 // ---------------------------------------------------------------------
+
+// Data shapes are retained for future host wiring, but this desktop
+// branch does not expose callable `approval_*` or `schedule_*` invoke
+// methods. The panels render explicit unavailable states instead.
 
 /** Pending operator approval gate from a running autonomous session. */
 export interface ApprovalRequest {

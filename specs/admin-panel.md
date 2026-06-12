@@ -3,6 +3,7 @@
 <!-- BUILD_COMPLETED: 2026-05-14 -->
 <!-- DEPENDS_ON: relayone-sso -->
 <!-- BUILD_ORDER: 37 -->
+<!-- IMPLEMENTATION_NOTE_2026-05-15: The hosted public admin URL exists, but the current r1-admin service is still scaffold-heavy and should not be described as fully complete. See plans/TRUTH-STATE-2026-05-15.md. -->
 
 # Admin Panel at `admin.r1.run` — Implementation Spec
 
@@ -12,11 +13,16 @@ SOW item A5 calls for an admin panel at `admin.r1.run` that surfaces R1 operatio
 
 ### 1.1 Template-selection decision: do NOT clone a `*-admin` template
 
+Historical note as of 2026-05-15: the repo later gained a separate
+hosted `services/r1-admin/` deployment. The design discussion below is
+still useful context for why the original work stayed in Go templates,
+but it no longer describes the exact live hosted topology.
+
 The SOW lists `cloudswarm-admin`, `relaygate-admin`, `coderadar-admin`, `truecom-admin`, `veritize-admin` as candidate Next.js admin templates. After reading their `package.json` (all Next.js 14.2.29 + pg + jose + bcrypt) and `next.config.js` (all `output: "standalone"` on Cloud Run port 8080), they are coherent siblings — but R1 has a **different precedent that overrides the template choice**:
 
-`cmd/r1-server/main.go` already serves an htmx-based session viewer at `platform.r1.run`. The `r1-server-ui-v2-foundation` spec (STATUS: done, build_order 28) shipped a vendored htmx 2.x + Go `html/template` `base.html` toolchain. Adding a parallel Next.js+Node stack just for admin pages would (a) double the deploy surface, (b) fork the auth path away from the Go middleware that A4 lands, (c) duplicate API consumers that already exist as Go handlers (`/api/sessions`, `/api/dashboard/cost`, ledger handlers), and (d) violate the explicit "DO NOT spin up a new Cloud Run service — reuse r1-server" boundary in the SOW.
+`cmd/r1-server/main.go` already serves an htmx-based session viewer at `platform.r1.run`. The `r1-server-ui-v2-foundation` spec (STATUS: done, build_order 28) shipped a vendored htmx 2.x + Go `html/template` `base.html` toolchain. At the time this spec was written, adding a parallel Next.js+Node stack just for admin pages would (a) double the deploy surface, (b) fork the auth path away from the Go middleware that A4 lands, (c) duplicate API consumers that already exist as Go handlers (`/api/sessions`, `/api/dashboard/cost`, ledger handlers), and (d) violate the then-current "reuse r1-server" boundary in the SOW.
 
-**Decision: extend the existing htmx surface in `cmd/r1-server/`.** Admin pages live at `/admin/*` sub-paths on the same Cloud Run service; `admin.r1.run` is a Cloudflare CNAME aliased to the same service. The choice is justified by:
+**Decision at authoring time: extend the existing htmx surface in `cmd/r1-server/`.** The choice was justified by:
 
 1. SOW boundary "DO NOT spin up a new Cloud Run service" maps cleanly to sub-paths.
 2. The Go server already owns the data sources (sessionhub, costtrack, ledger, antitrunc) — no IPC needed.
@@ -31,7 +37,7 @@ The `*-admin` templates remain a useful **visual** reference (sidebar layout, ca
 - 6 paired JSON API endpoints under `/api/admin/*` consumed by htmx swaps.
 - Admin-only auth middleware (`internal/server/admin_middleware.go`) layered on A4's SSO JWT.
 - htmx templates extending the existing v2 `base.html` plus a new `admin-base.html`.
-- Cloudflare CNAME `admin.r1.run` → `ghs.googlehosted.com`, with a Cloud Run domain mapping on the existing `r1-server` service. NO new service.
+- Historical plan: Cloudflare CNAME `admin.r1.run` → `ghs.googlehosted.com`, with a Cloud Run domain mapping on the existing `r1-server` service. The live hosted admin surface later diverged to `services/r1-admin/`.
 - Phase-2 mutation buttons rendered DISABLED with a contractual tooltip.
 - Audit trail: every admin page view emits a `LedgerNode: AdminViewed{path, user, ts}`.
 - Documentation, unit tests, golden HTML snapshots, and a Playwright + axe-core E2E lane in the existing release-rehearsal CI workflow.

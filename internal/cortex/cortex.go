@@ -89,6 +89,14 @@ type Config struct {
 	PreWarmTools        []provider.ToolDef
 	RoundDeadline       time.Duration
 	RouterCfg           RouterConfig
+
+	// Workspace, when non-nil, is the shared Workspace the Cortex (and its
+	// MidturnNote/PreEndTurnGate readers) use. Callers that construct Lobes
+	// against a Workspace BEFORE New (the lobe constructors capture the
+	// pointer) must pass that same Workspace here so the Lobes publish into
+	// the Workspace this Cortex drains. Nil => New allocates a fresh one (the
+	// historical behavior).
+	Workspace *Workspace
 }
 
 // Cortex bundles the parallel-cognition substrate: Workspace + Round +
@@ -193,7 +201,10 @@ func New(cfg Config) (*Cortex, error) {
 	// Workspace + optional WAL replay. NewWorkspace tolerates a nil
 	// durable bus (in-memory mode); Replay short-circuits to nil in
 	// that mode, so the call is unconditional.
-	ws := NewWorkspace(cfg.EventBus, cfg.Durable)
+	ws := cfg.Workspace
+	if ws == nil {
+		ws = NewWorkspace(cfg.EventBus, cfg.Durable)
+	}
 	if err := ws.Replay(); err != nil {
 		slog.Warn("cortex/New: workspace replay failed", "err", err)
 	}

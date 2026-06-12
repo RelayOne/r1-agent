@@ -10,7 +10,7 @@ go vet ./...
 
 These three commands are the CI gate.
 
-## Package map (132 internal + 1 cmd + 9 bench)
+## Package map (183 internal + 1 cmd + 10 bench)
 
 ```
 cmd/r1/main.go                    20 commands. --roi, --sqlite, --interactive, --specexec flags.
@@ -19,10 +19,10 @@ cmd/r1/main.go                    20 commands. --roi, --sqlite, --interactive, -
 contentid/                         Content-addressed ID generation (SHA256, 16 prefixes)
 stokerr/                           Structured error taxonomy (10 error codes)
 ledger/                            Append-only content-addressed graph (nodes, edges, filesystem + SQLite)
-ledger/nodes/                      22 node type structs with NodeTyper interface
+ledger/nodes/                      52 node type structs with NodeTyper interface
 ledger/loops/                      7-state consensus loop tracker
 bus/                               Durable WAL-backed event bus (hooks, delayed events, causality)
-supervisor/                        Deterministic rules engine (30 rules, 10 categories, 3 manifests)
+supervisor/                        Deterministic rules engine (34 rules, 11 categories, 3 manifests)
 supervisor/manifests/              Rule set manifests per supervisor tier (mission, branch)
 supervisor/rules/consensus/        Consensus rules (review, dissent, convergence, timeout)
 supervisor/rules/cross_team/       Cross-team coordination rules
@@ -206,3 +206,4 @@ preflight/                         Pre-flight workspace assertions
 26. Speculative execution (`--specexec`): 4 strategies in parallel, pick the winner
 27. Codex/Claude parity: both runners populate CostUSD, DurationMs, NumTurns, Tokens
 28. V2 bridge adapters: v1 cost/verify/wisdom/audit emit bus events + write ledger nodes via bridge package
+29. Cortex activated default-on (--no-cortex kill-switch); native loop wires the 4 deterministic lobes; midturn Round barrier bounded by RoundDeadline (2s) so it can never hang the loop.

@@ -4,8 +4,11 @@
 # (agent × mission) matrix and uploads the rendered leaderboard +
 # per-mission breakdown to the public bench bucket.
 #
-# Triggered by Cloud Scheduler at 04:00 UTC on the 1st of each month
-# (see scripts/setup-bench-truthful-completion-cron.sh).
+# Intended for the monthly TruthfulCompletion scheduler/trigger pair
+# provisioned by `scripts/setup-bench-truthful-completion-cron.sh`.
+# The live project may still also carry the older `r1-bench-nightly` /
+# `r1-bench-nightly-cron` pair; that legacy path is separate from this
+# checked-in monthly benchmark flow.
 #
 # Spec: specs/truthful-completion-benchmark.md §T8.1 (item 55).
 
@@ -75,14 +78,16 @@ steps:
       - -c
       - |
         set -euo pipefail
-        # The aggregate command is not yet a separate binary —
-        # for now we tar the raw JSON results and let the bucket
-        # consumer render. The aggregate renderer lives in
-        # internal/bench/leaderboard.go and will get its own CLI
-        # entrypoint in a follow-up.
         DATE=$(date +%Y-%m-%d)
-        tar -czf "/workspace/bench-out/truthful-completion-${DATE}.tar.gz" -C /workspace/bench-out .
+        REPORT="/workspace/truthful-completion-${DATE}.md"
+        ARCHIVE="/workspace/truthful-completion-${DATE}.tar.gz"
+        /workspace/r1-bench-bin \
+          --aggregate /workspace/bench-out \
+          --aggregate-format both \
+          --output "$REPORT"
+        tar -czf "$ARCHIVE" -C /workspace/bench-out .
         ls -la /workspace/bench-out/
+        ls -la "$REPORT" "$ARCHIVE"
 
   - id: upload-results
     name: 'gcr.io/cloud-builders/gsutil'
@@ -93,6 +98,9 @@ steps:
       - |
         set -euo pipefail
         DATE=$(date +%Y-%m-%d)
-        gsutil -m cp -r /workspace/bench-out/* "${_BUCKET}/truthful-completion/${DATE}/"
+        REPORT="/workspace/truthful-completion-${DATE}.md"
+        ARCHIVE="/workspace/truthful-completion-${DATE}.tar.gz"
+        DEST="${_BUCKET}/truthful-completion/${DATE}/"
+        gsutil -m cp -r /workspace/bench-out/*.json "$REPORT" "$ARCHIVE" "$DEST"
 
 timeout: 14400s  # 4 hours max

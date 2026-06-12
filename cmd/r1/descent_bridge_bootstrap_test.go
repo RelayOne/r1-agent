@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -13,24 +12,11 @@ import (
 // a tracked README so subsequent diffs have something to compare against.
 func initTempGitRepo(t *testing.T, dir string) string {
 	t.Helper()
-	run := func(args ...string) {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args[1:], err, out)
-		}
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skipf("git not available: %v", err)
-	}
-	run("git", "init")
-	run("git", "config", "user.email", "test@example.com")
-	run("git", "config", "user.name", "Test")
+	gitInitAt(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("seed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	run("git", "add", ".")
-	run("git", "commit", "-m", "seed")
+	gitCommitAllAt(t, dir, "seed")
 	return descentGitHead(context.Background(), dir)
 }
 
@@ -47,15 +33,8 @@ func TestBootstrapReinstallOnManifestChange(t *testing.T) {
 	if err := os.WriteFile(pj, []byte(`{"name":"x","version":"1.0.0"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	runGit("add", ".")
-	runGit("commit", "-m", "add pkg")
+	runGitIn(t, dir, "add", ".")
+	runGitIn(t, dir, "commit", "-m", "add pkg")
 	postRef := "HEAD"
 
 	// descentGitDiffNames must report package.json as changed.

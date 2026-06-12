@@ -192,6 +192,11 @@ type RunSpec struct {
 	// identifiers from the SOW and pushes a correction note into
 	// the next user message when code has drifted from the spec.
 	Supervisor *SupervisorConfig
+	// CortexEnabled, when true, wires the 4 deterministic cortex lobes into
+	// the native agentloop via agentloop.Config.Cortex. Mirrors
+	// BuildConfig.SpecExec; default-on lives at the CLI flag (--cortex), not
+	// the zero-value.
+	CortexEnabled     bool
 	WorktreeDir       string
 	RuntimeDir        string // outside worktree, for harness-owned files only
 	Mode              AuthMode

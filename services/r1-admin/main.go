@@ -31,12 +31,19 @@
 package main
 
 import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -48,6 +55,7 @@ var (
 	envName    = getenv("R1_ENV", "dev")
 	versionStr = getenv("R1_VERSION", "dev")
 	coordAPI   = getenv("R1_COORD_API_URL", "http://r1-coord-api:8080")
+	coordHTTP  = &http.Client{Timeout: 2 * time.Second}
 )
 
 func getenv(k, fallback string) string {
@@ -145,6 +153,20 @@ func render(w http.ResponseWriter, p page) {
 	_ = pageTpl.Execute(w, p)
 }
 
+type operatorClaimsContextKey struct{}
+
+type operatorScopeSnapshot struct {
+	AuthMode string
+	Subject  string
+	Email    string
+	Tenant   string
+	MSP      string
+	Org      string
+	Roles    string
+	Scope    string
+	Source   string
+}
+
 // --- handlers ---------------------------------------------------------
 
 func handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -159,14 +181,36 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		handleNotFound(w, r)
 		return
 	}
-	body := template.HTML(`
+	snapshot := buildDashboardSnapshot(r.Context(), time.Now(), coordHTTP)
+	body := template.HTML(fmt.Sprintf(`
 <div class="cards">
-  <div class="card"><div class="label">Active sessions</div><div class="value">—</div></div>
-  <div class="card"><div class="label">Live lanes</div><div class="value">—</div></div>
-  <div class="card"><div class="label">USD spent (24h)</div><div class="value">—</div></div>
-  <div class="card"><div class="label">Anti-trunc fires (24h)</div><div class="value">—</div></div>
+  <div class="card"><div class="label">Admin version</div><div class="value">%s</div></div>
+  <div class="card"><div class="label">Admin uptime</div><div class="value">%s</div></div>
+  <div class="card"><div class="label">Coord API</div><div class="value">%s</div></div>
+  <div class="card"><div class="label">Auth mode</div><div class="value">%s</div></div>
 </div>
-<p>Numbers populated by widgets that hit <code>/api/dashboard</code>; integration with r1-coord-api / Cloud SQL / CodeRadar is wired in the post-deploy iteration.</p>
+<p>This dashboard now reflects live hosted runtime truth for the admin service, operator auth mode, and coord-api reachability. Sessions, lanes, usage, revenue, and user data still require their backing stores/endpoints.</p>
+<h2>Dashboard truth</h2>
+<div class="cards">
+  <div class="card"><div class="label">Active sessions</div><div class="value">Unavailable</div><div class="muted">Requires <code>GET /v1/sessions</code> on the configured coord API.</div></div>
+  <div class="card"><div class="label">Live lanes</div><div class="value">Unavailable</div><div class="muted">No coord-api lane endpoint is wired in this repo.</div></div>
+  <div class="card"><div class="label">USD spent (24h)</div><div class="value">Unavailable</div><div class="muted">No central usage aggregation endpoint or table is wired.</div></div>
+  <div class="card"><div class="label">Anti-trunc fires (24h)</div><div class="value">Unavailable</div><div class="muted">No persisted anti-trunc result store is exposed to this page.</div></div>
+</div>
+<h2>Runtime summary</h2>
+<div class="kv">
+<span><b>Admin service:</b> <code>%s</code></span>
+<span><b>Admin env:</b> <code>%s</code></span>
+<span><b>Admin started:</b> <code>%s</code></span>
+<span><b>Coord API URL:</b> <code>%s</code></span>
+<span><b>Coord API service:</b> <code>%s</code></span>
+<span><b>Coord API env:</b> <code>%s</code></span>
+<span><b>Coord API version:</b> <code>%s</code></span>
+<span><b>JWT issuer:</b> <code>%s</code></span>
+<span><b>JWT audience:</b> <code>%s</code></span>
+<span><b>JWT secret:</b> <span class="tag">%s</span></span>
+</div>
+%s
 <h2>Quick links</h2>
 <ul>
 <li><a href="/sessions">All sessions</a> — every r1d daemon's session catalog</li>
@@ -177,7 +221,23 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 <li><a href="/revenue">Revenue</a> — per-tier MRR + ARR + churn</li>
 <li><a href="/antitrunc">Anti-truncation</a> — output of <code>r1 antitrunc verify</code></li>
 </ul>
-`)
+`,
+		template.HTMLEscapeString(snapshot.Admin.Version),
+		template.HTMLEscapeString(snapshot.Admin.Uptime),
+		template.HTMLEscapeString(snapshot.Coord.Status),
+		template.HTMLEscapeString(snapshot.Auth.Mode),
+		template.HTMLEscapeString(snapshot.Admin.Service),
+		template.HTMLEscapeString(snapshot.Admin.Env),
+		template.HTMLEscapeString(snapshot.Admin.StartedAt),
+		template.HTMLEscapeString(snapshot.Coord.URL),
+		template.HTMLEscapeString(snapshot.Coord.Service),
+		template.HTMLEscapeString(snapshot.Coord.Env),
+		template.HTMLEscapeString(snapshot.Coord.Version),
+		template.HTMLEscapeString(snapshot.Auth.Issuer),
+		template.HTMLEscapeString(snapshot.Auth.Audience),
+		template.HTMLEscapeString(snapshot.Auth.Secret),
+		template.HTMLEscapeString(snapshot.Coord.Note),
+	))
 	render(w, page{Title: "Dashboard", Path: "/", Body: body})
 }
 
@@ -198,10 +258,34 @@ func handleLanes(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleUsers(w http.ResponseWriter, r *http.Request) {
-	body := template.HTML(`
-<p>RelayOne MSP-tenanted user list. The <code>msp</code> claim from the JWT scopes the visible rows to the operator's tenant.</p>
-<table><thead><tr><th>Sub</th><th>Email</th><th>MSP</th><th>Org</th><th>Roles</th><th>Last active</th></tr></thead>
-<tbody><tr><td colspan=6 style="color:#888;text-align:center;padding:2rem">Wiring depends on the user store backed by Cloud SQL (post-deploy iteration).</td></tr></tbody></table>`)
+	scope := buildOperatorScopeSnapshot(r)
+	body := template.HTML(fmt.Sprintf(`
+<p>Current operator scope. This page reflects the verified bearer claims the admin service is enforcing right now, so operators can confirm tenant boundaries and identity without relying on a future user-store integration.</p>
+<div class="cards">
+  <div class="card"><div class="label">Auth mode</div><div class="value">%s</div></div>
+  <div class="card"><div class="label">Tenant scope</div><div class="value">%s</div></div>
+  <div class="card"><div class="label">MSP scope</div><div class="value">%s</div></div>
+  <div class="card"><div class="label">Org scope</div><div class="value">%s</div></div>
+</div>
+<div class="kv">
+<span><b>Claim source:</b> <code>%s</code></span>
+<span><b>Scope summary:</b> %s</span>
+</div>
+<table><thead><tr><th>Sub</th><th>Email</th><th>Tenant</th><th>MSP</th><th>Org</th><th>Roles</th></tr></thead>
+<tbody><tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr></tbody></table>`,
+		template.HTMLEscapeString(scope.AuthMode),
+		template.HTMLEscapeString(scope.Tenant),
+		template.HTMLEscapeString(scope.MSP),
+		template.HTMLEscapeString(scope.Org),
+		template.HTMLEscapeString(scope.Source),
+		template.HTMLEscapeString(scope.Scope),
+		template.HTMLEscapeString(scope.Subject),
+		template.HTMLEscapeString(scope.Email),
+		template.HTMLEscapeString(scope.Tenant),
+		template.HTMLEscapeString(scope.MSP),
+		template.HTMLEscapeString(scope.Org),
+		template.HTMLEscapeString(scope.Roles),
+	))
 	render(w, page{Title: "Users", Path: "/users", Body: body})
 }
 
@@ -239,14 +323,18 @@ func handleRevenue(w http.ResponseWriter, r *http.Request) {
 
 func handleAntitrunc(w http.ResponseWriter, r *http.Request) {
 	body := template.HTML(`
-<p>Output of the most recent <code>r1 antitrunc verify -n 100</code> run across each env. Each commit is classified Verified / Unverified / Lying. Lying counts > 0 are paged to oncall.</p>
-<table><thead><tr><th>Env</th><th>Window</th><th>Verified</th><th>Unverified</th><th>Lying</th><th>Last run</th></tr></thead>
-<tbody>
-<tr><td>prod</td><td>last 100 commits</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>staging</td><td>last 100 commits</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>dev</td><td>last 100 commits</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-</tbody></table>
-<p style="color:#888">Numbers populated by a Cloud Scheduler job running <code>r1 antitrunc verify</code> per env and writing results to a small Cloud SQL table read by this page (post-deploy iteration).</p>`)
+<p>Hosted anti-truncation status for this admin service. The anti-truncation engine itself is real elsewhere in the repo, but this Cloud Run admin build does not currently ingest verifier output or expose a persisted event feed.</p>
+<div class="cards">
+<div class="card"><div class="label">Admin surface</div><div class="value">Unavailable in this admin build</div></div>
+<div class="card"><div class="label">Verifier CLI</div><div class="value"><code>r1 antitrunc verify</code></div></div>
+<div class="card"><div class="label">File audit trail</div><div class="value"><code>audit/antitrunc/</code></div></div>
+<div class="card"><div class="label">Hosted result reader</div><div class="value">Not wired</div></div>
+</div>
+<div class="kv">
+<span><b>Current limitation:</b> this service does not read antitrunc results from Cloud SQL, GCS, or an event buffer.</span>
+<span><b>What operators can use now:</b> run <code>r1 antitrunc verify -n 20</code> in the repo or inspect <code>audit/antitrunc/</code> produced by the CLI and git hook.</span>
+<span><b>Why this page is explicit:</b> rendering synthetic prod/staging/dev rows here would overstate hosted coverage that the admin service does not have.</span>
+</div>`)
 	render(w, page{Title: "Anti-truncation", Path: "/antitrunc", Body: body})
 }
 
@@ -272,20 +360,190 @@ func envOrUnset(k string) string {
 	return "unset"
 }
 
+func buildOperatorScopeSnapshot(r *http.Request) operatorScopeSnapshot {
+	scope := operatorScopeSnapshot{
+		AuthMode: "dev bypass",
+		Subject:  "(unverified)",
+		Email:    "(unset)",
+		Tenant:   "(global)",
+		MSP:      "(unset)",
+		Org:      "(unset)",
+		Roles:    "(none)",
+		Scope:    "dev bypass active; no verified bearer claims on this request",
+		Source:   "request context",
+	}
+
+	claims, ok := operatorClaimsFromRequest(r)
+	if !ok {
+		if envName != "dev" {
+			scope.AuthMode = "jwt unavailable"
+			scope.Scope = "request reached the users panel without verified operator claims"
+		}
+		return scope
+	}
+
+	scope.AuthMode = "jwt enforced"
+	scope.Subject = stringClaim(claims, "sub")
+	scope.Email = stringClaim(claims, "email")
+	scope.Tenant = stringClaim(claims, "tenant_id")
+	scope.MSP = nestedStringClaim(claims, "msp", "id")
+	scope.Org = firstNonEmpty(stringClaim(claims, "org_id", "org"), nestedStringClaim(claims, "msp", "org_id", "org"))
+	scope.Roles = strings.Join(claimRoles(claims), ", ")
+
+	if scope.Subject == "" {
+		scope.Subject = "(unset)"
+	}
+	if scope.Email == "" {
+		scope.Email = "(unset)"
+	}
+	if scope.Tenant == "" {
+		scope.Tenant = "(global)"
+	}
+	if scope.MSP == "" {
+		scope.MSP = "(unset)"
+	}
+	if scope.Org == "" {
+		scope.Org = "(unset)"
+	}
+	if scope.Roles == "" {
+		scope.Roles = "(none)"
+	}
+	scope.Scope = fmt.Sprintf("tenant=%s · msp=%s · org=%s", scope.Tenant, scope.MSP, scope.Org)
+	return scope
+}
+
+type dashboardSnapshot struct {
+	Admin dashboardServiceStatus
+	Coord dashboardCoordStatus
+	Auth  dashboardAuthStatus
+}
+
+type dashboardServiceStatus struct {
+	Service   string
+	Env       string
+	Version   string
+	Uptime    string
+	StartedAt string
+}
+
+type dashboardCoordStatus struct {
+	URL     string
+	Status  string
+	Service string
+	Env     string
+	Version string
+	Note    string
+	Error   string
+}
+
+type dashboardAuthStatus struct {
+	Mode     string
+	Issuer   string
+	Audience string
+	Secret   string
+}
+
+type healthzPayload struct {
+	OK        bool   `json:"ok"`
+	Service   string `json:"service"`
+	Env       string `json:"env"`
+	Version   string `json:"version"`
+	UptimeSec int64  `json:"uptime_sec"`
+}
+
+func buildDashboardSnapshot(ctx context.Context, now time.Time, client *http.Client) dashboardSnapshot {
+	snapshot := dashboardSnapshot{
+		Admin: dashboardServiceStatus{
+			Service:   serviceName,
+			Env:       envName,
+			Version:   versionStr,
+			Uptime:    now.Sub(startedAt).Round(time.Second).String(),
+			StartedAt: startedAt.UTC().Format(time.RFC3339),
+		},
+		Coord: dashboardCoordStatus{
+			URL:     coordAPI,
+			Status:  "unreachable",
+			Service: "unknown",
+			Env:     "unknown",
+			Version: "unknown",
+			Note:    "coord-api health probe failed",
+		},
+		Auth: dashboardAuthStatus{
+			Mode:     "jwt unavailable",
+			Issuer:   getenv("AUTH_JWT_ISSUER", "(unset)"),
+			Audience: getenv("AUTH_JWT_AUDIENCE", "(unset)"),
+			Secret:   envOrUnset("AUTH_JWT_SECRET"),
+		},
+	}
+
+	if envName == "dev" {
+		snapshot.Auth.Mode = "dev bypass"
+	} else if _, err := loadAdminJWTConfig(); err == nil {
+		snapshot.Auth.Mode = "jwt enforced"
+	}
+
+	health, err := fetchCoordHealth(ctx, client, coordAPI)
+	if err != nil {
+		snapshot.Coord.Error = err.Error()
+		return snapshot
+	}
+	snapshot.Coord.Status = "healthy"
+	snapshot.Coord.Service = health.Service
+	snapshot.Coord.Env = health.Env
+	snapshot.Coord.Version = health.Version
+	snapshot.Coord.Note = fmt.Sprintf("healthz ok · uptime=%ds", health.UptimeSec)
+	return snapshot
+}
+
+func fetchCoordHealth(ctx context.Context, client *http.Client, baseURL string) (healthzPayload, error) {
+	if client == nil {
+		client = coordHTTP
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/healthz", nil)
+	if err != nil {
+		return healthzPayload{}, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return healthzPayload{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return healthzPayload{}, fmt.Errorf("coord-api healthz status %d", resp.StatusCode)
+	}
+	var payload healthzPayload
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return healthzPayload{}, err
+	}
+	if payload.Service == "" {
+		payload.Service = "unknown"
+	}
+	if payload.Env == "" {
+		payload.Env = "unknown"
+	}
+	if payload.Version == "" {
+		payload.Version = "unknown"
+	}
+	return payload, nil
+}
+
 func handleNotFound(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 	body := template.HTML(`<p>Path <code>` + template.HTMLEscapeString(r.URL.Path) + `</code> not found.</p><p><a href="/">← Dashboard</a></p>`)
 	render(w, page{Title: "404", Path: r.URL.Path, Body: body})
 }
 
-// requireOperator is a tiny middleware that checks the role claim from
-// the Bearer JWT. We accept the JWT server-side for simplicity; the JWT
-// itself is issued by r1-coord-api's /v1/auth/sso/callback. A Go port
-// of @relayone/auth-core lives in services/r1-coord-api/internal/auth/;
-// in this admin we deliberately only verify the Bearer is well-formed
-// (the actual signature verification belongs in a shared package — a
-// post-deploy refactor will lift the auth code out of r1-coord-api so
-// r1-admin can import it directly).
+type adminJWTConfig struct {
+	issuer   string
+	audience string
+	secret   string
+}
+
+var errAdminJWTConfigMissing = errors.New("admin jwt config missing")
+
+// requireOperator keeps dev-mode friction low but verifies production
+// operator tokens locally so the hosted admin cannot be unlocked by a
+// bare Authorization prefix.
 func requireOperator(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isPublic(r.URL.Path) {
@@ -298,13 +556,242 @@ func requireOperator(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
+		token, ok := bearerTokenFromHeader(r.Header.Get("Authorization"))
+		if !ok {
 			http.Redirect(w, r, "/v1/auth/sso/start", http.StatusFound)
 			return
 		}
-		next.ServeHTTP(w, r)
+		cfg, err := loadAdminJWTConfig()
+		if err != nil {
+			http.Error(w, "admin auth unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		claims, err := verifyAdminJWT(token, cfg)
+		if err != nil {
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
+		}
+		if !hasOperatorRole(claims) {
+			http.Error(w, "operator role required", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), operatorClaimsContextKey{}, claims)))
 	})
+}
+
+func operatorClaimsFromRequest(r *http.Request) (map[string]any, bool) {
+	if r == nil {
+		return nil, false
+	}
+	claims, ok := r.Context().Value(operatorClaimsContextKey{}).(map[string]any)
+	return claims, ok
+}
+
+func bearerTokenFromHeader(authHeader string) (string, bool) {
+	if authHeader == "" {
+		return "", false
+	}
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return "", false
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if token == "" {
+		return "", true
+	}
+	return token, true
+}
+
+func loadAdminJWTConfig() (adminJWTConfig, error) {
+	cfg := adminJWTConfig{
+		issuer:   os.Getenv("AUTH_JWT_ISSUER"),
+		audience: os.Getenv("AUTH_JWT_AUDIENCE"),
+		secret:   os.Getenv("AUTH_JWT_SECRET"),
+	}
+	if cfg.issuer == "" || cfg.audience == "" || cfg.secret == "" {
+		return adminJWTConfig{}, errAdminJWTConfigMissing
+	}
+	return cfg, nil
+}
+
+func verifyAdminJWT(token string, cfg adminJWTConfig) (map[string]any, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, errors.New("jwt must have three parts")
+	}
+
+	encoding := base64.RawURLEncoding
+	headerBytes, err := encoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, err
+	}
+	var header struct {
+		Alg string `json:"alg"`
+	}
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return nil, err
+	}
+	if header.Alg != "HS256" {
+		return nil, errors.New("unsupported jwt alg")
+	}
+
+	payloadBytes, err := encoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, err
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return nil, err
+	}
+
+	signature, err := encoding.DecodeString(parts[2])
+	if err != nil {
+		return nil, err
+	}
+	mac := hmac.New(sha256.New, []byte(cfg.secret))
+	if _, err := mac.Write([]byte(parts[0] + "." + parts[1])); err != nil {
+		return nil, err
+	}
+	expected := mac.Sum(nil)
+	if subtle.ConstantTimeCompare(signature, expected) != 1 {
+		return nil, errors.New("invalid jwt signature")
+	}
+
+	if iss, _ := claims["iss"].(string); iss != cfg.issuer {
+		return nil, errors.New("invalid issuer")
+	}
+	if !audienceMatches(claims["aud"], cfg.audience) {
+		return nil, errors.New("invalid audience")
+	}
+	if !claimTimeValid(claims["exp"], time.Now()) {
+		return nil, errors.New("token expired")
+	}
+	return claims, nil
+}
+
+func audienceMatches(raw any, want string) bool {
+	switch aud := raw.(type) {
+	case string:
+		return aud == want
+	case []any:
+		for _, value := range aud {
+			if audValue, ok := value.(string); ok && audValue == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func claimTimeValid(raw any, now time.Time) bool {
+	if raw == nil {
+		return true
+	}
+	switch value := raw.(type) {
+	case float64:
+		return int64(value) > now.Unix()
+	case json.Number:
+		parsed, err := value.Int64()
+		return err == nil && parsed > now.Unix()
+	case string:
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		return err == nil && parsed > now.Unix()
+	default:
+		return false
+	}
+}
+
+func hasOperatorRole(claims map[string]any) bool {
+	if containsRole(claims["roles"], "operator") {
+		return true
+	}
+	msp, ok := claims["msp"].(map[string]any)
+	if !ok {
+		return false
+	}
+	return containsRole(msp["roles"], "operator")
+}
+
+func containsRole(raw any, want string) bool {
+	switch roles := raw.(type) {
+	case []any:
+		for _, role := range roles {
+			if roleValue, ok := role.(string); ok && roleValue == want {
+				return true
+			}
+		}
+	case []string:
+		for _, role := range roles {
+			if role == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func claimRoles(claims map[string]any) []string {
+	roles := collectRoles(nil, claims["roles"])
+	if msp, ok := claims["msp"].(map[string]any); ok {
+		roles = collectRoles(roles, msp["roles"])
+	}
+	if len(roles) == 0 {
+		return nil
+	}
+	return roles
+}
+
+func collectRoles(dst []string, raw any) []string {
+	switch roles := raw.(type) {
+	case []any:
+		for _, role := range roles {
+			if roleValue, ok := role.(string); ok {
+				dst = appendUnique(dst, roleValue)
+			}
+		}
+	case []string:
+		for _, role := range roles {
+			dst = appendUnique(dst, role)
+		}
+	}
+	return dst
+}
+
+func appendUnique(dst []string, value string) []string {
+	if value == "" {
+		return dst
+	}
+	for _, existing := range dst {
+		if existing == value {
+			return dst
+		}
+	}
+	return append(dst, value)
+}
+
+func stringClaim(claims map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := claims[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func nestedStringClaim(claims map[string]any, parent string, keys ...string) string {
+	nested, ok := claims[parent].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return stringClaim(nested, keys...)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func isPublic(p string) bool {

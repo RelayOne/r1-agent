@@ -31,6 +31,20 @@ import {
   readDaemonJson,
 } from "./helpers/desktop-fixtures";
 
+// SKIPPED-WITH-REASON (CI-2 desktop-e2e-truth, 2026-06-12): the desktop
+// app exposes NO test-mode driver surface. These specs require a
+// `testState` verb backing the "test://daemon-status" hook, host-side
+// handling of R1_E2E / R1_FAKE_EXTERNAL_DAEMON, and a clickable
+// `[data-role="r1-daemon-pill"]` driver route — none of which exist in
+// desktop/src or desktop/src-tauri (grep evidence in
+// audit/desktop-e2e-truth-2026-06-12.md). Un-skip only when the app
+// ships a real, non-production-gated test surface; never fabricate
+// hook responses to force green.
+test.skip(
+  true,
+  "app has no test-mode driver surface (testState / R1_E2E / r1-daemon-pill) — see audit/desktop-e2e-truth-2026-06-12.md (CI-2)",
+);
+
 test.describe("Daemon discovery + sidecar fallback", () => {
   test("cold start with no daemon spawns sidecar within 3 s", async () => {
     await ensureNoDaemonJson();

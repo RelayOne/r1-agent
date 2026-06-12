@@ -248,3 +248,133 @@ func TestSummarizeParams(t *testing.T) {
 		}
 	}
 }
+
+// --- B3: language-agnostic fallback (non-Go repos) ---
+
+func setupPythonRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "app"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	main := `import app.util
+
+class App:
+    def run(self):
+        pass
+
+def main():
+    pass
+`
+	util := `def helper():
+    pass
+
+def parse():
+    pass
+
+def load():
+    pass
+
+def save():
+    pass
+`
+	if err := os.WriteFile(filepath.Join(dir, "app", "main.py"), []byte(main), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "app", "util.py"), []byte(util), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func symbolNames(rm *RepoMap) map[string]bool {
+	found := make(map[string]bool)
+	for _, s := range rm.Symbols {
+		found[s.Name] = true
+	}
+	return found
+}
+
+func TestBuildPythonRepo(t *testing.T) {
+	rm, err := Build(setupPythonRepo(t))
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(rm.Files) == 0 {
+		t.Fatal("len(rm.Files)==0 — fallback did not fire for a Python repo")
+	}
+	if len(rm.Symbols) == 0 {
+		t.Fatal("len(rm.Symbols)==0 — no Python symbols extracted via fallback")
+	}
+	found := symbolNames(rm)
+	if !found["App"] || !found["helper"] {
+		t.Fatalf("expected Python symbols App and helper; got %v", found)
+	}
+}
+
+func TestRenderPython(t *testing.T) {
+	rm, _ := Build(setupPythonRepo(t))
+	out := rm.Render(0)
+	if !strings.Contains(out, "Repository Map") {
+		t.Fatalf("Render output missing header; got: %q", out)
+	}
+	if !strings.Contains(out, "App") && !strings.Contains(out, "helper") {
+		t.Fatalf("Render output missing any Python symbol; got: %q", out)
+	}
+}
+
+func TestRenderRelevantPython(t *testing.T) {
+	rm, _ := Build(setupPythonRepo(t))
+	out := rm.RenderRelevant([]string{"app/main.py"}, 0)
+	// The exact empty-header defect B3 fixes:
+	if len(out) <= len("# Repository Map\n\n") {
+		t.Fatalf("RenderRelevant emitted only the empty header (B3 defect); got %q", out)
+	}
+	// app/util.py has more symbols (helper/parse/load/save) -> ranks high; its
+	// symbols must appear, demonstrating the symbol-count bonus ranking.
+	if !strings.Contains(out, "helper") {
+		t.Fatalf("expected top-ranked app/util.py symbol 'helper' in output; got: %q", out)
+	}
+}
+
+func setupTSRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	app := `import { Helper } from "./util";
+
+export interface Config {
+  name: string;
+}
+
+export class App {
+  async start() {}
+}
+`
+	util := `export function createHelper(): string {
+  return "h";
+}
+
+export const VERSION = "1.0";
+`
+	if err := os.WriteFile(filepath.Join(dir, "src", "app.ts"), []byte(app), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "src", "util.ts"), []byte(util), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestBuildTSRepo(t *testing.T) {
+	rm, _ := Build(setupTSRepo(t))
+	if len(rm.Files) == 0 {
+		t.Fatal("len(rm.Files)==0 — fallback did not fire for a TypeScript repo")
+	}
+	found := symbolNames(rm)
+	if !found["Config"] || !found["App"] {
+		t.Fatalf("expected TS symbols Config and App; got %v", found)
+	}
+}

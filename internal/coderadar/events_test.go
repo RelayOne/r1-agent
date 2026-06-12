@@ -78,7 +78,7 @@ func TestIsCanonical(t *testing.T) {
 func TestPostsBatchToEventsEndpoint(t *testing.T) {
 	var (
 		gotPath string
-		gotKey  string
+		gotAuth string
 		gotBody eventsBatch
 		mu      sync.Mutex
 	)
@@ -86,7 +86,7 @@ func TestPostsBatchToEventsEndpoint(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		gotPath = r.URL.Path
-		gotKey = r.Header.Get("x-coderadar-key")
+		gotAuth = r.Header.Get("Authorization")
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.WriteHeader(http.StatusAccepted)
 	}))
@@ -111,8 +111,8 @@ func TestPostsBatchToEventsEndpoint(t *testing.T) {
 	if gotPath != "/v1/events" {
 		t.Fatalf("path=%q want /v1/events", gotPath)
 	}
-	if gotKey != "cw_test_key" {
-		t.Fatalf("x-coderadar-key=%q", gotKey)
+	if gotAuth != "Bearer cw_test_key" {
+		t.Fatalf("authorization=%q", gotAuth)
 	}
 	if len(gotBody.Events) != 1 {
 		t.Fatalf("got %d events, want 1", len(gotBody.Events))
@@ -132,6 +132,9 @@ func TestPostsBatchToEventsEndpoint(t *testing.T) {
 	}
 	if got.EventID != "evt-test-1" {
 		t.Errorf("event_id=%q", got.EventID)
+	}
+	if got.Tags["plan_steps"] != "4" {
+		t.Errorf("tags.plan_steps=%v", got.Tags["plan_steps"])
 	}
 }
 

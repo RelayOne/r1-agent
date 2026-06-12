@@ -1,37 +1,23 @@
 // SPDX-License-Identifier: MIT
 //
-// Ledger node-detail drawer (R1D-5.2 + R1D-5.4).
+// Ledger node-detail drawer (R1D-5.2).
 //
 // Shared overlay that slides in from the right when the user clicks a
-// timeline row in the ledger browser. Renders node kind, timestamp,
-// content hash, parent hash, a kind-specific payload view, and a
-// crypto-shred action guarded by a double-confirm modal.
+// event row in the ledger browser. Renders node kind, timestamp,
+// content hash, parent hash, and a kind-specific payload view.
 //
-// The ledger-viewer panel owns the click wiring; this module only
-// renders, controls visibility, and invokes the shred stub. On a
-// successful shred the caller is notified via `onShredded(nodeId)` so
-// it can update the timeline in place.
+// The desktop host does not implement ledger mutation verbs yet, so
+// the drawer is read-only and does not claim crypto-shred support.
 
-import { invokeStub } from "../ipc-stub";
-import type { LedgerNode, LedgerShredResult } from "../types/ipc";
+import type { LedgerNode } from "../types/ipc";
 
 const DRAWER_ID = "r1-ledger-node-drawer";
 const BACKDROP_ID = "r1-ledger-node-backdrop";
-const CONFIRM_ID = "r1-ledger-shred-confirm";
-
-type ShredCallback = (nodeId: string) => void;
-
-interface DrawerHandlers {
-  onShredded?: ShredCallback;
-}
 
 let drawerRoot: HTMLElement | null = null;
 let backdropRoot: HTMLElement | null = null;
-let confirmRoot: HTMLElement | null = null;
 let lastFocus: HTMLElement | null = null;
 let currentNode: LedgerNode | null = null;
-let currentHandlers: DrawerHandlers = {};
-let confirmStage: 0 | 1 | 2 = 0;
 
 export function mountNodeDrawer(parent: HTMLElement): void {
   if (document.getElementById(DRAWER_ID)) return;
@@ -63,72 +49,21 @@ export function mountNodeDrawer(parent: HTMLElement): void {
     <div class="r1-drawer-body" data-role="drawer-body">
       <p class="r1-empty">Select a node to inspect.</p>
     </div>
-    <footer class="r1-drawer-footer" data-role="drawer-footer" hidden>
-      <button
-        type="button"
-        class="r1-btn r1-btn-danger"
-        data-role="shred-btn"
-      >Crypto-shred</button>
-    </footer>
   `;
   drawer
     .querySelector<HTMLButtonElement>('[data-role="drawer-close"]')
     ?.addEventListener("click", () => closeNodeDrawer());
-  drawer
-    .querySelector<HTMLButtonElement>('[data-role="shred-btn"]')
-    ?.addEventListener("click", () => openConfirm());
-
-  const confirm = document.createElement("div");
-  confirm.id = CONFIRM_ID;
-  confirm.className = "r1-modal r1-ledger-shred-confirm";
-  confirm.setAttribute("role", "alertdialog");
-  confirm.setAttribute("aria-modal", "true");
-  confirm.setAttribute("aria-labelledby", `${CONFIRM_ID}-title`);
-  confirm.hidden = true;
-  confirm.innerHTML = `
-    <div class="r1-modal-panel">
-      <h3 id="${CONFIRM_ID}-title" class="r1-modal-title">Crypto-shred node?</h3>
-      <p class="r1-modal-body" data-role="confirm-body">
-        This action drops the payload bytes and marks the node shredded
-        in the meta-ledger. The content hash stays on the chain so
-        verify-chain still passes, but the payload is gone forever.
-      </p>
-      <div class="r1-modal-actions">
-        <button
-          type="button"
-          class="r1-btn"
-          data-role="confirm-cancel"
-        >Cancel</button>
-        <button
-          type="button"
-          class="r1-btn r1-btn-danger"
-          data-role="confirm-advance"
-        >Yes, shred</button>
-      </div>
-    </div>
-  `;
-  confirm
-    .querySelector<HTMLButtonElement>('[data-role="confirm-cancel"]')
-    ?.addEventListener("click", () => closeConfirm());
-  confirm
-    .querySelector<HTMLButtonElement>('[data-role="confirm-advance"]')
-    ?.addEventListener("click", () => advanceConfirm());
 
   parent.appendChild(backdrop);
   parent.appendChild(drawer);
-  parent.appendChild(confirm);
 
   backdropRoot = backdrop;
   drawerRoot = drawer;
-  confirmRoot = confirm;
 
   document.addEventListener("keydown", handleKeydown);
 }
 
-export async function openNodeDrawer(
-  node: LedgerNode,
-  handlers: DrawerHandlers = {},
-): Promise<void> {
+export async function openNodeDrawer(node: LedgerNode): Promise<void> {
   if (!drawerRoot || !backdropRoot) return;
 
   lastFocus = document.activeElement instanceof HTMLElement
@@ -136,8 +71,6 @@ export async function openNodeDrawer(
     : null;
 
   currentNode = node;
-  currentHandlers = handlers;
-
   renderDrawerBody(node);
 
   backdropRoot.hidden = false;
@@ -147,13 +80,11 @@ export async function openNodeDrawer(
 }
 
 export function closeNodeDrawer(): void {
-  closeConfirm();
   if (!drawerRoot || !backdropRoot) return;
   drawerRoot.classList.remove("is-open");
   drawerRoot.hidden = true;
   backdropRoot.hidden = true;
   currentNode = null;
-  currentHandlers = {};
   if (lastFocus && document.body.contains(lastFocus)) {
     lastFocus.focus();
   }
@@ -172,18 +103,6 @@ function renderDrawerBody(node: LedgerNode): void {
     '[data-role="drawer-body"]',
   );
   if (body) body.innerHTML = renderNodeMarkup(node);
-
-  const footer = drawerRoot.querySelector<HTMLDivElement>(
-    '[data-role="drawer-footer"]',
-  );
-  const shredBtn = drawerRoot.querySelector<HTMLButtonElement>(
-    '[data-role="shred-btn"]',
-  );
-  if (footer) footer.hidden = false;
-  if (shredBtn) {
-    shredBtn.disabled = node.shredded;
-    shredBtn.textContent = node.shredded ? "Already shredded" : "Crypto-shred";
-  }
 }
 
 function renderNodeMarkup(node: LedgerNode): string {
@@ -204,6 +123,9 @@ function renderNodeMarkup(node: LedgerNode): string {
     </dl>
     <section class="r1-ledger-node-payload" aria-label="Payload">
       <h3 class="r1-ledger-node-payload-title">Payload</h3>
+      <p class="r1-ledger-node-readonly-note" data-role="ledger-drawer-readonly">
+        Read-only node detail. This desktop host does not expose verify or shred controls.
+      </p>
       ${renderPayload(node)}
     </section>
   `;
@@ -316,84 +238,8 @@ function renderGenericJson(payload: Record<string, unknown>): string {
   return `<pre class="r1-ledger-node-json"><code>${escapeHtml(pretty)}</code></pre>`;
 }
 
-function openConfirm(): void {
-  if (!confirmRoot || !currentNode) return;
-  if (currentNode.shredded) return;
-  confirmStage = 1;
-  const body = confirmRoot.querySelector<HTMLParagraphElement>(
-    '[data-role="confirm-body"]',
-  );
-  const advance = confirmRoot.querySelector<HTMLButtonElement>(
-    '[data-role="confirm-advance"]',
-  );
-  if (body) {
-    body.textContent =
-      "This action drops the payload bytes and marks the node shredded in the meta-ledger. The content hash stays on the chain so verify-chain still passes, but the payload is gone forever.";
-  }
-  if (advance) {
-    advance.textContent = "Yes, shred";
-    advance.disabled = false;
-  }
-  confirmRoot.hidden = false;
-  confirmRoot.classList.add("is-open");
-}
-
-function closeConfirm(): void {
-  if (!confirmRoot) return;
-  confirmRoot.classList.remove("is-open");
-  confirmRoot.hidden = true;
-  confirmStage = 0;
-}
-
-async function advanceConfirm(): Promise<void> {
-  if (!confirmRoot || !currentNode) return;
-
-  if (confirmStage === 1) {
-    confirmStage = 2;
-    const body = confirmRoot.querySelector<HTMLParagraphElement>(
-      '[data-role="confirm-body"]',
-    );
-    const advance = confirmRoot.querySelector<HTMLButtonElement>(
-      '[data-role="confirm-advance"]',
-    );
-    if (body) {
-      body.textContent = `Final confirmation: shred node ${currentNode.id}? This cannot be undone.`;
-    }
-    if (advance) advance.textContent = "Confirm shred";
-    return;
-  }
-
-  const node = currentNode;
-  const advance = confirmRoot.querySelector<HTMLButtonElement>(
-    '[data-role="confirm-advance"]',
-  );
-  if (advance) {
-    advance.disabled = true;
-    advance.textContent = "Shredding…";
-  }
-
-  const result = await invokeStub<LedgerShredResult>(
-    "ledger_shred",
-    "R1D-5",
-    { ok: true },
-    { session_id: "", node_id: node.id },
-  );
-
-  closeConfirm();
-  if (!result.ok) return;
-
-  node.shredded = true;
-  renderDrawerBody(node);
-  currentHandlers.onShredded?.(node.id);
-}
-
 function handleKeydown(event: KeyboardEvent): void {
   if (event.key !== "Escape") return;
-  if (confirmRoot && !confirmRoot.hidden) {
-    event.preventDefault();
-    closeConfirm();
-    return;
-  }
   if (!drawerRoot || drawerRoot.hidden) return;
   event.preventDefault();
   closeNodeDrawer();

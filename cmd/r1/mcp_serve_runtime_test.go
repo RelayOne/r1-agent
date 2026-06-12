@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -14,12 +13,11 @@ import (
 // pipes initialize → tools/list → tools/call through stdin.
 // Asserts the response shapes for each frame.
 func TestMCPServeRuntime_ThreeMessageExchange(t *testing.T) {
-	r1Bin := buildR1ForTest(t)
 	var stdin bytes.Buffer
 	stdin.WriteString(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")
 	stdin.WriteString(`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}` + "\n")
 	stdin.WriteString(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"r1.cortex.lobes_list","arguments":{"session_id":"test-session"}}}` + "\n")
-	cmd := exec.Command(r1Bin, "mcp", "serve", "--session-id", "test-session")
+	cmd := newR1TestCommand(t, "mcp", "serve", "--session-id", "test-session")
 	cmd.Stdin = &stdin
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -93,16 +91,15 @@ func TestMCPServeRuntime_ThreeMessageExchange(t *testing.T) {
 // server rejects tools/call without a matching meta.r1_mcp_key,
 // while accepting calls that supply the correct key.
 func TestMCPServeRuntime_AuthGate(t *testing.T) {
-	r1Bin := buildR1ForTest(t)
 	var stdin bytes.Buffer
 	stdin.WriteString(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")
 	// missing meta.r1_mcp_key → unauthorized
 	stdin.WriteString(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"r1.cortex.lobes_list","arguments":{"session_id":"auth-test"}}}` + "\n")
 	// correct meta.r1_mcp_key → success
 	stdin.WriteString(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"r1.cortex.lobes_list","arguments":{"session_id":"auth-test"},"meta":{"r1_mcp_key":"secret-key"}}}` + "\n")
-	cmd := exec.Command(r1Bin, "mcp", "serve", "--session-id", "auth-test")
+	cmd := newR1TestCommand(t, "mcp", "serve", "--session-id", "auth-test")
 	cmd.Stdin = &stdin
-	cmd.Env = append(os.Environ(), "R1_MCP_KEY=secret-key")
+	cmd.Env = append(cmd.Env, "R1_MCP_KEY=secret-key")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, runErr := cmd.Output()
@@ -156,10 +153,9 @@ func TestMCPServeRuntime_AuthGate(t *testing.T) {
 // registers the 4 deterministic Lobes so r1.cortex.lobes_list returns
 // them.
 func TestMCPServeRuntime_DeterministicLobes(t *testing.T) {
-	r1Bin := buildR1ForTest(t)
 	var stdin bytes.Buffer
 	stdin.WriteString(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"r1.cortex.lobes_list","arguments":{"session_id":"det-lobes"}}}` + "\n")
-	cmd := exec.Command(r1Bin, "mcp", "serve", "--session-id", "det-lobes", "--lobes", "deterministic")
+	cmd := newR1TestCommand(t, "mcp", "serve", "--session-id", "det-lobes", "--lobes", "deterministic")
 	cmd.Stdin = &stdin
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -199,10 +195,9 @@ func TestMCPServeRuntime_DeterministicLobes(t *testing.T) {
 // cortex backend so r1.cortex.* calls return the documented
 // "cortex backend not wired" error.
 func TestMCPServeRuntime_NoCortex(t *testing.T) {
-	r1Bin := buildR1ForTest(t)
 	var stdin bytes.Buffer
 	stdin.WriteString(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"r1.cortex.lobes_list","arguments":{"session_id":"no-cortex-test"}}}` + "\n")
-	cmd := exec.Command(r1Bin, "mcp", "serve", "--no-cortex", "--session-id", "no-cortex-test")
+	cmd := newR1TestCommand(t, "mcp", "serve", "--no-cortex", "--session-id", "no-cortex-test")
 	cmd.Stdin = &stdin
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -253,24 +248,40 @@ func chompLines(s string) []string {
 	return out
 }
 
-// buildR1ForTest builds the r1 binary into a temp dir for the test
-// to spawn as a subprocess. Skipped in -short mode.
-func buildR1ForTest(t *testing.T) string {
+func newR1TestCommand(t *testing.T, args ...string) *exec.Cmd {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping subprocess test in -short mode")
 	}
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "r1")
-	// LINT-ALLOW chdir-test: read-only Getwd to anchor the build command at the cmd/r1 package dir under `go test`; never mutates cwd.
-	wd, err := os.Getwd()
+	testBin, err := os.Executable()
 	if err != nil {
-		t.Fatalf("Getwd: %v", err)
+		t.Fatalf("os.Executable: %v", err)
 	}
-	build := exec.Command("go", "build", "-o", bin, "./")
-	build.Dir = wd
-	if buildOut, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build: %v\n%s", err, buildOut)
+	cmdArgs := append([]string{"-test.run=TestMCPServeRuntimeHelperProcess", "--"}, args...)
+	cmd := exec.Command(testBin, cmdArgs...)
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+	return cmd
+}
+
+func TestMCPServeRuntimeHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
+		return
 	}
-	return bin
+	sep := -1
+	for i, arg := range os.Args {
+		if arg == "--" {
+			sep = i
+			break
+		}
+	}
+	if sep == -1 || sep+1 >= len(os.Args) {
+		os.Exit(2)
+	}
+	origArgs := os.Args
+	os.Args = append([]string{"r1"}, os.Args[sep+1:]...)
+	defer func() {
+		os.Args = origArgs
+	}()
+	main()
+	os.Exit(0)
 }

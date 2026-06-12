@@ -1,9 +1,18 @@
 // SPDX-License-Identifier: MIT
 //
 // Thin shim that hands a Playwright Page-like surface to the desktop
-// e2e specs. CI wires this to `tauri-driver` (a WebDriver-compatible
-// daemon Tauri ships for end-to-end testing); local dev runs the
-// same surface against a Playwright-managed Electron-style binary.
+// e2e specs.
+//
+// TRUTH NOTE (CI-2 desktop-e2e-truth, 2026-06-12): this shim is NOT
+// wired to anything real. It spawns the app binary directly and then
+// POSTs invented verbs (`/click`, `/waitForEvent`, `/testState`) to
+// the tauri-driver port — but tauri-driver speaks the W3C WebDriver
+// protocol and serves none of these endpoints, and the app exposes no
+// test-mode hooks for them either (no R1_E2E / R1_FAKE_EXTERNAL_DAEMON
+// handling in desktop/src-tauri). Every call below therefore fails
+// with ECONNREFUSED/404 in CI. All specs that depend on this surface
+// are skipped-with-reason until a real test-mode IPC surface lands;
+// see audit/desktop-e2e-truth-2026-06-12.md for the un-skip contract.
 //
 // The shim's job is purely lifecycle — start a driver session,
 // expose `click` / `testState` / `close`, and tear down deterministic

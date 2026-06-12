@@ -22,6 +22,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
 
+	"github.com/RelayOne/r1/internal/analytics"
 	"github.com/RelayOne/r1/internal/app"
 	"github.com/RelayOne/r1/internal/audit"
 	"github.com/RelayOne/r1/internal/boulder"
@@ -48,9 +49,11 @@ import (
 	hubbuiltin "github.com/RelayOne/r1/internal/hub/builtin"
 	"github.com/RelayOne/r1/internal/interview"
 	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/lifecycle"
 	litellmPkg "github.com/RelayOne/r1/internal/litellm"
 	"github.com/RelayOne/r1/internal/logging"
 	stokeMCP "github.com/RelayOne/r1/internal/mcp"
+	"github.com/RelayOne/r1/internal/memory"
 	"github.com/RelayOne/r1/internal/metrics"
 	"github.com/RelayOne/r1/internal/model"
 	"github.com/RelayOne/r1/internal/modelsource"
@@ -96,32 +99,36 @@ var fatalReporter *r1coderadar.Client
 // BuildConfig holds all parameters for a build run.
 // Used by both buildCmd (CLI) and shipCmd (programmatic).
 type BuildConfig struct {
-	RepoRoot        string
-	PlanPath        string // if empty, auto-detect
-	PolicyPath      string
-	Workers         int
-	AuthMode        string
-	ClaudeBinary    string
-	CodexBinary     string
-	ClaudeConfigDir string
-	CodexHome       string
-	ClaudePoolDirs  []string
-	CodexPoolDirs   []string
-	BuildCommand    string
-	TestCommand     string
-	LintCommand     string
-	ROIFilter       string // high, medium, low, skip
-	UseSQLite       bool
-	SpecExec        bool // enable speculative parallel execution
-	Timeout         time.Duration
-	EnvBackend      string // execution environment: inproc, docker, fly, ember
-	EnvImage        string // base image for container/VM environments
-	EnvSize         string // machine size for cloud environments
-	RunnerMode      string // runner backend: claude, codex, native, hybrid
-	NativeAPIKey    string // API key for native runner (required when RunnerMode=native)
-	NativeModel     string // model for native runner
-	NativeBaseURL   string // base URL for native runner (e.g. LiteLLM proxy)
-	SchedulerAlgo   string // task priority algorithm: grpw (default) | plas | continuum
+	RepoRoot         string
+	PlanPath         string // if empty, auto-detect
+	PolicyPath       string
+	Workers          int
+	AuthMode         string
+	ClaudeBinary     string
+	CodexBinary      string
+	ClaudeConfigDir  string
+	CodexHome        string
+	ClaudePoolDirs   []string
+	CodexPoolDirs    []string
+	BuildCommand     string
+	TestCommand      string
+	LintCommand      string
+	ROIFilter        string // high, medium, low, skip
+	UseSQLite        bool
+	SpecExec         bool    // enable speculative parallel execution
+	Governance       bool    // force-enable the V2 governance layer (default on via policy)
+	NoGovernance     bool    // kill-switch: disable the V2 governance layer for this run
+	GovernanceBudget float64 // governance budget in USD (0 = unset; build flow has no budget)
+	CortexEnabled    bool    // enable the 4 deterministic cortex lobes (default on via --cortex)
+	Timeout          time.Duration
+	EnvBackend       string // execution environment: inproc, docker, fly, ember
+	EnvImage         string // base image for container/VM environments
+	EnvSize          string // machine size for cloud environments
+	RunnerMode       string // runner backend: claude, codex, native, hybrid
+	NativeAPIKey     string // API key for native runner (required when RunnerMode=native)
+	NativeModel      string // model for native runner
+	NativeBaseURL    string // base URL for native runner (e.g. LiteLLM proxy)
+	SchedulerAlgo    string // task priority algorithm: grpw (default) | plas | continuum
 	// InPlace forces the workflow engine to run worker + reviewer
 	// directly against RepoRoot instead of creating a per-task git
 	// worktree. Set to true only by the sow session-execFn bridge:
@@ -301,6 +308,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 
 	// Unified event bus: shared across all tasks in this build session.
 	eventBus := hub.New()
+	defer attachEventSubscribers(eventBus)()
 
 	// S-1 TUI progress renderer. Paints a live dashboard on stderr
 	// when the operator runs on an interactive terminal. Non-TTY
@@ -409,39 +417,44 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		ts := planState.Get(task.ID)
 
 		appCfg := app.RunConfig{
-			RepoRoot:         absRepo,
-			PolicyPath:       cfg.PolicyPath,
-			Task:             task.Description,
-			TaskType:         task.Type,
-			TaskVerification: task.Verification,
-			AllowedFiles:     task.Files,
-			DryRun:           false,
-			InPlace:          cfg.InPlace,
-			PlanOnly:         task.PlanOnly,
-			AuthMode:         app.AuthMode(cfg.AuthMode),
-			ClaudeBinary:     cfg.ClaudeBinary,
-			CodexBinary:      cfg.CodexBinary,
-			ClaudeConfigDir:  cfg.ClaudeConfigDir,
-			CodexHome:        cfg.CodexHome,
-			Pools:            pools,
-			Worktrees:        sharedWorktrees,
-			State:            ts,
-			Wisdom:           wisdomStore,
-			BuildCommand:     cfg.BuildCommand,
-			TestCommand:      cfg.TestCommand,
-			LintCommand:      cfg.LintCommand,
-			Boulder:          boulderEnforcer,
-			CostTracker:      tracker,
-			TestGraph:        testGraph,
-			RepoMap:          repoMap,
-			EventBus:         eventBus,
-			Environ:          buildEnv,
-			EnvHandle:        buildEnvHandle,
-			RunnerMode:       cfg.RunnerMode,
-			NativeAPIKey:     cfg.NativeAPIKey,
-			NativeModel:      cfg.NativeModel,
-			NativeBaseURL:    cfg.NativeBaseURL,
-			Recorder:         replay.NewRecorder(task.ID+"-"+strconv.FormatInt(time.Now().UnixMilli(), 10), task.ID),
+			RepoRoot:            absRepo,
+			PolicyPath:          cfg.PolicyPath,
+			Task:                task.Description,
+			TaskType:            task.Type,
+			TaskVerification:    task.Verification,
+			AllowedFiles:        task.Files,
+			DryRun:              false,
+			InPlace:             cfg.InPlace,
+			PlanOnly:            task.PlanOnly,
+			AuthMode:            app.AuthMode(cfg.AuthMode),
+			ClaudeBinary:        cfg.ClaudeBinary,
+			CodexBinary:         cfg.CodexBinary,
+			ClaudeConfigDir:     cfg.ClaudeConfigDir,
+			CodexHome:           cfg.CodexHome,
+			Pools:               pools,
+			Worktrees:           sharedWorktrees,
+			State:               ts,
+			Wisdom:              wisdomStore,
+			Memory:              openCrossSessionMemory(absRepo),
+			BuildCommand:        cfg.BuildCommand,
+			TestCommand:         cfg.TestCommand,
+			LintCommand:         cfg.LintCommand,
+			Boulder:             boulderEnforcer,
+			CostTracker:         tracker,
+			TestGraph:           testGraph,
+			RepoMap:             repoMap,
+			EventBus:            eventBus,
+			GovernanceEnabled:   cfg.Governance,
+			GovernanceDisabled:  cfg.NoGovernance,
+			GovernanceBudgetUSD: cfg.GovernanceBudget,
+			CortexEnabled:       cfg.CortexEnabled,
+			Environ:             buildEnv,
+			EnvHandle:           buildEnvHandle,
+			RunnerMode:          cfg.RunnerMode,
+			NativeAPIKey:        cfg.NativeAPIKey,
+			NativeModel:         cfg.NativeModel,
+			NativeBaseURL:       cfg.NativeBaseURL,
+			Recorder:            replay.NewRecorder(task.ID+"-"+strconv.FormatInt(time.Now().UnixMilli(), 10), task.ID),
 			OnEvent: func(ev stream.Event) {
 				ui.Event(task.ID, ev)
 				if ev.Type == "assistant" {
@@ -632,6 +645,61 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 		signal.Stop(sigCh)
 	}()
 	return ctx, cancel
+}
+
+// attachEventSubscribers wires the event-bus integrations that are safe to run
+// in the main CLI build session. Each destination is env-driven and degrades to
+// a no-op when its credentials are absent, so local runs keep the same behavior
+// while production builds get the real subscriber registration path.
+func attachEventSubscribers(bus *hub.Bus) func() {
+	if bus == nil {
+		return func() {}
+	}
+
+	var cleanups []func()
+
+	analyticsClient := analytics.FromEnv("r1")
+	analyticsSub := hubbuiltin.NewAnalyticsSubscriber(analyticsClient)
+	analyticsSub.Register(bus)
+	cleanups = append(cleanups, func() {
+		analyticsSub.Close()
+		_ = analyticsClient.Shutdown(context.Background())
+	})
+
+	coderadarClient := r1coderadar.FromEnv("r1")
+	coderadarSub := hubbuiltin.NewCoderadarSubscriber(coderadarClient)
+	coderadarSub.Register(bus)
+	cleanups = append(cleanups, coderadarSub.Close)
+
+	lifecycleClient := lifecycle.FromEnv("r1")
+	if lifecycleClient.Enabled() {
+		path, err := lifecycle.DefaultPath()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "r1: lifecycle flagstore disabled: %v\n", err)
+		} else {
+			flags, err := lifecycle.Open(path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "r1: lifecycle flagstore disabled: %v\n", err)
+			} else {
+				lifecycleSub := hubbuiltin.NewLifecycleSubscriber(lifecycleClient, flags, nil)
+				if err := lifecycleSub.Register(bus); err != nil {
+					fmt.Fprintf(os.Stderr, "r1: lifecycle subscriber disabled: %v\n", err)
+					_ = flags.Close()
+				} else {
+					cleanups = append(cleanups, func() {
+						lifecycleSub.Close()
+						_ = flags.Close()
+					})
+				}
+			}
+		}
+	}
+
+	return func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
+		}
+	}
 }
 
 func main() {
@@ -1181,6 +1249,10 @@ func buildCmd(args []string) {
 	useSQLite := fs.Bool("sqlite", false, "Use SQLite session store instead of JSON")
 	interactive := fs.Bool("interactive", false, "Launch interactive Bubble Tea TUI")
 	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution (tries multiple strategies per task)")
+	governance := fs.Bool("governance", false, "Force-enable the V2 governance layer (default on via policy)")
+	noGovernance := fs.Bool("no-governance", false, "Kill-switch: disable the V2 governance layer for this run")
+	cortexEnabled := fs.Bool("cortex", true, "Enable parallel-cognition deterministic lobes (default on; --cortex=false or --no-cortex to disable)")
+	noCortex := fs.Bool("no-cortex", false, "Disable the cortex lobes for this run")
 	envBackend := fs.String("env", "", "Execution environment: inproc, docker, fly, ember (default: from config or inproc)")
 	envImage := fs.String("env-image", "", "Base image for container/VM environments")
 	envSize := fs.String("env-size", "", "Machine size for cloud environments (e.g. performance-4x)")
@@ -1380,10 +1452,13 @@ func buildCmd(args []string) {
 			tuiRepoMap, _ := repomap.Build(absRepo)
 			tuiBoulder := boulder.New(filepath.Join(absRepo, ".stoke", "boulder"), boulder.DefaultConfig())
 			tuiOpts := &buildRunConfigOpts{
-				Boulder:     tuiBoulder,
-				CostTracker: tuiTracker,
-				TestGraph:   tuiTestGraph,
-				RepoMap:     tuiRepoMap,
+				Boulder:            tuiBoulder,
+				CostTracker:        tuiTracker,
+				TestGraph:          tuiTestGraph,
+				RepoMap:            tuiRepoMap,
+				GovernanceEnabled:  *governance,
+				GovernanceDisabled: *noGovernance,
+				CortexEnabled:      *cortexEnabled && !*noCortex,
 			}
 
 			tuiExecFn := func(ctx context.Context, task plan.Task) scheduler.TaskResult {
@@ -1461,6 +1536,9 @@ func buildCmd(args []string) {
 		ROIFilter:       *roiFilter,
 		UseSQLite:       *useSQLite,
 		SpecExec:        *specExec,
+		Governance:      *governance,
+		NoGovernance:    *noGovernance,
+		CortexEnabled:   *cortexEnabled && !*noCortex,
 		Timeout:         *timeout,
 		EnvBackend:      *envBackend,
 		EnvImage:        *envImage,
@@ -1685,6 +1763,10 @@ func sowCmd(args []string) {
 	reviewerAPIKeyFlag := fs.String("reviewer-api-key", "", "Reviewer API key. Overrides REVIEWER_API_KEY env.")
 	roiFilter := fs.String("roi", "medium", "ROI threshold: high, medium, low, skip")
 	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution")
+	governance := fs.Bool("governance", false, "Force-enable the V2 governance layer (default on via policy)")
+	noGovernance := fs.Bool("no-governance", false, "Kill-switch: disable the V2 governance layer for this run")
+	cortexEnabled := fs.Bool("cortex", true, "Enable parallel-cognition deterministic lobes (default on; --cortex=false or --no-cortex to disable)")
+	noCortex := fs.Bool("no-cortex", false, "Disable the cortex lobes for this run")
 	// SOW builds are long-running (hours-to-days for large SOWs). Hard timeout
 	// is disabled by default; supervisor handles liveness. Set --timeout to a
 	// non-zero duration to re-enable a safety ceiling.
@@ -3398,25 +3480,29 @@ func sowCmd(args []string) {
 		// .stoke/worktrees/<task>/, and the reviewer reported "file
 		// does not exist" on successful tasks.
 		sessionCfg := BuildConfig{
-			RepoRoot:        absRepo,
-			PolicyPath:      *policy,
-			Workers:         *workers,
-			AuthMode:        *authMode,
-			ClaudeBinary:    *claudeBin,
-			CodexBinary:     *codexBin,
-			ClaudeConfigDir: *claudeConfigDir,
-			CodexHome:       *codexHome,
-			BuildCommand:    *buildC,
-			TestCommand:     *testC,
-			LintCommand:     *lintC,
-			ROIFilter:       *roiFilter,
-			SpecExec:        *specExec,
-			Timeout:         *timeout,
-			RunnerMode:      *runnerMode,
-			NativeAPIKey:    *nativeAPIKey,
-			NativeModel:     *nativeModel,
-			NativeBaseURL:   *nativeBaseURL,
-			InPlace:         true,
+			RepoRoot:         absRepo,
+			PolicyPath:       *policy,
+			Workers:          *workers,
+			AuthMode:         *authMode,
+			ClaudeBinary:     *claudeBin,
+			CodexBinary:      *codexBin,
+			ClaudeConfigDir:  *claudeConfigDir,
+			CodexHome:        *codexHome,
+			BuildCommand:     *buildC,
+			TestCommand:      *testC,
+			LintCommand:      *lintC,
+			ROIFilter:        *roiFilter,
+			SpecExec:         *specExec,
+			Governance:       *governance,
+			NoGovernance:     *noGovernance,
+			GovernanceBudget: *costBudget,
+			CortexEnabled:    *cortexEnabled && !*noCortex,
+			Timeout:          *timeout,
+			RunnerMode:       *runnerMode,
+			NativeAPIKey:     *nativeAPIKey,
+			NativeModel:      *nativeModel,
+			NativeBaseURL:    *nativeBaseURL,
+			InPlace:          true,
 		}
 
 		// Save the session plan temporarily
@@ -6538,11 +6624,28 @@ func checkResume(store session.SessionStore, p *plan.Plan) {
 // buildRunConfig creates an app.RunConfig for a task with the given flags.
 // buildRunConfigOpts holds optional fields for buildRunConfig that don't fit in the base signature.
 type buildRunConfigOpts struct {
-	Boulder     *boulder.Enforcer
-	CostTracker *costtrack.Tracker
-	TestGraph   *testselect.Graph
-	RepoMap     *repomap.RepoMap
-	EventBus    *hub.Bus
+	Boulder             *boulder.Enforcer
+	CostTracker         *costtrack.Tracker
+	TestGraph           *testselect.Graph
+	RepoMap             *repomap.RepoMap
+	EventBus            *hub.Bus
+	GovernanceEnabled   bool
+	GovernanceDisabled  bool
+	GovernanceBudgetUSD float64
+	CortexEnabled       bool
+}
+
+// openCrossSessionMemory loads the same .r1/agent-memory.json file the in-task
+// memory tools write to, so learnings persisted by prior sessions are recalled
+// at task start. app.Orchestrator.Run folds the recalled entries into wisdom,
+// which is injected into the execute prompt. Returns nil on error so a missing
+// or unreadable store simply disables cross-session recall rather than failing.
+func openCrossSessionMemory(absRepo string) *memory.Store {
+	s, err := memory.NewStore(memory.Config{Path: filepath.Join(absRepo, ".r1", "agent-memory.json")})
+	if err != nil {
+		return nil
+	}
+	return s
 }
 
 func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claudeBin, codexBin, claudeConfigDir, codexHome, buildCmd, testCmd, lintCmd string, pools *subscriptions.Manager, worktrees *worktree.Manager, state *taskstate.TaskState, wisdomStore *wisdom.Store, onEvent func(stream.Event), opts *buildRunConfigOpts) app.RunConfig {
@@ -6564,6 +6667,7 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		Worktrees:        worktrees,
 		State:            state,
 		Wisdom:           wisdomStore,
+		Memory:           openCrossSessionMemory(absRepo),
 		BuildCommand:     buildCmd,
 		TestCommand:      testCmd,
 		LintCommand:      lintCmd,
@@ -6576,6 +6680,10 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		cfg.TestGraph = opts.TestGraph
 		cfg.RepoMap = opts.RepoMap
 		cfg.EventBus = opts.EventBus
+		cfg.GovernanceEnabled = opts.GovernanceEnabled
+		cfg.GovernanceDisabled = opts.GovernanceDisabled
+		cfg.GovernanceBudgetUSD = opts.GovernanceBudgetUSD
+		cfg.CortexEnabled = opts.CortexEnabled
 	}
 	return cfg
 }

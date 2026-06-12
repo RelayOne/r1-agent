@@ -12,6 +12,38 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderPanel, buildTurnElement } from "./panels/session-view";
+import type { ServerEvent } from "./types/ipc";
+
+type TauriEventListener = {
+  event: string;
+  handler: (event: { payload: ServerEvent }) => void;
+};
+
+const tauriEventListeners: TauriEventListener[] = [];
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(async <T>(method: string): Promise<T> => {
+    if (method === "session_start") {
+      return {
+        session_id: "session-live-1",
+        started_at: "2026-05-15T00:00:00Z",
+      } as T;
+    }
+    return undefined as T;
+  }),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (event: string, handler: (event: { payload: ServerEvent }) => void) => {
+    tauriEventListeners.push({ event, handler });
+    return () => {
+      const index = tauriEventListeners.findIndex(
+        (listener) => listener.event === event && listener.handler === handler,
+      );
+      if (index >= 0) tauriEventListeners.splice(index, 1);
+    };
+  }),
+}));
 
 // -----------------------------------------------------------------------
 // Helpers
@@ -26,6 +58,183 @@ function makeRoot(): HTMLElement {
 function cleanup(root: HTMLElement): void {
   root.remove();
 }
+
+async function flushUi(): Promise<void> {
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+function click(element: Element | null): void {
+  expect(element).not.toBeNull();
+  (element as HTMLElement).click();
+}
+
+function emitServerEvent(event: ServerEvent): void {
+  for (const listener of tauriEventListeners) {
+    if (listener.event === "r1://events") {
+      listener.handler({ payload: event });
+    }
+  }
+}
+
+function emitTauriEvent(channel: string, event: ServerEvent): void {
+  for (const listener of tauriEventListeners) {
+    if (listener.event === channel) {
+      listener.handler({ payload: event });
+    }
+  }
+}
+
+describe("session-view — R1D-2 streaming truthfulness", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    tauriEventListeners.splice(0, tauriEventListeners.length);
+    Reflect.deleteProperty(window, "__TAURI__");
+  });
+
+  it("does not synthesize a canned assistant reply in stub mode", async () => {
+    vi.resetModules();
+    const { renderPanel: renderStreamingPanel } = await import("./panels/session-view");
+    const root = makeRoot();
+    renderStreamingPanel(root);
+
+    click(root.querySelector('[data-role="new-session"]'));
+    await flushUi();
+
+    const input = root.querySelector<HTMLTextAreaElement>('[data-role="composer-input"]');
+    expect(input).not.toBeNull();
+    input!.value = "Inspect README";
+
+    const form = root.querySelector<HTMLFormElement>('[data-role="composer"]');
+    expect(form).not.toBeNull();
+    form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flushUi();
+
+    const transcript = root.querySelector('[data-role="transcript"]');
+    expect(transcript?.textContent).toContain("Inspect README");
+    expect(transcript?.textContent).toContain("stub mode does not synthesize assistant output");
+    expect(transcript?.textContent).not.toContain("I received your message.");
+    expect(root.querySelector(".r1-sv-tool-block")).toBeNull();
+
+    cleanup(root);
+  });
+
+  it("renders assistant output from real runtime events when Tauri is present", async () => {
+    vi.resetModules();
+    Object.defineProperty(window, "__TAURI__", {
+      value: {},
+      configurable: true,
+    });
+    const { renderPanel: renderStreamingPanel } = await import("./panels/session-view");
+
+    const root = makeRoot();
+    renderStreamingPanel(root);
+    await flushUi();
+
+    click(root.querySelector('[data-role="new-session"]'));
+    await flushUi();
+
+    const input = root.querySelector<HTMLTextAreaElement>('[data-role="composer-input"]');
+    expect(input).not.toBeNull();
+    input!.value = "Summarize the repo";
+
+    const form = root.querySelector<HTMLFormElement>('[data-role="composer"]');
+    expect(form).not.toBeNull();
+    form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flushUi();
+
+    emitServerEvent({
+      event: "session.delta",
+      session_id: "session-live-1",
+      payload: { type: "text", text: "Live streamed reply." },
+    });
+    emitServerEvent({
+      event: "session.ended",
+      session_id: "session-live-1",
+      reason: "ok",
+      at: "2026-05-15T00:00:02Z",
+    });
+    await flushUi();
+
+    const transcript = root.querySelector('[data-role="transcript"]');
+    expect(transcript?.textContent).toContain("Live streamed reply.");
+    expect(transcript?.textContent).not.toContain("stub mode does not synthesize assistant output");
+
+    cleanup(root);
+  });
+
+  it("does not render assistant output in live mode until runtime events arrive", async () => {
+    vi.resetModules();
+    Object.defineProperty(window, "__TAURI__", {
+      value: {},
+      configurable: true,
+    });
+    const { renderPanel: renderStreamingPanel } = await import("./panels/session-view");
+
+    const root = makeRoot();
+    renderStreamingPanel(root);
+    await flushUi();
+
+    click(root.querySelector('[data-role="new-session"]'));
+    await flushUi();
+
+    const input = root.querySelector<HTMLTextAreaElement>('[data-role="composer-input"]');
+    expect(input).not.toBeNull();
+    input!.value = "Describe the lane rail";
+
+    const form = root.querySelector<HTMLFormElement>('[data-role="composer"]');
+    expect(form).not.toBeNull();
+    form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flushUi();
+
+    const transcript = root.querySelector('[data-role="transcript"]');
+    expect(transcript?.textContent).toContain("Describe the lane rail");
+    expect(transcript?.textContent).not.toContain("stub mode does not synthesize assistant output");
+    expect(transcript?.textContent).not.toContain("I received your message.");
+    expect(root.querySelectorAll(".r1-sv-turn-assistant")).toHaveLength(0);
+
+    cleanup(root);
+  });
+
+  it("marks the session ended when the host emits session://ended without a global stream event", async () => {
+    vi.resetModules();
+    Object.defineProperty(window, "__TAURI__", {
+      value: {},
+      configurable: true,
+    });
+    const { renderPanel: renderStreamingPanel } = await import("./panels/session-view");
+
+    const root = makeRoot();
+    renderStreamingPanel(root);
+    await flushUi();
+
+    click(root.querySelector('[data-role="new-session"]'));
+    await flushUi();
+
+    const input = root.querySelector<HTMLTextAreaElement>('[data-role="composer-input"]');
+    expect(input).not.toBeNull();
+    input!.value = "Run a long task";
+
+    const form = root.querySelector<HTMLFormElement>('[data-role="composer"]');
+    expect(form).not.toBeNull();
+    form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flushUi();
+
+    emitTauriEvent("session://ended", {
+      event: "session.ended",
+      session_id: "session-live-1",
+      reason: "ok",
+      at: "2026-05-15T00:00:03Z",
+    });
+    await flushUi();
+
+    const status = root.querySelector('[data-role="chat-status-pill"]');
+    expect(status?.textContent).toBe("paused");
+    const sendBtn = root.querySelector<HTMLButtonElement>('[data-role="send-btn"]');
+    expect(sendBtn?.disabled).toBe(false);
+
+    cleanup(root);
+  });
+});
 
 // -----------------------------------------------------------------------
 // R1D-2.1 — Chat transcript + composer

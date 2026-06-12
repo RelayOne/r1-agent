@@ -47,10 +47,10 @@ type AnalyticsSubscriber struct {
 }
 
 type analyticsItem struct {
-	ctx       context.Context
-	name      analytics.EventName
-	distinct  string
-	props     map[string]any
+	ctx      context.Context
+	name     analytics.EventName
+	distinct string
+	props    map[string]any
 }
 
 // DefaultQueueDepth is the bounded buffer size between the bus and the
@@ -116,7 +116,7 @@ func (s *AnalyticsSubscriber) handle(ctx context.Context, ev *hub.Event) *hub.Ho
 	if ev == nil {
 		return &hub.HookResponse{Decision: hub.Allow}
 	}
-	name, adapter, ok := analytics.LookupTaxonomy(ev.Type)
+	name, adapter, ok := analytics.LookupTaxonomy(ev)
 	if !ok {
 		metrics.DefaultRegistry.Counter("analytics.no_match").Inc()
 		return &hub.HookResponse{Decision: hub.Allow}

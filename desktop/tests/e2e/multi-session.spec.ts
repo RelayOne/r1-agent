@@ -21,6 +21,18 @@ import {
   type DesktopApp,
 } from "./helpers/desktop-fixtures";
 
+// SKIPPED-WITH-REASON (CI-2 desktop-e2e-truth, 2026-06-12): the desktop
+// app exposes NO test-mode driver surface. These specs require
+// `dialog.open.ready` / `session.workdir.set` / `session.workdir.cleared`
+// host events plus `[data-role="new-session"|"pick-workdir"|"clear-workdir"]`
+// driver verbs — none implemented in desktop/src or desktop/src-tauri
+// (audit/desktop-e2e-truth-2026-06-12.md). Un-skip only when a real
+// test-mode surface lands; never fabricate hook responses.
+test.skip(
+  true,
+  "app has no test-mode driver surface (session.workdir.* events, dialog stubbing) — see audit/desktop-e2e-truth-2026-06-12.md (CI-2)",
+);
+
 const SESSION_COUNT = 5;
 
 async function makeWorkdir(idx: number): Promise<string> {
