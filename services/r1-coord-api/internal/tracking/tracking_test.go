@@ -191,3 +191,106 @@ func TestCodeRadarCaptureErrorPostsToErrors(t *testing.T) {
 		t.Errorf("message=%v", got["message"])
 	}
 }
+
+func TestCodeRadarTrackPostsAnalyticsBatchToTrack(t *testing.T) {
+	var (
+		method string
+		path   string
+		auth   string
+		got    map[string]any
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		auth = r.Header.Get("Authorization")
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &got)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	cr := &CodeRadar{
+		APIKey:      "cr_track_key",
+		BaseURL:     srv.URL + "/v1",
+		ServiceName: "r1-coord-api",
+		Env:         "dev",
+		Version:     "abc1234",
+		HTTP:        &http.Client{Timeout: 5 * time.Second},
+		Now:         func() time.Time { return time.Unix(1_000_000_000, 0) },
+		enabled:     true,
+	}
+	err := cr.Track(context.Background(), "anon_browser_user", "telemetry_opt_in", map[string]any{
+		"source":          "settings_modal",
+		"enabled":         true,
+		"install_channel": "web",
+		"session_id":      "browser-session-1",
+		"device":          "browser",
+		"user_agent":      "Mozilla/5.0",
+		"region":          "ca-bc",
+	})
+	if err != nil {
+		t.Fatalf("Track: %v", err)
+	}
+	if method != http.MethodPost {
+		t.Fatalf("method=%s want POST", method)
+	}
+	if path != "/v1/track" {
+		t.Fatalf("path=%q want /v1/track", path)
+	}
+	if auth != "Bearer cr_track_key" {
+		t.Fatalf("Authorization=%q", auth)
+	}
+	events, ok := got["events"].([]any)
+	if !ok || len(events) != 1 {
+		t.Fatalf("events=%#v want single event batch", got["events"])
+	}
+	event, ok := events[0].(map[string]any)
+	if !ok {
+		t.Fatalf("event=%#v want object", events[0])
+	}
+	if event["event_name"] != "telemetry_opt_in" {
+		t.Fatalf("event_name=%v", event["event_name"])
+	}
+	if event["distinct_id"] != "anon_browser_user" {
+		t.Fatalf("distinct_id=%v", event["distinct_id"])
+	}
+	if event["session_id"] != "browser-session-1" {
+		t.Fatalf("session_id=%v", event["session_id"])
+	}
+	if event["device"] != "browser" {
+		t.Fatalf("device=%v", event["device"])
+	}
+	if event["user_agent"] != "Mozilla/5.0" {
+		t.Fatalf("user_agent=%v", event["user_agent"])
+	}
+	if event["region"] != "ca-bc" {
+		t.Fatalf("region=%v", event["region"])
+	}
+	if event["timestamp"] != "2001-09-09T01:46:40Z" {
+		t.Fatalf("timestamp=%v", event["timestamp"])
+	}
+	properties, ok := event["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties=%#v want object", event["properties"])
+	}
+	if properties["source"] != "settings_modal" {
+		t.Fatalf("properties.source=%v", properties["source"])
+	}
+	if properties["enabled"] != true {
+		t.Fatalf("properties.enabled=%v", properties["enabled"])
+	}
+	if _, exists := properties["session_id"]; exists {
+		t.Fatalf("properties.session_id should be omitted from analytics properties")
+	}
+}
+
+func TestCodeRadarTrackNoopWhenDSNEmpty(t *testing.T) {
+	cr := NewCodeRadar("", "svc", "dev", "v")
+	if cr.Enabled() {
+		t.Fatalf("expected disabled on empty DSN")
+	}
+	err := cr.Track(context.Background(), "user-1", "telemetry_opt_in", map[string]any{"enabled": true})
+	if err != nil {
+		t.Fatalf("disabled Track should not error, got %v", err)
+	}
+}

@@ -122,12 +122,12 @@ func TestLanesPinEmitsNoEvent(t *testing.T) {
 	bus := hub.New()
 	ws := cortex.NewWorkspace(bus, nil)
 	ws.SetSessionID("sess_pin")
-	main := ws.NewMainLane(context.Background())
 
 	var (
 		mu     sync.Mutex
 		events []*hub.Event
 	)
+	initialEvent := make(chan *hub.Event, 1)
 	bus.Register(hub.Subscriber{
 		ID: "test.pin_observer",
 		Events: []hub.EventType{
@@ -143,14 +143,25 @@ func TestLanesPinEmitsNoEvent(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			events = append(events, ev)
+			if ev.Type == hub.EventLaneCreated {
+				select {
+				case initialEvent <- ev:
+				default:
+				}
+			}
 			return &hub.HookResponse{Decision: hub.Allow}
 		},
 	})
+	main := ws.NewMainLane(context.Background())
 
-	// Allow the lane.created from NewMainLane to settle, then drop it
-	// so we observe only the events the pin call produces (which
-	// should be ZERO).
-	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-initialEvent:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for initial lane.created event")
+	}
+
+	// Drop the expected lane.created event so we observe only the
+	// events the pin call produces, which should be zero.
 	mu.Lock()
 	events = nil
 	mu.Unlock()
@@ -164,8 +175,12 @@ func TestLanesPinEmitsNoEvent(t *testing.T) {
 		t.Fatalf("pin: %v", err)
 	}
 
-	// Wait long enough to be confident no async fan-out fires.
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case ev := <-initialEvent:
+		t.Fatalf("pin emitted unexpected event %s", ev.Type)
+	case <-time.After(100 * time.Millisecond):
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 	if len(events) != 0 {

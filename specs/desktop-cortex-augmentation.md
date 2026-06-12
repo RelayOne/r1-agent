@@ -3,6 +3,7 @@
 <!-- CREATED: 2026-05-02 -->
 <!-- DEPENDS_ON: lanes-protocol, r1d-server, web-chat-ui (for shared components) -->
 <!-- BUILD_ORDER: 7 -->
+<!-- IMPLEMENTATION_NOTE_2026-05-15: Desktop shell/UI scaffolding shipped, but streamed execution and several advertised IPC surfaces remain partial. See plans/TRUTH-STATE-2026-05-15.md and desktop/PLAN.md. -->
 
 # Desktop Cortex Augmentation — Implementation Spec
 

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -60,20 +61,21 @@ func newTrackingClients() *trackingClients {
 	}
 }
 
-// captureFunnel sends a single business event to all three vendors. We
-// fan out (instead of letting one vendor be canonical) because each
-// vendor's strength is different: PostHog for funnels + replay,
-// Customer.io for retention email, CodeRadar for error correlation.
+// captureFunnel sends a single business event to the hosted tracking
+// vendors. CodeRadar is the canonical backend analytics transport; the
+// other vendors remain best-effort mirrors.
 //
 // Errors from individual vendors are logged but never block the caller.
 func (tc *trackingClients) captureFunnel(ctx context.Context, distinctID, event string, props map[string]any) {
+	if err := tc.coderadar.Track(ctx, distinctID, event, props); err != nil {
+		log.Printf("coderadar track(%s): %v", event, err)
+	}
 	if err := tc.posthog.Capture(ctx, distinctID, event, props); err != nil {
 		log.Printf("posthog capture(%s): %v", event, err)
 	}
 	if err := tc.customerio.Track(ctx, distinctID, event, props); err != nil {
 		log.Printf("customerio track(%s): %v", event, err)
 	}
-	tc.coderadar.CaptureMessage(ctx, "info", event, props)
 }
 
 const serviceName = "r1-coord-api"
@@ -84,6 +86,45 @@ type healthz struct {
 	Env       string `json:"env"`
 	Version   string `json:"version"`
 	UptimeSec int64  `json:"uptime_sec"`
+}
+
+type telemetryAttribution struct {
+	TS          string `json:"ts"`
+	UTMSource   string `json:"utm_source"`
+	UTMMedium   string `json:"utm_medium"`
+	UTMCampaign string `json:"utm_campaign"`
+	UTMTerm     string `json:"utm_term"`
+	UTMContent  string `json:"utm_content"`
+	Ref         string `json:"ref"`
+	GCLID       string `json:"gclid"`
+	FBCLID      string `json:"fbclid"`
+	MSCLKID     string `json:"msclkid"`
+	Referrer    string `json:"referrer"`
+	LandingPath string `json:"landing_path"`
+}
+
+type telemetryOptInRequest struct {
+	DistinctID     string               `json:"distinct_id"`
+	Source         string               `json:"source"`
+	Enabled        *bool                `json:"enabled"`
+	InstallChannel string               `json:"install_channel"`
+	SessionID      string               `json:"session_id"`
+	Device         string               `json:"device"`
+	UserAgent      string               `json:"user_agent"`
+	Region         string               `json:"region"`
+	Attribution    telemetryAttribution `json:"attribution"`
+	UTMSource      string               `json:"utm_source"`
+	UTMMedium      string               `json:"utm_medium"`
+	UTMCampaign    string               `json:"utm_campaign"`
+	UTMTerm        string               `json:"utm_term"`
+	UTMContent     string               `json:"utm_content"`
+	Ref            string               `json:"ref"`
+	GCLID          string               `json:"gclid"`
+	FBCLID         string               `json:"fbclid"`
+	MSCLKID        string               `json:"msclkid"`
+	Referrer       string               `json:"referrer"`
+	LandingPath    string               `json:"landing_path"`
+	AttributionTS  string               `json:"ts"`
 }
 
 var (
@@ -151,19 +192,87 @@ func handleTelemetryOptIn(tc *trackingClients) http.HandlerFunc {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "method not allowed"})
 			return
 		}
+		var req telemetryOptInRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid JSON body"})
+			return
+		}
 		seq := telSeqCtr.Add(1)
-		// Best-effort fan-out to PostHog/Customer.io/CodeRadar. The
-		// caller doesn't wait on this and it can't fail the response.
-		go tc.captureFunnel(context.Background(), fmt.Sprintf("telemetry-%d", seq), "telemetry_opt_in", map[string]any{
+		distinctID := req.DistinctID
+		if distinctID == "" {
+			distinctID = fmt.Sprintf("telemetry-%d", seq)
+		}
+		props := map[string]any{
 			"env":     envName,
 			"version": versionStr,
-		})
+		}
+		if req.Source != "" {
+			props["source"] = req.Source
+		}
+		if req.Enabled != nil {
+			props["enabled"] = *req.Enabled
+		}
+		if req.InstallChannel != "" {
+			props["install_channel"] = req.InstallChannel
+		}
+		if req.SessionID != "" {
+			props["session_id"] = req.SessionID
+		}
+		if req.Device != "" {
+			props["device"] = req.Device
+		}
+		if req.UserAgent != "" {
+			props["user_agent"] = req.UserAgent
+		} else if ua := r.UserAgent(); ua != "" {
+			props["user_agent"] = ua
+		}
+		if req.Region != "" {
+			props["region"] = req.Region
+		}
+		addTelemetryAttributionProps(props, req)
+		// Best-effort fan-out to PostHog/Customer.io/CodeRadar. The
+		// caller doesn't wait on this and it can't fail the response.
+		go tc.captureFunnel(context.Background(), distinctID, "telemetry_opt_in", props)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":       true,
 			"accepted": true,
 			"seq":      seq,
 		})
 	}
+}
+
+func addTelemetryAttributionProps(props map[string]any, req telemetryOptInRequest) {
+	for _, field := range []struct {
+		prop   string
+		nested string
+		top    string
+	}{
+		{prop: "utm_source", nested: req.Attribution.UTMSource, top: req.UTMSource},
+		{prop: "utm_medium", nested: req.Attribution.UTMMedium, top: req.UTMMedium},
+		{prop: "utm_campaign", nested: req.Attribution.UTMCampaign, top: req.UTMCampaign},
+		{prop: "utm_term", nested: req.Attribution.UTMTerm, top: req.UTMTerm},
+		{prop: "utm_content", nested: req.Attribution.UTMContent, top: req.UTMContent},
+		{prop: "ref", nested: req.Attribution.Ref, top: req.Ref},
+		{prop: "gclid", nested: req.Attribution.GCLID, top: req.GCLID},
+		{prop: "fbclid", nested: req.Attribution.FBCLID, top: req.FBCLID},
+		{prop: "msclkid", nested: req.Attribution.MSCLKID, top: req.MSCLKID},
+		{prop: "referrer", nested: req.Attribution.Referrer, top: req.Referrer},
+		{prop: "landing_path", nested: req.Attribution.LandingPath, top: req.LandingPath},
+		{prop: "attribution_ts", nested: req.Attribution.TS, top: req.AttributionTS},
+	} {
+		if value := firstNonEmpty(field.top, field.nested); value != "" {
+			props[field.prop] = value
+		}
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func handleRoot(w http.ResponseWriter, r *http.Request) {

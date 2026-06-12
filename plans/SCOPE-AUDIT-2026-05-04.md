@@ -1,5 +1,7 @@
 # Scope audit — operator's "finish all + scope" checklist
 
+Historical snapshot. For the current verified state, use [`plans/TRUTH-STATE-2026-05-15.md`](TRUTH-STATE-2026-05-15.md). Several DNS / deploy / tracking claims below were superseded by the 2026-05-15 audit.
+
 Honest status against each item. Items marked **DONE** require no operator action. Items marked **OPERATOR** are blocked on action only you can take. Items marked **DESIGN** require design decisions before any work; effort estimates are conservative.
 
 ---
@@ -55,7 +57,7 @@ For the "cap" branches: tag each tip as `archive/<branch-name>` and delete the b
 
 ## 🟡 Item: Cloud Build triggers + SQL + hosting + secrets + DNS for all 3 envs
 
-**Status: PARTIAL** — code/infra ready, DNS pending.
+**Status at 2026-05-04:** PARTIAL — code/infra ready; this specific DNS claim was later superseded by the 2026-05-15 truth-state audit.
 
 | Component | dev | staging | prod |
 |---|---|---|---|

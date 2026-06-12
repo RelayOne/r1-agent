@@ -3,6 +3,7 @@
 <!-- CREATED: 2026-05-11 -->
 <!-- DEPENDS_ON: relayone-sso -->
 <!-- BUILD_ORDER: 38 -->
+<!-- IMPLEMENTATION_NOTE_2026-05-15: The client + subscriber code shipped, but hosted public-service deployment remains partial. See plans/TRUTH-STATE-2026-05-15.md before treating this spec as proof of live GTM wiring. -->
 
 # PostHog Product Analytics — Implementation Spec (SOW B1)
 
@@ -215,7 +216,11 @@ Each cohort spec includes the PostHog JSON body for `POST /api/projects/{id}/coh
 
 ## 12. Cloud Run Wiring (T9)
 
-R1 ships nine Cloud Run services (per existing convention). Each service that talks to the bus needs:
+R1's hosted footprint changed after this spec was authored. Read this
+section as the wiring pattern for whichever deployed services actually
+emit the relevant bus events, not as a hard-coded live service count.
+
+Each service that talks to the bus needs:
 
 - New Secret Manager secret `POSTHOG_API_KEY` (project-level, version-pinned). Reference: existing `CODERADAR_DSN` secret convention — same shape.
 - Env var injection per service:

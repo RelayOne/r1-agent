@@ -22,6 +22,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
 
+	"github.com/RelayOne/r1/internal/analytics"
 	"github.com/RelayOne/r1/internal/app"
 	"github.com/RelayOne/r1/internal/audit"
 	"github.com/RelayOne/r1/internal/boulder"
@@ -48,6 +49,7 @@ import (
 	hubbuiltin "github.com/RelayOne/r1/internal/hub/builtin"
 	"github.com/RelayOne/r1/internal/interview"
 	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/lifecycle"
 	litellmPkg "github.com/RelayOne/r1/internal/litellm"
 	"github.com/RelayOne/r1/internal/logging"
 	stokeMCP "github.com/RelayOne/r1/internal/mcp"
@@ -306,6 +308,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 
 	// Unified event bus: shared across all tasks in this build session.
 	eventBus := hub.New()
+	defer attachEventSubscribers(eventBus)()
 
 	// S-1 TUI progress renderer. Paints a live dashboard on stderr
 	// when the operator runs on an interactive terminal. Non-TTY
@@ -642,6 +645,61 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 		signal.Stop(sigCh)
 	}()
 	return ctx, cancel
+}
+
+// attachEventSubscribers wires the event-bus integrations that are safe to run
+// in the main CLI build session. Each destination is env-driven and degrades to
+// a no-op when its credentials are absent, so local runs keep the same behavior
+// while production builds get the real subscriber registration path.
+func attachEventSubscribers(bus *hub.Bus) func() {
+	if bus == nil {
+		return func() {}
+	}
+
+	var cleanups []func()
+
+	analyticsClient := analytics.FromEnv("r1")
+	analyticsSub := hubbuiltin.NewAnalyticsSubscriber(analyticsClient)
+	analyticsSub.Register(bus)
+	cleanups = append(cleanups, func() {
+		analyticsSub.Close()
+		_ = analyticsClient.Shutdown(context.Background())
+	})
+
+	coderadarClient := r1coderadar.FromEnv("r1")
+	coderadarSub := hubbuiltin.NewCoderadarSubscriber(coderadarClient)
+	coderadarSub.Register(bus)
+	cleanups = append(cleanups, coderadarSub.Close)
+
+	lifecycleClient := lifecycle.FromEnv("r1")
+	if lifecycleClient.Enabled() {
+		path, err := lifecycle.DefaultPath()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "r1: lifecycle flagstore disabled: %v\n", err)
+		} else {
+			flags, err := lifecycle.Open(path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "r1: lifecycle flagstore disabled: %v\n", err)
+			} else {
+				lifecycleSub := hubbuiltin.NewLifecycleSubscriber(lifecycleClient, flags, nil)
+				if err := lifecycleSub.Register(bus); err != nil {
+					fmt.Fprintf(os.Stderr, "r1: lifecycle subscriber disabled: %v\n", err)
+					_ = flags.Close()
+				} else {
+					cleanups = append(cleanups, func() {
+						lifecycleSub.Close()
+						_ = flags.Close()
+					})
+				}
+			}
+		}
+	}
+
+	return func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
+		}
+	}
 }
 
 func main() {

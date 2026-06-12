@@ -3,6 +3,7 @@
 <!-- BUILD_COMPLETED: 2026-05-14 -->
 <!-- DEPENDS_ON: relayone-sso, posthog-analytics -->
 <!-- BUILD_ORDER: 39 -->
+<!-- IMPLEMENTATION_NOTE_2026-05-15: The client, flagstore, and subscriber shipped, but production lifecycle-event wiring is still partial. See plans/TRUTH-STATE-2026-05-15.md. -->
 
 # Customer.io Retention + Lifecycle Email Integration — Implementation Spec
 

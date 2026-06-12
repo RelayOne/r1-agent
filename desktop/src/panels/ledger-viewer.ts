@@ -2,35 +2,27 @@
 //
 // Ledger-viewer panel (R1D-5).
 //
-// Two-pane browser: session list on the left, node timeline for the
-// selected session on the right. Clicking a timeline row opens the
-// shared ledger-node drawer (R1D-5.2). A verify-chain button (R1D-5.3)
-// lives in the header; NDJSON export (R1D-5.5) lives on each session
-// row as a per-row action.
+// The desktop host currently exposes only the read-only ledger verbs
+// `ledger_list_events` and `ledger_get_node`. Older UI scaffolding
+// claimed session grouping, verify-chain, export, and crypto-shred
+// actions that had no matching host handlers. This panel now renders
+// the truthful subset: a global recent-events browser with node
+// drill-down.
 
 import { invokeStub } from "../ipc-stub";
 import type {
-  LedgerExportResult,
+  LedgerEventSummary,
+  LedgerListEventsResult,
   LedgerNode,
-  LedgerSessionSummary,
-  LedgerSessionsResult,
-  LedgerTimelineResult,
-  LedgerVerifyResult,
 } from "../types/ipc";
 import { openNodeDrawer } from "./ledger-node-drawer";
 
 interface LedgerViewState {
-  sessions: LedgerSessionSummary[];
-  selectedSessionId: string | null;
-  timeline: LedgerNode[];
-  verify: LedgerVerifyResult | null;
+  events: LedgerEventSummary[];
 }
 
 const STATE: LedgerViewState = {
-  sessions: [],
-  selectedSessionId: null,
-  timeline: [],
-  verify: null,
+  events: [],
 };
 
 export function renderPanel(root: HTMLElement): void {
@@ -38,312 +30,104 @@ export function renderPanel(root: HTMLElement): void {
   root.innerHTML = `
     <header class="r1-panel-header">
       <h2>Ledger Browser</h2>
-      <span class="r1-panel-subtitle">sessions &rarr; node timeline</span>
-      <button
-        type="button"
-        class="r1-btn"
-        data-role="verify-chain"
-        disabled
-        title="Select a session to enable"
-      >
-        Verify chain
-      </button>
+      <span class="r1-panel-subtitle">recent host-backed event stream</span>
     </header>
+    <div class="r1-ledger-readonly-note" data-role="ledger-readonly-note">
+      This desktop host currently exposes read-only ledger browsing only.
+      Session grouping, verify-chain, export, and crypto-shred are not wired in the host.
+    </div>
     <div class="r1-panel-body r1-ledger-browser">
-      <aside class="r1-ledger-sessions" aria-label="Ledger sessions">
-        <ul
-          class="r1-ledger-session-list"
-          data-role="session-list"
-          aria-live="polite"
-        >
-          <li class="r1-empty">Loading sessions&hellip;</li>
-        </ul>
-      </aside>
-      <section class="r1-ledger-timeline" aria-label="Node timeline">
-        <div
-          class="r1-ledger-verify-banner"
-          data-role="verify-banner"
-          hidden
-        ></div>
+      <section class="r1-ledger-timeline" aria-label="Recent ledger events">
         <ul
           class="r1-ledger-events"
           data-role="ledger-events"
           aria-live="polite"
         >
-          <li class="r1-empty">Select a session to view nodes.</li>
+          <li class="r1-empty">Loading recent events&hellip;</li>
         </ul>
       </section>
     </div>
   `;
 
-  const verifyBtn = root.querySelector<HTMLButtonElement>(
-    '[data-role="verify-chain"]',
-  );
-  verifyBtn?.addEventListener("click", () => {
-    void runVerify(root);
-  });
-
-  void loadSessions(root);
+  void loadEvents(root);
 }
 
-async function loadSessions(root: HTMLElement): Promise<void> {
-  const result = await invokeStub<LedgerSessionsResult>(
-    "ledger_sessions",
+async function loadEvents(root: HTMLElement): Promise<void> {
+  const result = await invokeStub<LedgerListEventsResult>(
+    "ledger_list_events",
     "R1D-5",
-    { sessions: [] },
+    { events: [] },
+    { limit: 100 },
   );
-  STATE.sessions = result.sessions;
-  renderSessionList(root);
+  STATE.events = result.events;
+  renderEvents(root);
 }
 
-function renderSessionList(root: HTMLElement): void {
-  const list = root.querySelector<HTMLUListElement>(
-    '[data-role="session-list"]',
-  );
-  if (!list) return;
-
-  if (STATE.sessions.length === 0) {
-    list.innerHTML = `
-      <li class="r1-empty">
-        No sessions on ledger. Start one from the composer.
-      </li>
-    `;
-    return;
-  }
-
-  list.innerHTML = STATE.sessions
-    .map(
-      (s) => `
-        <li
-          class="r1-ledger-session-row"
-          data-session-id="${escapeHtml(s.session_id)}"
-          data-selected="${s.session_id === STATE.selectedSessionId}"
-          tabindex="0"
-          role="button"
-          aria-pressed="${s.session_id === STATE.selectedSessionId}"
-        >
-          <div class="r1-ledger-session-main">
-            <code class="r1-ledger-session-id">${escapeHtml(s.session_id)}</code>
-            <time class="r1-ledger-session-at" datetime="${escapeHtml(s.started_at)}">${escapeHtml(s.started_at)}</time>
-          </div>
-          <div class="r1-ledger-session-meta">
-            <span class="r1-ledger-session-count">${s.node_count} node${s.node_count === 1 ? "" : "s"}</span>
-            <button
-              type="button"
-              class="r1-btn r1-ledger-session-export"
-              data-role="session-export"
-              data-session-id="${escapeHtml(s.session_id)}"
-              aria-label="Export ${escapeHtml(s.session_id)} as NDJSON"
-            >Export</button>
-          </div>
-        </li>
-      `,
-    )
-    .join("");
-
-  list.querySelectorAll<HTMLLIElement>(".r1-ledger-session-row").forEach((li) => {
-    const sessionId = li.dataset.sessionId ?? "";
-    li.addEventListener("click", (event) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest('[data-role="session-export"]')) return;
-      void selectSession(root, sessionId);
-    });
-    li.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      void selectSession(root, sessionId);
-    });
-  });
-
-  list.querySelectorAll<HTMLButtonElement>(
-    '[data-role="session-export"]',
-  ).forEach((btn) => {
-    btn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const sessionId = btn.dataset.sessionId ?? "";
-      void exportSession(sessionId);
-    });
-  });
-}
-
-async function selectSession(root: HTMLElement, sessionId: string): Promise<void> {
-  STATE.selectedSessionId = sessionId;
-  STATE.timeline = [];
-  STATE.verify = null;
-  renderSessionList(root);
-  renderVerifyBanner(root);
-
-  const verifyBtn = root.querySelector<HTMLButtonElement>(
-    '[data-role="verify-chain"]',
-  );
-  if (verifyBtn) {
-    verifyBtn.disabled = false;
-    verifyBtn.title = "Verify this session's ledger chain";
-  }
-
-  const events = root.querySelector<HTMLUListElement>(
-    '[data-role="ledger-events"]',
-  );
-  if (events) {
-    events.innerHTML = `<li class="r1-empty">Loading nodes&hellip;</li>`;
-  }
-
-  const result = await invokeStub<LedgerTimelineResult>(
-    "ledger_timeline",
-    "R1D-5",
-    { nodes: [] },
-    { session_id: sessionId },
-  );
-
-  if (STATE.selectedSessionId !== sessionId) return;
-  STATE.timeline = result.nodes;
-  renderTimeline(root);
-}
-
-function renderTimeline(root: HTMLElement): void {
-  const events = root.querySelector<HTMLUListElement>(
-    '[data-role="ledger-events"]',
-  );
+function renderEvents(root: HTMLElement): void {
+  const events = root.querySelector<HTMLUListElement>('[data-role="ledger-events"]');
   if (!events) return;
 
-  if (STATE.timeline.length === 0) {
+  if (STATE.events.length === 0) {
     events.innerHTML = `
       <li class="r1-empty">
-        No nodes yet for this session. The ledger starts empty.
+        No ledger events are available from the host yet.
       </li>
     `;
     return;
   }
 
-  events.innerHTML = STATE.timeline.map(renderTimelineRow).join("");
-
-  events.querySelectorAll<HTMLLIElement>(".r1-ledger-event").forEach((li) => {
-    const nodeId = li.dataset.nodeId ?? "";
-    const node = STATE.timeline.find((n) => n.id === nodeId);
-    if (!node) return;
-    const open = () => {
-      void openNodeDrawer(node, {
-        onShredded: (shreddedId) => {
-          const target = STATE.timeline.find((n) => n.id === shreddedId);
-          if (target) target.shredded = true;
-          renderTimeline(root);
-        },
-      });
-    };
-    li.addEventListener("click", open);
-    li.addEventListener("keydown", (event) => {
+  events.innerHTML = STATE.events.map(renderEventRow).join("");
+  for (const row of events.querySelectorAll<HTMLLIElement>(".r1-ledger-event")) {
+    const hash = row.dataset.hash;
+    if (!hash) continue;
+    row.addEventListener("click", () => {
+      void openEventNode(hash);
+    });
+    row.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
-      open();
+      void openEventNode(hash);
     });
-  });
+  }
 }
 
-function renderTimelineRow(node: LedgerNode): string {
-  const shredClass = node.shredded ? " is-shredded" : "";
-  const shredPill = node.shredded
-    ? `<span class="r1-ledger-shredded-pill" aria-label="Shredded">SHRED</span>`
-    : "";
-  const hashPrefix = node.content_hash
-    ? node.content_hash.slice(0, 12)
-    : node.id.slice(0, 12);
+function renderEventRow(event: LedgerEventSummary): string {
+  const hashPrefix = event.hash.slice(0, 12);
   return `
     <li
-      class="r1-ledger-event${shredClass}"
-      data-node-id="${escapeHtml(node.id)}"
-      data-kind="${escapeHtml(node.kind)}"
+      class="r1-ledger-event"
+      data-hash="${escapeHtml(event.hash)}"
       tabindex="0"
       role="button"
-      aria-label="Inspect node ${escapeHtml(node.id)}"
+      aria-label="Inspect node ${escapeHtml(event.hash)}"
     >
       <code class="r1-ledger-hash">${escapeHtml(hashPrefix)}</code>
-      <span class="r1-ledger-type">${escapeHtml(node.kind)}</span>
-      ${shredPill}
-      <time class="r1-ledger-at" datetime="${escapeHtml(node.timestamp)}">${escapeHtml(node.timestamp)}</time>
+      <span class="r1-ledger-type">${escapeHtml(event.type)}</span>
+      <time class="r1-ledger-at" datetime="${escapeHtml(event.at)}">${escapeHtml(event.at)}</time>
     </li>
   `;
 }
 
-async function runVerify(root: HTMLElement): Promise<void> {
-  const sessionId = STATE.selectedSessionId;
-  if (!sessionId) return;
-
-  const banner = root.querySelector<HTMLDivElement>(
-    '[data-role="verify-banner"]',
-  );
-  if (banner) {
-    banner.hidden = false;
-    banner.className = "r1-ledger-verify-banner is-running";
-    banner.textContent = "Verifying chain…";
-  }
-
-  const result = await invokeStub<LedgerVerifyResult>(
-    "ledger_verify",
+async function openEventNode(hash: string): Promise<void> {
+  const node = await invokeStub<LedgerNode>(
+    "ledger_get_node",
     "R1D-5",
-    { passed: true, first_bad_offset: null },
-    { session_id: sessionId },
+    emptyNode(hash),
+    { hash },
   );
-
-  if (STATE.selectedSessionId !== sessionId) return;
-  STATE.verify = result;
-  renderVerifyBanner(root);
+  await openNodeDrawer(node);
 }
 
-function renderVerifyBanner(root: HTMLElement): void {
-  const banner = root.querySelector<HTMLDivElement>(
-    '[data-role="verify-banner"]',
-  );
-  if (!banner) return;
-
-  const result = STATE.verify;
-  if (!result) {
-    banner.hidden = true;
-    banner.className = "r1-ledger-verify-banner";
-    banner.textContent = "";
-    return;
-  }
-
-  banner.hidden = false;
-  if (result.passed) {
-    banner.className = "r1-ledger-verify-banner is-pass";
-    banner.textContent = result.message ?? "Chain verified. All nodes pass.";
-    return;
-  }
-
-  const offset = result.first_bad_offset;
-  const where = offset === null ? "unknown offset" : `offset ${offset}`;
-  const detail = result.message ? ` ${result.message}` : "";
-  banner.className = "r1-ledger-verify-banner is-fail";
-  banner.textContent = `Chain verification FAILED at ${where}.${detail}`;
-}
-
-async function exportSession(sessionId: string): Promise<void> {
-  if (!sessionId) return;
-  const result = await invokeStub<LedgerExportResult>(
-    "ledger_export",
-    "R1D-5",
-    { ndjson: "" },
-    { session_id: sessionId },
-  );
-  triggerNdjsonDownload(sessionId, result.ndjson);
-}
-
-function triggerNdjsonDownload(sessionId: string, ndjson: string): void {
-  const blob = new Blob([ndjson], { type: "application/x-ndjson" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `${safeFilenamePart(sessionId)}.ndjson`;
-  anchor.rel = "noopener";
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
-function safeFilenamePart(raw: string): string {
-  const cleaned = raw.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
-  return cleaned.length > 0 ? cleaned : "ledger-session";
+function emptyNode(hash: string): LedgerNode {
+  return {
+    id: hash,
+    kind: "unknown",
+    timestamp: "",
+    content_hash: hash,
+    parent_hash: "",
+    payload: {},
+    shredded: false,
+  };
 }
 
 function escapeHtml(raw: string): string {

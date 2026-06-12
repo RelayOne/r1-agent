@@ -18,15 +18,15 @@ import (
 	"github.com/RelayOne/r1/internal/config"
 	"github.com/RelayOne/r1/internal/convergence"
 	"github.com/RelayOne/r1/internal/costtrack"
-	"github.com/RelayOne/r1/internal/env"
 	"github.com/RelayOne/r1/internal/critic"
 	"github.com/RelayOne/r1/internal/ctxpack"
 	"github.com/RelayOne/r1/internal/diffcomp"
 	"github.com/RelayOne/r1/internal/engine"
+	"github.com/RelayOne/r1/internal/env"
 	"github.com/RelayOne/r1/internal/extract"
 	"github.com/RelayOne/r1/internal/failure"
-	"github.com/RelayOne/r1/internal/filewatcher"
 	"github.com/RelayOne/r1/internal/fileutil"
+	"github.com/RelayOne/r1/internal/filewatcher"
 	"github.com/RelayOne/r1/internal/gitblame"
 	"github.com/RelayOne/r1/internal/hooks"
 	"github.com/RelayOne/r1/internal/hub"
@@ -122,27 +122,27 @@ type Engine struct {
 	// were never reconciled until merge — which happens AFTER review,
 	// so the reviewer reported "no files exist" on tasks that had
 	// actually succeeded.
-	InPlace          bool
-	Pools            *subscriptions.Manager
-	Worktrees        WorktreeManager
-	Runners          engine.Registry
-	Verifier         *verify.Pipeline
-	ClaudeConfigDir  string
-	CodexHome        string
-	OnEvent          engine.OnEventFunc
-	State            *taskstate.TaskState
-	Wisdom           *wisdom.Store       // cross-task learning accumulator (nil = disabled)
-	CostTracker      *costtrack.Tracker  // per-session cost tracking (nil = disabled)
-	Hooks            []TaskHook          // lifecycle hooks (nil = no hooks)
-	Recorder         *replay.Recorder    // session replay recording (nil = disabled)
-	TestGraph        *testselect.Graph   // dependency-aware test selection (nil = run all)
-	RepoMap          *repomap.RepoMap    // ranked codebase map for context (nil = disabled)
-	RepoMapBudget    int                 // token budget for repomap (0 = default 2000)
-	CriticConfig     *critic.Config      // per-project critic configuration (nil = defaults)
-	PlanOnly         bool
-	RunnerOverride   engine.CommandRunner // if set, used for all phases (testing only)
-	Boulder          *boulder.Enforcer   // idle detection (nil = disabled)
-	Convergence      *convergence.Validator // adversarial self-audit: blocks merge if blocking findings (nil = skip)
+	InPlace         bool
+	Pools           *subscriptions.Manager
+	Worktrees       WorktreeManager
+	Runners         engine.Registry
+	Verifier        *verify.Pipeline
+	ClaudeConfigDir string
+	CodexHome       string
+	OnEvent         engine.OnEventFunc
+	State           *taskstate.TaskState
+	Wisdom          *wisdom.Store      // cross-task learning accumulator (nil = disabled)
+	CostTracker     *costtrack.Tracker // per-session cost tracking (nil = disabled)
+	Hooks           []TaskHook         // lifecycle hooks (nil = no hooks)
+	Recorder        *replay.Recorder   // session replay recording (nil = disabled)
+	TestGraph       *testselect.Graph  // dependency-aware test selection (nil = run all)
+	RepoMap         *repomap.RepoMap   // ranked codebase map for context (nil = disabled)
+	RepoMapBudget   int                // token budget for repomap (0 = default 2000)
+	CriticConfig    *critic.Config     // per-project critic configuration (nil = defaults)
+	PlanOnly        bool
+	RunnerOverride  engine.CommandRunner   // if set, used for all phases (testing only)
+	Boulder         *boulder.Enforcer      // idle detection (nil = disabled)
+	Convergence     *convergence.Validator // adversarial self-audit: blocks merge if blocking findings (nil = skip)
 	// ConvergenceIgnores persists CTO-approved ignore entries that
 	// suppress specific regex/semantic findings the VP Eng review has
 	// judged to be false positives. Loaded from
@@ -159,26 +159,26 @@ type Engine struct {
 	// OverrideJudge is the VP Eng → CTO judge used when the repeat
 	// threshold is crossed. When nil, the override flow is skipped and
 	// convergence failures propagate normally.
-	OverrideJudge    convergence.OverrideJudge
-	EventBus         *hub.Bus               // unified event bus (nil = no events)
-	SkillRegistry    *skill.Registry        // skill library for prompt injection (nil = auto-create from RepoRoot)
-	StackMatches     []string               // pre-computed stack-matched skill names from RepoProfile
-	RunnerMode       string                 // runner selection: "claude", "codex", "native", "hybrid" (default: "claude")
-	Environ          env.Environment        // execution environment backend (nil = run on host)
-	EnvHandle        *env.Handle            // provisioned environment handle (nil = run on host)
+	OverrideJudge convergence.OverrideJudge
+	EventBus      *hub.Bus        // unified event bus (nil = no events)
+	SkillRegistry *skill.Registry // skill library for prompt injection (nil = auto-create from RepoRoot)
+	StackMatches  []string        // pre-computed stack-matched skill names from RepoProfile
+	RunnerMode    string          // runner selection: "claude", "codex", "native", "hybrid" (default: "claude")
+	Environ       env.Environment // execution environment backend (nil = run on host)
+	EnvHandle     *env.Handle     // provisioned environment handle (nil = run on host)
 	// ToolRetriever is the STOKE-022 Tool RAG layer. When
 	// non-nil AND ToolRetrievalK > 0, executePrompt queries
 	// the retriever with the task description and prepends
 	// the top-K capability hits to priorContext. Lets the
 	// LLM see the most-relevant few tools instead of the
 	// full registered surface. Nil = disabled.
-	ToolRetriever    vecindex.Retriever
+	ToolRetriever vecindex.Retriever
 	// ToolRetrievalK caps how many tool hits ToolRetriever
 	// returns per execute prompt. 0 resolves to the default
 	// of 5 when ToolRetriever is non-nil. Set to -1 to
 	// disable retrieval even with a non-nil retriever (used
 	// by tests).
-	ToolRetrievalK   int
+	ToolRetrievalK int
 }
 
 // Result captures the outcome of a complete workflow execution, including steps, verification, and cost.
@@ -623,7 +623,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		var execResult engine.RunResult
 		var acquiredPoolID string
 		triedPools := map[string]bool{} // track which pools we've tried this attempt
-		maxPoolRotations := 5            // don't spin forever
+		maxPoolRotations := 5           // don't spin forever
 
 		// Determine provider for pool acquisition and rotation (must be outside rotation loop scope)
 		execProvider := subscriptions.ProviderClaude
@@ -738,9 +738,15 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		// Honor Policy.Verification flags: only run enabled checks.
 		verifier := e.Verifier
 		filteredBuild, filteredTest, filteredLint := verifier.Commands()
-		if !e.Policy.Verification.Build { filteredBuild = "" }
-		if !e.Policy.Verification.Tests { filteredTest = "" }
-		if !e.Policy.Verification.Lint { filteredLint = "" }
+		if !e.Policy.Verification.Build {
+			filteredBuild = ""
+		}
+		if !e.Policy.Verification.Tests {
+			filteredTest = ""
+		}
+		if !e.Policy.Verification.Lint {
+			filteredLint = ""
+		}
 
 		// Targeted test selection: if a dependency graph is available, narrow
 		// the test command to only packages affected by the changed files.
@@ -765,10 +771,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		// Emit verification results
 		for _, o := range outcomes {
 			if !o.Skipped {
+				eventType, payload := verifyOutcomeEvent(o)
 				e.emitEventAsync(&hub.Event{
-					Type:   hub.EventVerifyBuildResult,
+					Type:   eventType,
 					TaskID: name, Phase: "verify",
-					Test: &hub.TestEvent{Phase: o.Name},
+					Test: payload,
 				})
 			}
 		}
@@ -857,10 +864,10 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				}
 				if len(changes) > 0 {
 					criticCfg := critic.Config{}
-				if e.CriticConfig != nil {
-					criticCfg = *e.CriticConfig
-				}
-				c := critic.New(criticCfg)
+					if e.CriticConfig != nil {
+						criticCfg = *e.CriticConfig
+					}
+					c := critic.New(criticCfg)
 					verdict := c.Review(changes)
 					if !verdict.Pass {
 						evidence.Notes = append(evidence.Notes, "critic: "+verdict.Summary)
@@ -1292,6 +1299,23 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	return result, nil
 }
 
+func verifyOutcomeEvent(outcome verify.Outcome) (hub.EventType, *hub.TestEvent) {
+	eventType := hub.EventVerifyBuildResult
+	switch outcome.Name {
+	case "test":
+		eventType = hub.EventVerifyTestResult
+	case "lint":
+		eventType = hub.EventVerifyLintResult
+	}
+	test := &hub.TestEvent{Phase: outcome.Name}
+	if outcome.Success {
+		test.Passed = 1
+	} else {
+		test.Failed = 1
+	}
+	return eventType, test
+}
+
 // runCrossModelReview executes the cross-model review phase including
 // post-review revalidation. Returns the validated file list or an error.
 // This is extracted from Run() to allow the review to be policy-gated.
@@ -1610,7 +1634,9 @@ func (e Engine) recordAttemptEvidence(number int, startedAt time.Time, engineNam
 }
 
 func truncStr(s string, n int) string {
-	if len(s) <= n { return s }
+	if len(s) <= n {
+		return s
+	}
 	return s[:n] + "..."
 }
 
@@ -1743,7 +1769,7 @@ func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Anal
 		compressedDiff := diffcomp.Compress(diffcomp.Diff("", diffSummary), diffcomp.CompressOpts{
 			SkipWhitespace: true,
 			SkipComments:   true,
-			MaxContext:      3,
+			MaxContext:     3,
 		})
 		compressedText := diffcomp.Render(compressedDiff)
 		if compressedText == "" {
@@ -2374,4 +2400,3 @@ func buildFileSnippets(worktreePath string, findings []convergence.Finding) map[
 	}
 	return out
 }
-

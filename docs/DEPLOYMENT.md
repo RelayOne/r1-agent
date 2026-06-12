@@ -1,6 +1,6 @@
 # Deployment
 
-Operations guide for r1, covering both the **local agent runtime** (CLI + daemon + UIs) and the **hosted SaaS** (`r1.run` — 9 Cloud Run services on `relayone-488319`).
+Operations guide for r1, covering both the **local agent runtime** (CLI + daemon + UIs) and the **hosted SaaS** (`r1.run` — 12 public Cloud Run services on `relayone-488319`).
 
 A new operator should be able to deploy this stack at 3 a.m. during an outage following only this doc.
 
@@ -161,6 +161,7 @@ r1 desktop      # if installed; or open the platform-specific bundle
 | r1-coord-api-{prod,staging,dev} | us-central1-docker.pkg.dev/relayone-488319/r1/r1-coord-api:<sha> | api.{,staging.,dev.}r1.run |
 | r1-docs-{prod,staging,dev} | us-central1-docker.pkg.dev/relayone-488319/r1/r1-docs:<sha> | platform.{,staging.,dev.}r1.run |
 | r1-downloads-cdn-{prod,staging,dev} | us-central1-docker.pkg.dev/relayone-488319/r1/r1-downloads-cdn:<sha> | downloads.{,staging.,dev.}r1.run |
+| r1-admin-{prod,staging,dev} | us-central1-docker.pkg.dev/relayone-488319/r1/r1-admin:<sha> | admin.{,staging.,dev.}r1.run |
 
 Per the standing GCP rules:
 - Region: `us-central1` (Tier 1 pricing)
@@ -180,16 +181,21 @@ Per the standing GCP rules:
 
 All ENTERPRISE edition. Backups daily at 09:00 UTC. Storage SSD 10 GB, auto-increase enabled. Public IPs only — no VPC peering yet (operator follow-up).
 
-### Secret Manager (placeholders — operator must populate)
+### Secret Manager (core env set)
 
 ```
 r1-prod-shared-DATABASE_URL          (placeholder — set the real connection string)
 r1-prod-shared-ANTHROPIC_API_KEY     (placeholder)
+r1-prod-shared-AUTH_JWT_SECRET
 r1-staging-shared-DATABASE_URL
 r1-staging-shared-ANTHROPIC_API_KEY
+r1-staging-shared-AUTH_JWT_SECRET
 r1-dev-shared-DATABASE_URL
 r1-dev-shared-ANTHROPIC_API_KEY
+r1-dev-shared-AUTH_JWT_SECRET
 ```
+
+Public service manifests now prefer `r1-<env>-shared-CODERADAR_DSN` when it exists and otherwise fall back to `relayone-coderadar-dsn`; the live `dev` public services are currently using that shared fallback. That binding is still not proof that the full GTM stack is live: as of the 2026-05-15 audit, no R1 PostHog or Customer.io secrets were visible in Secret Manager, and the broader marketing/browser rollout remains partial.
 
 To set a real value:
 ```bash
@@ -221,43 +227,45 @@ Per-channel binaries land here via `cloudbuild-binaries.yaml` on tag push (exist
 gcloud beta run domain-mappings list --region=us-central1 --filter="domain~r1.run"
 ```
 
-9 domains (created; pending DNS):
+12 domains (live during the 2026-05-15 audit):
 - platform.r1.run / platform.staging.r1.run / platform.dev.r1.run
 - api.r1.run / api.staging.r1.run / api.dev.r1.run
 - downloads.r1.run / downloads.staging.r1.run / downloads.dev.r1.run
+- admin.r1.run / admin.staging.r1.run / admin.dev.r1.run
 
 Each maps to its Cloud Run service via CNAME → `ghs.googlehosted.com.`.
 
-### Cloudflare DNS — operator action
+### Cloudflare DNS — current state
 
-Add 9 CNAME records to the `r1.run` zone:
+The `r1.run` zone already had the required `CNAME` records in place during the 2026-05-15 audit. All customer-facing Cloud Run mappings require **proxy OFF** (gray cloud), because Google-managed TLS terminates at Cloud Run, not behind Cloudflare proxy mode.
 
 | Host | Type | Value | Proxy |
 |---|---|---|---|
 | `platform` | CNAME | `ghs.googlehosted.com.` | OFF (gray cloud) |
 | `api` | CNAME | `ghs.googlehosted.com.` | OFF |
 | `downloads` | CNAME | `ghs.googlehosted.com.` | OFF |
+| `admin` | CNAME | `ghs.googlehosted.com.` | OFF |
 | `platform.staging` | CNAME | `ghs.googlehosted.com.` | OFF |
 | `api.staging` | CNAME | `ghs.googlehosted.com.` | OFF |
 | `downloads.staging` | CNAME | `ghs.googlehosted.com.` | OFF |
+| `admin.staging` | CNAME | `ghs.googlehosted.com.` | OFF |
 | `platform.dev` | CNAME | `ghs.googlehosted.com.` | OFF |
 | `api.dev` | CNAME | `ghs.googlehosted.com.` | OFF |
 | `downloads.dev` | CNAME | `ghs.googlehosted.com.` | OFF |
+| `admin.dev` | CNAME | `ghs.googlehosted.com.` | OFF |
 
 **Critical**: Proxy MUST be OFF (gray cloud, not orange). Cloud Run provisions Google-managed TLS certs; Cloudflare proxy mode strips them.
-
-After CNAMEs propagate (5-15 min), Google-managed certs auto-provision on each domain mapping.
 
 ---
 
 ## Auto-deploy
 
-`services/cloudbuild-deploy.yaml` — one Cloud Build pipeline, three triggers (one per env). Each trigger fires on push to its branch (`main` → prod, `staging` → staging, `dev` → dev).
+`services/cloudbuild-deploy.yaml` defines the intended env-specific deploy pipeline (`main` → prod, `staging` → staging, `dev` → dev). During the 2026-05-15 audit, the baseline `r1-agent-pr` / `r1-agent-ci` triggers were present in GCP, but env-specific deploy-trigger presence should be treated as operator-verified state rather than assumed from this file alone.
 
 Pipeline:
-1. Three image builds in parallel (Docker layer cache via Artifact Registry).
-2. Three pushes in parallel.
-3. Three Cloud Run deploys in parallel (after all pushes), with env-specific secret bindings.
+1. Four image builds in parallel (Docker layer cache via Artifact Registry).
+2. Four pushes in parallel.
+3. Four Cloud Run deploys in parallel (after pushes), with env-specific secret bindings.
 4. Smoke check — curl `/livez` on each service, 5 retries × 2 s.
 
 Operator action — create the 3 triggers after PR #128 merges:
@@ -353,14 +361,17 @@ Not yet wired. Recommended (operator follow-up):
 
 ### CodeRadar observability (dogfood)
 
-Status: **Done (B3)**.
+Status: **Partial (B3)**.
 
-Eighteen canonical events stream from each of the 9 Cloud Run services
-to the in-house CodeRadar instance. Per-env DSN is materialized from
-Secret Manager (`r1-{env}-shared-CODERADAR_DSN`) and per-env sampling
-(`CODERADAR_SAMPLE_RATE`, plus 10% prod overrides on the two
-high-volume events) keeps prod under its cost ceiling. The on-call
-surface is four hero dashboards + four alerts.
+The CodeRadar observability substrate is real, but the truthful claim
+today is narrower than earlier handoffs suggested: public deploys prove
+DSN-based observability and a real hosted `coord-api` telemetry path
+more strongly than a full GTM replacement. The live public Cloud Run
+footprint is 12 services (4 services × 3 envs). `coord-api` now emits
+CodeRadar `/v1/track` events for `/v1/telemetry/opt-in` when
+`CODERADAR_DSN` is present, including flattened browser-attribution
+properties, while broader marketing/browser rollout still lives outside
+this repo's live deploy path.
 
 - Event catalog: [`docs/observability/coderadar-events.md`](observability/coderadar-events.md)
 - Dashboards: [`docs/observability/coderadar-dashboards.md`](observability/coderadar-dashboards.md)
@@ -369,10 +380,12 @@ surface is four hero dashboards + four alerts.
 - Spec: [`specs/coderadar-dogfood.md`](../specs/coderadar-dogfood.md)
 
 Cloud Build injects `CODERADAR_DSN` + `CODERADAR_SAMPLE_RATE` per env
-across all 4 service deploys in `services/cloudbuild-deploy.yaml`. The
-`smoke-coderadar` step runs the live `service_started` round-trip
-between `deploy-coord-api` and the generic `/livez` smoke step; failure
-blocks promotion to traffic-100% but does not roll back the deploy.
+across all 4 service deploys in `services/cloudbuild-deploy.yaml`,
+preferring `r1-<env>-shared-CODERADAR_DSN` and falling back to
+`relayone-coderadar-dsn` when that is the only real secret. The
+`smoke-coderadar` step uses the same resolution chain and skips cleanly
+when neither secret exists or the build service account cannot read the
+resolved secret.
 
 ---
 
@@ -435,7 +448,7 @@ Approximate monthly cost for the SaaS surface (idle / light usage):
 
 | Component | Monthly |
 |---|---|
-| 9 Cloud Run services (min-instances=1, instance billing) | ~$15 |
+| 12 public Cloud Run services (min-instances=1, instance billing) | ~$20 |
 | Cloud SQL r1-prod-pg (db-g1-small) | ~$10 |
 | Cloud SQL r1-staging-pg + r1-dev-pg (db-f1-micro × 2) | ~$14 |
 | Artifact Registry storage | <$1 |
@@ -613,11 +626,11 @@ Operational considerations:
 ## Status
 
 ### Done
-- 9 Cloud Run services deployed + answering `/livez` 200
+- 12 public Cloud Run services deployed + answering `/livez` 200
 - 3 Cloud SQL instances RUNNABLE
-- Artifact Registry repo + 3 images
-- 6 Secret Manager placeholders
-- 9 domain mappings created
+- Artifact Registry repo + 4 public-service images
+- core Secret Manager env set present (`DATABASE_URL`, `ANTHROPIC_API_KEY`, `AUTH_JWT_SECRET`)
+- 12 domain mappings live
 - Auto-deploy yaml + ops scripts shipped
 - `cloudbuild.yaml` CI gate (build + test + vet + race + chdir-lint + view-without-api + antitrunc verify)
 - **Release-rehearsal CI** (PR #170): Cloud Build triggers `r1-agent-e2e-rehearsal-main` (push-to-main) + `r1-agent-e2e-rehearsal-tag` (`^v.*$`) + manual GitHub Actions workflow (`e2e-rehearsal-manual.yml`). Idempotent setup via `scripts/setup-cloudbuild-e2e-trigger.sh`.
@@ -625,8 +638,7 @@ Operational considerations:
 - **Signed redaction events** (PR #169): ed25519 keypair persisted at `<store-root>/redactions/sign-{priv,pub}.pem`; `Store.RedactionsForVerified` returns per-entry `Verified` flag for the dashboard side panel.
 
 ### In Progress
-- DNS propagation (operator: add Cloudflare CNAMEs)
-- Real values for 6 secret placeholders (operator)
+- Real GTM / observability secret wiring beyond the visible core env set
 - Branch protection (operator runs `./scripts/setup-branch-protection.sh`)
 - Cloud Build deploy triggers (operator runs `./services/scripts/setup-cloudbuild-triggers.sh`)
 

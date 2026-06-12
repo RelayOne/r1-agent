@@ -1,9 +1,11 @@
 # services/cloudbuild-bench-truthful-completion-pr.yaml
 #
-# PR-triggered TruthfulCompletion regression check. Runs the 5 seed
-# missions against the 8 dispatchers and asserts no regression
-# relative to baseline. Triggered by GitHub PR open/sync when files
-# under internal/bench/, cmd/r1-bench/, or internal/antitrunc/ change.
+# Intended PR TruthfulCompletion regression check. Runs the 5 seed
+# missions against the checked-in agent matrix. The operator setup path
+# is `scripts/setup-bench-truthful-completion-cron.sh`, which provisions
+# the `bench-truthful-completion-pr` trigger in relayone-488319/us-central1.
+# This build does NOT yet post the PR delta comment promised in the full
+# spec; it currently performs the mini-run only.
 #
 # Spec: specs/truthful-completion-benchmark.md §T8.2 (item 56).
 
@@ -14,7 +16,7 @@ substitutions:
 
 options:
   logging: CLOUD_LOGGING_ONLY
-  machineType: E2_STANDARD_8
+  machineType: E2_HIGHCPU_8
 
 steps:
   - id: build

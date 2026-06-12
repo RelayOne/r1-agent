@@ -161,7 +161,7 @@ Core commitment per [STEWARDSHIP.md](../STEWARDSHIP.md): **no functional feature
 
 - 4 cortex / multi-surface specs (specs 6/7/8/9) — 171 spec items merged
 - 4 final-sweep PRs (#168 / #169 / #170 / #171) — skill-aware compaction, ed25519-signed redaction events, release-rehearsal CI lane, tracebundle v2 export
-- 9 Cloud Run SaaS services live across dev/staging/prod
+- 12 public Cloud Run SaaS services live across dev/staging/prod
 - 175 internal Go packages, 10 cmd binaries
 - 1M-iteration anti-truncation soak: 0 false positives, 0 false negatives, 499K true positives at 16,891 iter/sec
 - Performance: 3 µs/event end-to-end lane streaming (50 µs target); 262 MB/s journal throughput; 852 µs p99 dispatch latency
@@ -177,9 +177,9 @@ Core commitment per [STEWARDSHIP.md](../STEWARDSHIP.md): **no functional feature
 
 ### Hosting
 
-- 9 Cloud Run services live, /livez 200 across all 9
+- 12 public Cloud Run services live, /livez 200 across all 12
 - 3 Cloud SQL Postgres 16 instances RUNNABLE
-- DNS pending Cloudflare CNAME records (operator action)
+- Cloudflare DNS and custom domain mappings already live
 
 ---
 

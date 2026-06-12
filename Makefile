@@ -44,7 +44,11 @@ smoke-coderadar:
 	@test -n "$(ENV)" || (echo "ENV=dev|staging|prod required"; exit 1)
 	@if [ -z "$$CODERADAR_DSN" ]; then \
 	  echo "Materializing CODERADAR_DSN from Secret Manager..."; \
-	  export CODERADAR_DSN=$$(gcloud secrets versions access latest --secret=r1-$(ENV)-shared-CODERADAR_DSN); \
+	  SECRET="r1-$(ENV)-shared-CODERADAR_DSN"; \
+	  if ! gcloud secrets describe "$$SECRET" >/dev/null 2>&1; then \
+	    SECRET="relayone-coderadar-dsn"; \
+	  fi; \
+	  export CODERADAR_DSN=$$(gcloud secrets versions access latest --secret="$$SECRET"); \
 	fi; \
 	CODERADAR_DSN=$${CODERADAR_DSN} R1_ENV=$(ENV) \
 	  go test -tags=coderadar_smoke -count=1 -timeout=30s ./internal/coderadar/...

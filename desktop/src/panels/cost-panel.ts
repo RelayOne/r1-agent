@@ -2,9 +2,10 @@
 //
 // Cost-summary panel (R1D-2).
 //
-// Renders a single card with USD spend + in/out token counts. At
-// scaffold time all three read $0 / 0. The `cost.get_current` call is
-// issued through `invokeStub` with a TODO R1D-9 tag.
+// Renders a single current cost snapshot with USD spend + in/out token
+// counts. When a session id is present on the panel root, the host
+// request is scoped to that session; otherwise the desktop asks for the
+// current aggregate snapshot.
 //
 // Real per-provider latency histogram + time-range picker lands in
 // R1D-9.1 / R1D-9.3.
@@ -24,7 +25,7 @@ export function renderPanel(root: HTMLElement): void {
   root.innerHTML = `
     <header class="r1-panel-header">
       <h2>Cost</h2>
-      <span class="r1-panel-subtitle">session + all-time spend</span>
+      <span class="r1-panel-subtitle">current cost snapshot</span>
     </header>
     <div class="r1-panel-body">
       <dl class="r1-cost-summary">
@@ -52,10 +53,12 @@ export function renderPanel(root: HTMLElement): void {
 }
 
 async function loadCost(root: HTMLElement): Promise<void> {
+  const sessionId = root.dataset.sessionId?.trim();
   const snapshot = await invokeStub<CostSnapshot>(
     "cost_get_current",
     "R1D-9",
     EMPTY_SNAPSHOT,
+    sessionId ? { session_id: sessionId } : undefined,
   );
   applySnapshot(root, snapshot);
 }

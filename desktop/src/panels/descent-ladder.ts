@@ -35,6 +35,8 @@ export const TIER_COLORS: Record<DescentTier, string> = {
 
 export function renderPanel(root: HTMLElement): void {
   applyTierPalette();
+  const sessionId = root.dataset.sessionId?.trim() ?? "";
+  const acId = root.dataset.acId?.trim() ?? "";
 
   root.classList.add("r1-panel", "r1-panel-descent-ladder");
   root.innerHTML = `
@@ -43,6 +45,7 @@ export function renderPanel(root: HTMLElement): void {
       <span class="r1-panel-subtitle">T1 &rarr; T8 verification tiers</span>
     </header>
     <div class="r1-panel-body">
+      <p class="r1-empty" data-role="descent-current-tier-note"></p>
       <ol class="r1-descent-ladder" data-role="descent-ladder">
         ${ALL_DESCENT_TIERS.map(renderTierRow).join("")}
       </ol>
@@ -53,9 +56,19 @@ export function renderPanel(root: HTMLElement): void {
     '[data-role="descent-ladder"]',
   );
   if (!ladder) return;
+  if (sessionId) ladder.dataset.sessionId = sessionId;
+  if (acId) ladder.dataset.acId = acId;
 
   wireEvidenceSlots(ladder);
-  void loadTiers(ladder);
+  const note = root.querySelector<HTMLElement>('[data-role="descent-current-tier-note"]');
+  if (!sessionId) {
+    if (note) {
+      note.textContent = "Select an active session to inspect the current descent tier.";
+    }
+    return;
+  }
+  if (note) note.hidden = true;
+  void loadTiers(ladder, sessionId, acId || undefined);
 }
 
 function applyTierPalette(): void {
@@ -87,12 +100,16 @@ function wireEvidenceSlots(ladder: HTMLOListElement): void {
   });
 }
 
-async function loadTiers(ladder: HTMLOListElement): Promise<void> {
+async function loadTiers(
+  ladder: HTMLOListElement,
+  sessionId: string,
+  acId?: string,
+): Promise<void> {
   const rows = await invokeStub<DescentTierRow[]>(
     "descent_current_tier",
     "R1D-3",
     [],
-    { session_id: "" },
+    acId ? { session_id: sessionId, ac_id: acId } : { session_id: sessionId },
   );
   applyStatuses(ladder, rows);
 }

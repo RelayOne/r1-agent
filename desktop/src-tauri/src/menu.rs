@@ -280,14 +280,14 @@ fn build_help_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Submenu<R>> 
     let release = MenuItemBuilder::with_id(M_HELP_RELEASE_NOTES, "Release Notes").build(app)?;
     let issue = MenuItemBuilder::with_id(M_HELP_REPORT_ISSUE, "Report an Issue").build(app)?;
 
-    let mut builder = SubmenuBuilder::new(app, "Help")
+    let builder = SubmenuBuilder::new(app, "Help")
         .item(&docs)
         .item(&release)
         .item(&issue);
 
     // On Linux + Windows, About lives under Help.
     #[cfg(not(target_os = "macos"))]
-    {
+    let builder = {
         let sep = PredefinedMenuItem::separator(app)?;
         let about = PredefinedMenuItem::about(
             app,
@@ -298,8 +298,8 @@ fn build_help_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Submenu<R>> 
                     .build(),
             ),
         )?;
-        builder = builder.item(&sep).item(&about);
-    }
+        builder.item(&sep).item(&about)
+    };
 
     builder.build()
 }
