@@ -166,6 +166,22 @@ func (s *server) handleObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Cloud Run rejects non-chunked responses over 32 MiB ("Response size
+	// was too large") — proxying the ~64 MiB binaries with an explicit
+	// Content-Length 500'd every real download (live-debugged 2026-06-12).
+	// Large assets redirect to the public release bucket instead; the
+	// binaries pipeline publishes every build there under r1/<sha>/ and
+	// r1/latest/. R1_PUBLIC_BASE pins this service's channel to its
+	// deployed version when R1_VERSION is set.
+	if attrs.Size > 30<<20 {
+		base := getenv("R1_PUBLIC_BASE", "https://storage.googleapis.com/relayone-488319-public/r1")
+		release := getenv("R1_VERSION", "latest")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		http.Redirect(w, r, fmt.Sprintf("%s/%s/%s", base, release, asset), http.StatusFound)
+		return
+	}
+
 	rc, err := obj.NewReader(ctx)
 	if err != nil {
 		log.Printf("newReader %q: %v", objName, err)
