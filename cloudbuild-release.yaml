@@ -7,28 +7,24 @@ substitutions:
   _GCS_BUCKET: relayone-488319-r1-releases
 
 steps:
+  # Toolchains AND goreleaser are installed inside this one step:
+  # Cloud Build step containers share only /workspace, so binaries
+  # installed to /usr/local/bin in a separate install-deps step do
+  # not survive into later steps (audit A044 — the previous split
+  # made this step fail with 'goreleaser: command not found').
   - name: 'golang:1.25'
-    id: install-deps
+    id: goreleaser
     entrypoint: bash
     args:
       - -c
       - |
+        set -euo pipefail
         apt-get update -q && apt-get install -y -q \
           gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu gcc
         # Install goreleaser v2
         curl -sSL https://github.com/goreleaser/goreleaser/releases/download/v2.9.0/goreleaser_Linux_x86_64.tar.gz \
           | tar -xz -C /usr/local/bin goreleaser
         goreleaser --version
-
-  - name: 'golang:1.25'
-    id: goreleaser
-    waitFor: ['install-deps']
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        apt-get update -q && apt-get install -y -q \
-          gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu gcc
         goreleaser release --skip=publish --clean
     env:
       - 'CGO_ENABLED=1'
