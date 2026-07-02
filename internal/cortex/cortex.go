@@ -578,15 +578,11 @@ func (c *Cortex) MidturnNote(messages []agentloop.Message, turn int) string {
 
 	notes, _ := c.workspace.Drain(roundID)
 
-	// Defensive filter: Drain returns Round >= roundID; restrict to
-	// exactly roundID so a future round's Notes (shouldn't exist yet,
-	// but cheap guard) never pollute this round's block.
-	rn := make([]Note, 0, len(notes))
-	for _, n := range notes {
-		if n.Round == roundID {
-			rn = append(rn, n)
-		}
-	}
+	// No round filter: Drain's index cursor already guarantees
+	// exactly-once delivery, and late Notes from earlier rounds (slow
+	// lobes past the RoundDeadline) must surface HERE — the old
+	// exactly-roundID filter discarded them forever (audit A019).
+	rn := notes
 
 	sort.SliceStable(rn, func(i, j int) bool {
 		ri, rj := severityRank(rn[i].Severity), severityRank(rn[j].Severity)
