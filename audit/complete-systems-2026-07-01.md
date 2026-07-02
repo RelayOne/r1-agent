@@ -22,25 +22,25 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Boulder idle-nudge fires -> guaranteed deadlock: Scan holds mutex while nudge callback re-enters RecordActivity**
 - Evidence: Scan() takes `e.mu.Lock(); defer e.mu.Unlock()` (enforcer.go:162-163) and invokes the caller's callback while holding the lock: `delivered := nudge(task.ID, msg)` (line 209). The only production wiring, internal/workflow/workflow.go:456-486, passes a NudgeFunc that calls `e.OnEvent(...)` (workflow.go:460-465) — and OnEvent was wrapped at workflow.go:481-486 to call `e.Boulder.RecordActivity()` first, which takes the same non-reentrant `e.mu` (enforcer.go:153-157). Scan -> nudge -> OnEvent -> RecordActivity -> e.mu.Lock() self-deadlocks.
 - Fix: Primary fix in internal/boulder/enforcer.go Scan(): perform the throttle/pause/idle checks and snapshot the nudge candidates (task ID, message, current nudgeCount, backoff eligibility) under e.mu, then release the lock before invoking the nudge callback for each candidate, then re-acquire e.mu to append NudgeRecords, update ConsecFailures/PausedUntil, and saveState. Document on NudgeFunc that it is invoked without the enforcer lock and may safely call back into the Enforcer. Secondary hardening in internal/workflow/workflow.go: move the OnEvent wrap (lines 479-486) to before the scanner gorout…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 1c6d8ff2)
 
 ### A002 [bug/S] internal/engine/claude.go:131
 **Claude/Codex CLI runners: ctx cancellation SIGKILLs only the process-group leader, orphaning child processes**
 - Evidence: `cmd = exec.CommandContext(ctx, ...)` (claude.go:131; codex.go:72) plus `procutil.ConfigureProcessGroup(cmd)` which only sets `Setpgid: true` (procutil_unix.go:10-15) — cmd.Cancel is left at the default `Process.Kill()`, which signals ONLY the claude/codex leader. The group kill (`killProcessGroup`, claude.go:191 / codex.go:183) runs solely on the post-result-timeout path. So cancelling the run ctx (scheduler cancel, boulder execCancel at workflow.go:469, Ctrl-C) leaves node/bash/MCP children in the new pgid running as orphans, still writing into the worktree. CLAUDE.md design decision 7 claim…
 - Fix: In internal/engine/claude.go (after line 137) and internal/engine/codex.go (after line 76), immediately after procutil.ConfigureProcessGroup(cmd), set: cmd.Cancel = func() error { return procutil.Terminate(cmd) } and cmd.WaitDelay = 5 * time.Second, then in the waitDone branch call killProcessGroup(cmd) when ctx.Err() != nil to guarantee SIGTERM→SIGKILL group escalation (or, simpler and consistent with tools.go:966-978 / hub/transport.go:60-64, use cmd.Cancel = func() error { return procutil.Kill(cmd) } + WaitDelay). Apply the same to the docker branch (wrapInDocker output) and to gemini.go:52…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 88594640)
 
 ### A003 [bug/S] internal/scheduler/scheduler.go:277
 **Scheduler.Run deadlocks on context cancellation: wg.Wait() with no receiver draining results**
 - Evidence: Worker goroutines (lines 219-230) send to `results` but never call wg.Done(); wg.Done() only happens on the receive paths (drainResults line 177, blocking select line 272). The cancellation branch is `case <-ctx.Done(): wg.Wait(); return allResults, ctx.Err()` (lines 276-278) — after ctx cancels we stop receiving, so the WaitGroup counter for every in-flight task never reaches zero and wg.Wait() blocks forever. Concrete: Ctrl-C / run-timeout with >=1 task executing (cmd/r1/main.go:554 `sched.Run(ctx, p, execFn)`) hangs the whole r1 process instead of returning ctx.Err().
 - Fix: In the ctx.Done() branch of Scheduler.Run (internal/scheduler/scheduler.go:276-278), drain in-flight results before returning instead of bare wg.Wait(): `case <-ctx.Done(): for active > 0 { r := <-results; wg.Done(); active--; allResults = append(allResults, r); recordResult(r) }; wg.Wait(); return allResults, ctx.Err()`. This is bounded because execFn honors ctx (engine runners kill process groups on cancel) and preserves in-flight results/bookkeeping. Prefer this over the finder's alternative of moving `defer wg.Done()` into the worker goroutine, which would return without appending in-fligh…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 18cd551a)
 
 ### A004 [bug/S] internal/wizard/wizard.go:691
 **Wizard writes the policy to r1.policy.yaml but the generated protected-files list protects stoke.policy.yaml — the real policy file is left unprotected**
 - Evidence: wizard.go:162 and :196 write the generated policy to `filepath.Join(w.ProjectDir, "r1.policy.yaml")`, but the emitted files.protected block (wizard.go:687-691) lists `- stoke.policy.yaml` — a file that does not exist — and omits r1.policy.yaml. Result: worker agents in wizard-initialized repos may edit their own policy file (the file-protection gate at app.go:198-199 uses policy.Files.Protected). DefaultPolicy() gets this right (policy.go:352 protects "r1.policy.yaml"); the wizard drifted. The overwrite prompt at wizard.go:166 also says "stoke.policy.yaml already exists" while checking r1.poli…
 - Fix: (1) internal/wizard/wizard.go:691 — emit '- r1.policy.yaml' to match DefaultPolicy (config/policy.go:351). (2) Fix wrong-name strings: wizard.go:166 overwrite prompt, wizard.go:5 and :563 comments, cmd/r1/main.go:988 banner — all should say r1.policy.yaml. (3) Make GenerateYAML output actually loadable by config.LoadPolicy: emit the parser-unsupported metadata sections (project/models/quality/security/infrastructure/scale/domains/team/commands) as YAML comments, or teach parsePolicyYAML to tolerate them; and either emit files.protected as an inline list (protected: [".claude/", ".stoke/", "CLA…
-- STATUS: PENDING
+- STATUS: FIXED (commit: e7cb3975)
 
 ### A005 [partial-wiring/M] README.md:90
 **README's documented install path downloads.r1.run/prod/r1-linux-amd64 is structurally a 404: no pipeline in the repo ever publishes objects under the CDN's prod/staging/dev channels**
@@ -58,7 +58,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **agent-serve registers research executor with nil Fetcher — every research task fails at runtime**
 - Evidence: buildExecutorRegistry(): `executor.TaskResearch: executor.NewResearchExecutor(nil)`. The constructor contract (internal/executor/research.go:127-129) says "Fetcher must not be nil; the caller decides between HTTPFetcher (production) and StubFetcher (tests)", and Execute (research.go:167) returns `fmt.Errorf("research executor: no Fetcher configured")` when nil. agentserve/server.go:241 advertises the type as a capability and server.go:363 calls ex.Execute, so every research task submitted over agent-serve errors. The sibling CLI path wires a real fetcher (cmd/r1/research_cmd.go:77), proving th…
 - Fix: In cmd/r1/agent_serve_cmd.go buildExecutorRegistry (line 461), replace executor.NewResearchExecutor(nil) with executor.NewResearchExecutor(research.NewHTTPFetcher()) and add the "github.com/RelayOne/r1/internal/research" import — identical wiring to cmd/r1/research_cmd.go:72-77. NewHTTPFetcher (internal/research/fetch.go:61-78) is self-contained with env-driven config (R1_RESEARCH_ALLOWLIST, R1_RESEARCH_REQUIRE_TLS), so no operator dependencies. Add a regression test asserting buildExecutorRegistry's TaskResearch executor has a non-nil Fetcher (e.g., cast to *executor.ResearchExecutor and chec…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 17100432)
 
 ### A008 [partial-wiring/M] docs/HOW-IT-WORKS.md:130
 **Docs narrate a working web-chat wire flow (session.send / session.interrupt JSON-RPC), but the shipped web client sends raw {type:...} frames the daemon's JSON-RPC-only WS handler cannot dispatch**
@@ -88,7 +88,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **cloudbuild deploy-admin never binds AUTH_JWT_SECRET/ISSUER/AUDIENCE — prod r1-admin can never authenticate any operator**
 - Evidence: deploy-admin sets only `R1_ENV,R1_VERSION,R1_COORD_API_URL,CODERADAR_SAMPLE_RATE` (:246) plus optional CODERADAR_DSN secret (:249); only deploy-coord-api gets AUTH_JWT_SECRET (:132). r1-admin/main.go:604-613 requires all of AUTH_JWT_ISSUER, AUTH_JWT_AUDIENCE, AUTH_JWT_SECRET (no defaults) → loadAdminJWTConfig always fails in prod → every token-bearing request gets 503 "admin auth unavailable" (main.go:564-567), contradicting main.go:28-30 "shared AUTH_JWT_SECRET via Secret Manager".
 - Fix: Three coordinated edits: (1) services/cloudbuild-deploy.yaml deploy-admin step — extend line 246 to --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_COORD_API_URL=https://api$${SUB}.r1.run,AUTH_JWT_ISSUER=r1-coord-api,AUTH_JWT_AUDIENCE=r1-coord-api,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE} and add --set-secrets=AUTH_JWT_SECRET=r1-${_ENV}-shared-AUTH_JWT_SECRET:latest to the base DEPLOY_ARGS array (repeated --set-secrets merge; same pattern already used by deploy-coord-api at :132+:136). (2) services/deploy.sh r1-admin case — add args+=(--set-secrets="AUTH_JWT_SECRET=r1-$env-shared-…
-- STATUS: PENDING
+- STATUS: FIXED (commit: f9ec097c)
 
 ### A013 [test-gap/M] internal/worktree/manager.go:246
 **Conflict-auto-resolution merge path has zero coverage anywhere (Merge/detectConflicts/applyConflictResolutions all 0.0%)**
@@ -120,7 +120,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Policy auto-discovery omits stoke.policy.yaml even though ~10 CLI help strings name exactly that file**
 - Evidence: policySearchNames (policy.go:498-505) = [stoke.yaml, stoke.yml, .stoke.yaml, .stoke.yml, r1.policy.yaml, stoke.policy.yml] — it includes the .yml spelling of stoke.policy but not `stoke.policy.yaml`. Meanwhile the --policy flag help across commands says "Path to stoke.policy.yaml" (main.go:1063, 1234, 1712, 4839, 5065) and cmd/r1/mcp.go:238/290/420/513 say "path to stoke.policy.yaml (default: auto-detect)". An operator who creates stoke.policy.yaml as instructed gets silently ignored config: AutoLoadPolicy falls through to DefaultPolicy() with no warning.
 - Fix: 1) Add "stoke.policy.yaml" to policySearchNames in internal/config/policy.go immediately before "stoke.policy.yml" (after "r1.policy.yaml" to preserve existing precedence). 2) Add a test case alongside TestAutoLoadPolicyDiscovers (internal/config/policy_test.go:95) asserting a repo-root stoke.policy.yaml is discovered. 3) Fix the two dishonest wizard-path messages to match the file actually written (r1.policy.yaml): cmd/r1/main.go:988 and internal/wizard/wizard.go:166. Leave the --policy help strings as-is once stoke.policy.yaml is discoverable, or normalize them to mention both names in a fol…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 4934879a)
 
 ### A018 [bug/S] internal/cortex/seq_allocator.go:101
 **seqAllocator.Stop can strand concurrent next() callers blocked forever on their reply channel**
@@ -174,19 +174,19 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **r1-admin prod SSO redirect loops forever: /v1/auth/sso/start is not served by this service and not in isPublic**
 - Evidence: `http.Redirect(w, r, "/v1/auth/sso/start", http.StatusFound)` (:561) targets a path only coord-api serves; on r1-admin the request re-enters requireOperator, isPublic (:797-803) doesn't list it, no bearer → 302 to itself → infinite redirect loop for any unauthenticated prod visitor.
 - Fix: In services/r1-admin/main.go:561, redirect to the absolute coord-api URL: http.Redirect(w, r, strings.TrimRight(coordAPI, "/")+"/v1/auth/sso/start", http.StatusFound). Tighten TestRequireOperatorBypassesPublicPaths (main_test.go:350) to assert the Location starts with coordAPI (strings.Contains currently passes either way). Optionally note in a comment that coord-api's /v1/auth/sso/callback returns the JWT as JSON with no return redirect, so completing browser SSO into r1-admin needs a follow-up (e.g. a ?next= param plus cookie session) — the absolute-URL redirect fixes the loop but leaves log…
-- STATUS: PENDING
+- STATUS: FIXED (commit: b6915870)
 
 ### A027 [bug/S] services/r1-coord-api/main.go:177
 **r1-coord-api /v1/license/verify: dead EOF guard plus accepts any 8+ char key as valid on a public prod endpoint**
 - Evidence: `if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, fmt.Errorf("EOF"))` — errors.Is against a freshly-allocated fmt.Errorf can never match, so empty-body requests 400 instead of the intended EOF fall-through (the telemetry handler at :196 correctly uses io.EOF). And the endpoint's whole 'verification' is `valid := len(req.Key) >= 8` (:181) returning reason "well-formed key" — a licensing stub live on an --allow-unauthenticated prod service.
 - Fix: In services/r1-coord-api/main.go:177 replace `!errors.Is(err, fmt.Errorf("EOF"))` with `!errors.Is(err, io.EOF)` (matching main.go:196; io is already imported). Make the stub honest: change the reason strings at main.go:185 to state shape-check-only (e.g. "shape check only (stub, no key store): key >= 8 chars" / "key shorter than 8 chars") or add a "mode":"shape-check" field, and fix the header doc at main.go:7 to say "valid when key length >= 8; shape check only, no key store" instead of "returns {valid:true} for any non-empty key". Add a test asserting empty-body POST returns 200 {valid:fals…
-- STATUS: PENDING
+- STATUS: FIXED (commit: d99e09d2)
 
 ### A028 [bug/M] services/r1-downloads-cdn/main.go:158
 **downloads-cdn '/…/sha256' endpoint returns md5+crc32c and no sha256**
 - Evidence: Doc (:14) advertises `GET /<channel>/<asset>/sha256`, but the handler writes `{"ok":true,"object":...,"size":...,"md5":...,"crc32c":...}` (:158-166) — no sha256 field exists. Any install script doing `curl .../r1-linux-amd64/sha256` to verify a download gets checksums it didn't ask for.
 - Fix: In the wantSha branch of handleObject (main.go:158-166), stream-hash the object server-side: open obj.NewReader(ctx), io.Copy into crypto/sha256, and add "sha256":"<hex>" to the JSON response alongside md5/crc32c; set Cache-Control: public, max-age=300 to amortize the read (assets are <=~64MiB, objectViewer suffices, and the JSON stays tiny so the Cloud Run 32MiB response limit is irrelevant). Update the endpoint doc at main.go:14 and docs/ARCHITECTURE.md:532 to state the full response shape. Optionally also emit sha256 sidecar metadata from cloudbuild-binaries.yaml for future objects, but the…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 7c28bdb1)
 
 ### A029 [partial-wiring/M] cmd/r1/desktop_rpc_cmd.go:263
 **Rust host round-trips 6 verbs (session.lanes.*, session.set_workdir, daemon.status/shutdown) the Go subprocess never routes**
@@ -542,7 +542,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **License verification endpoint is shape-only (any 8+ char key is valid) and its doc comment contradicts the code**
 - Evidence: `valid := len(req.Key) >= 8` — the deployed /v1/license/verify endpoint approves any 8+ character string; there is no key store, signature, or tenant lookup, and nothing in cmd/ or internal/ calls this endpoint, so licensing is enforced nowhere. The package doc (line 7) additionally claims "returns {valid:true} for any non-empty key", which the code contradicts (short keys are rejected — see main_test.go:44).
 - Fix: Two one-line changes in services/r1-coord-api/main.go: (1) line 7 — correct the package doc to match behavior: "POST /v1/license/verify — license-key shape stub; returns {valid:true} for any key of 8+ chars (no key registry; deliberate stub, see docs/HOW-IT-WORKS.md)". (2) line 177 — replace `errors.Is(err, fmt.Errorf("EOF"))` with `errors.Is(err, io.EOF)` (the current expression is always false, so an empty POST body returns 400 "invalid JSON body" instead of the intended {valid:false} passthrough; matches the correct pattern already used at line 196). Drop the "back it with a real key regist…
-- STATUS: PENDING
+- STATUS: FIXED (commit: d99e09d2)
 
 ### A088 [ci-gap/S] README.md:297
 **README documents `make check-pkg-count` as a CI gate, but it is wired nowhere and fails at HEAD (expected 180, actual 265)**
@@ -788,7 +788,11 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **r1-admin pages assert specific backends that don't exist: 'Backed by <coord-api>/v1/sessions' and 'migrations/ — pending'**
 - Evidence: handleSessions renders "Backed by <code>{coordAPI}/v1/sessions</code>" (:246) but coord-api registers no /v1/sessions route (main.go:429-439 lists the full mux); handleLicenseKeys cites "schema in services/r1-coord-api/migrations/ — pending" (:294) but no migrations dir exists (ls: Dockerfile, go.mod, go.sum, internal, main.go, main_test.go).
 - Fix: In services/r1-admin/main.go, align both pages with the honest phrasing already standardized at :195 and :326. Line 246: replace 'Backed by <code>{coordAPI}/v1/sessions</code>.' with 'Requires <code>GET {coordAPI}/v1/sessions</code> — that endpoint is not implemented in this repo's coord-api.' Line 294: replace 'Backed by Cloud SQL <code>license_keys</code> table (schema in <code>services/r1-coord-api/migrations/</code> — pending).' with 'No key store is wired in this repo; coord-api's <code>/v1/license/verify</code> performs a stateless format check only.' Optionally add assertions to service…
-- STATUS: PENDING
+- STATUS: FIXED (commit: b6915870)
+
+## Notes
+
+- Commit d99e09d2 (A027+A087) cites "A079+A127" in its message — a pre-correction ID mapping; the statuses here are authoritative. History rewrite is blocked by repo hooks, so the message stands.
 
 ## Rejected findings (18) — refuted by adversarial verification
 
