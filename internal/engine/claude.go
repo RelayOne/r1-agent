@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -141,23 +142,38 @@ func (r *ClaudeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	if err != nil {
 		return RunResult{}, fmt.Errorf("stdout pipe: %w", err)
 	}
-	cmd.Stderr = nil // discard stderr (sandbox debug noise on Linux: #12007)
+	// Capture stderr into a bounded tail buffer instead of discarding it (was
+	// #12007 sandbox noise). When the CLI dies before emitting a terminal
+	// 'result' event -- expired auth, an unknown flag after an upgrade, OOM,
+	// or a boulder/Ctrl-C kill -- its stderr is the only surviving reason the
+	// run failed, and dropping it turns a dead run into a silent empty success.
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return RunResult{}, fmt.Errorf("stderr pipe: %w", err)
+	}
 
 	if err := cmd.Start(); err != nil {
 		return RunResult{}, fmt.Errorf("start claude: %w", err)
 	}
 	leaderPid := cmd.Process.Pid
 
+	// Drain stderr into a bounded tail (buffered so the goroutine never blocks
+	// even if we take the timeout branch and skip the read).
+	stderrDone := make(chan string, 1)
+	go func() { stderrDone <- captureBoundedTail(stderr, maxStderrCapture) }()
+
 	// Parse the NDJSON stream with 3-tier timeouts
 	done := make(chan struct{})
 	events := r.Parser.Parse(stdout, done)
 
 	result := RunResult{Prepared: prepared}
+	resultSeen := false
 	for ev := range events {
 		if onEvent != nil {
 			onEvent(ev)
 		}
 		if ev.Type == "result" {
+			resultSeen = true
 			result.CostUSD = ev.CostUSD
 			result.DurationMs = ev.DurationMs
 			result.NumTurns = ev.NumTurns
@@ -183,21 +199,78 @@ func (r *ClaudeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	select {
 	case waitErr := <-waitDone:
 		reapGroupOnCancel(ctx, leaderPid)
+		stderrText := <-stderrDone
 		if waitErr != nil {
 			var exitErr *exec.ExitError
 			if errors.As(waitErr, &exitErr) {
 				result.ExitCode = exitErr.ExitCode()
 			}
-			// Don't return error for exit code 1 -- parse subtype instead (#15685: exit 0 on rate limit)
+			// Don't blanket-fail on exit 1 -- classify below (#15685: exit 0 on rate limit).
+		}
+		// Fail closed: a cancelled run, a nonzero/killed exit, or a run that
+		// never emitted a terminal 'result' event must NOT be reported as a
+		// silent empty success. Otherwise workflow verifies the UNCHANGED
+		// worktree against a green baseline and marks the task done with zero
+		// changes -- the worst failure mode for an agent harness. Parity with
+		// CodexRunner (codex.go) and CLAUDE.md design decision 27.
+		switch {
+		case ctx.Err() != nil:
+			result.IsError = true
+			result.Subtype = "cancelled"
+		case result.ExitCode != 0:
+			result.IsError = true
+			if result.Subtype == "" {
+				result.Subtype = "error_during_execution"
+			}
+		case !resultSeen && !result.IsError:
+			result.IsError = true
+			result.Subtype = "no_result"
+		}
+		// Surface the bounded stderr tail as the failure reason when we flagged
+		// an error but the stream gave us no result text.
+		if result.IsError && strings.TrimSpace(result.ResultText) == "" && stderrText != "" {
+			result.ResultText = stderrText
 		}
 	case <-time.After(r.Parser.PostResultTimeout + 5*time.Second):
 		killProcessGroup(cmd)
 		result.IsError = true
 		result.Subtype = "timeout_after_result"
+		// Best-effort: attach stderr if the drain goroutine already finished.
+		select {
+		case s := <-stderrDone:
+			if strings.TrimSpace(result.ResultText) == "" && s != "" {
+				result.ResultText = s
+			}
+		default:
+		}
 	}
 
 	<-done // wait for parser goroutine to finish
 	return result, nil
+}
+
+// maxStderrCapture bounds retained stderr to its last 8 KiB -- enough for an
+// unknown-flag error or a crash's tail without unbounded memory growth.
+const maxStderrCapture = 8 << 10
+
+// captureBoundedTail reads r to EOF, retaining only the last max bytes, and
+// returns the trimmed tail. Used to preserve a dead CLI's failure reason.
+func captureBoundedTail(r io.Reader, max int) string {
+	buf := make([]byte, 4096)
+	var tail []byte
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			tail = append(tail, buf[:n]...)
+			if len(tail) > max {
+				tail = tail[len(tail)-max:]
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	return strings.TrimSpace(string(tail))
 }
 
 // killProcessGroup sends SIGTERM then SIGKILL to the process group.
