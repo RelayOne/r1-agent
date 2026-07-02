@@ -35,6 +35,11 @@ import {
   setLaneDensity,
   type LaneDensity,
 } from "../lib/lanePrefs";
+import {
+  hasLocalKey,
+  providerNeedsKey,
+  selectedProviderId,
+} from "../onboarding/onboarding";
 import type {
   PolicyTier,
   ProviderRow,
@@ -111,14 +116,19 @@ interface SettingsState {
   lanes: LanesPrefsState;
 }
 
+// Static provider catalog (name / endpoint / default model only).
+// Status and default badges are DERIVED at render time from what
+// onboarding actually stored locally — never fabricated (audit A086).
+// The seeds below carry the pessimistic resting state; see
+// withDerivedProviderTruth().
 const SEED_PROVIDERS: ProviderRow[] = [
   {
     id: "claude",
     name: "Claude (Anthropic)",
     endpoint: "https://api.anthropic.com",
     model: "claude-opus-4-7",
-    is_default: true,
-    status: "configured",
+    is_default: false,
+    status: "needs_key",
   },
   {
     id: "openai",
@@ -150,9 +160,31 @@ const SEED_PROVIDERS: ProviderRow[] = [
     endpoint: "http://localhost:11434",
     model: "llama3.1:8b",
     is_default: false,
-    status: "configured",
+    status: "not_probed",
   },
 ];
+
+/**
+ * Derive truthful status/default flags for the static catalog
+ * (audit A086): a keyed provider is "configured" only when onboarding
+ * stored a local API key for it; keyless providers (Ollama) stay
+ * "not_probed" because nothing in this build checks the endpoint;
+ * the Default badge tracks the provider actually chosen in
+ * onboarding, or nothing when no choice was recorded.
+ */
+function withDerivedProviderTruth(rows: ProviderRow[]): ProviderRow[] {
+  const chosen = selectedProviderId();
+  return rows.map((row) => {
+    const needsKey = providerNeedsKey(row.id);
+    const status: ProviderRow["status"] =
+      needsKey === false
+        ? "not_probed"
+        : hasLocalKey(row.id)
+          ? "configured"
+          : "needs_key";
+    return { ...row, status, is_default: chosen === row.id };
+  });
+}
 
 const MODEL_OPTIONS: Record<string, string[]> = {
   claude: [
@@ -421,17 +453,22 @@ function renderGeneral(body: HTMLElement): void {
 // ---------------------------------------------------------------------
 
 function renderProviders(body: HTMLElement, s: SettingsState): void {
+  // Re-derive on every render so the panel reflects keys/choices the
+  // user saved in onboarding since the last open (audit A086).
+  s.providers = withDerivedProviderTruth(s.providers);
   body.innerHTML = `
     <header class="r1-settings-section-header">
       <h3>Providers</h3>
       <p class="r1-settings-section-hint">
-        This build exposes the provider inventory only. Default-provider
-        persistence and live connection tests are not wired in the desktop host yet.
+        This build exposes the provider inventory only. Live connection
+        tests are not wired in the desktop host yet.
       </p>
     </header>
     <div class="r1-settings-unavailable" data-role="providers-unavailable">
       <p class="r1-empty">
         Provider changes here are read-only until the desktop host implements provider settings IPC.
+        The rows below are a static catalog; the status chip only reflects
+        whether onboarding stored a local API key — endpoints are never probed.
       </p>
     </div>
     <ul class="r1-settings-providers" data-role="providers-list"></ul>
@@ -442,7 +479,12 @@ function renderProviders(body: HTMLElement, s: SettingsState): void {
 }
 
 function renderProviderRow(provider: ProviderRow): string {
-  const statusText = provider.status === "configured" ? "configured" : "needs key";
+  const statusText =
+    provider.status === "configured"
+      ? "configured (local key)"
+      : provider.status === "not_probed"
+        ? "not probed"
+        : "needs key";
   return `
     <li class="r1-settings-provider-row" data-provider-id="${escapeHtml(provider.id)}">
       <div class="r1-settings-provider-main">

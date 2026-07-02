@@ -534,16 +534,24 @@ export interface SkillInvokeResult {
 // Settings: providers / vault / governance (§R1D-7)
 // ---------------------------------------------------------------------
 
-/** Configured-provider status surfaced in the Providers section. */
-export type ProviderStatus = "configured" | "needs_key";
+/**
+ * Configured-provider status surfaced in the Providers section.
+ * Derived from locally stored onboarding state, never fabricated
+ * (audit A086): "configured" = a local API-key slot exists for the
+ * provider; "needs_key" = no local key stored; "not_probed" =
+ * keyless local endpoint (e.g. Ollama) whose reachability is never
+ * probed by this build.
+ */
+export type ProviderStatus = "configured" | "needs_key" | "not_probed";
 
 /**
  * Single provider row rendered in the R1D-7.2 Providers section.
  * `id` is stable (e.g. "claude", "openai"); `name` is human-readable;
  * `endpoint` is the base URL the client hits; `model` is the default
- * model identifier for this provider; `is_default` flips true for the
- * one provider the session composer pre-selects; `status` drives the
- * pill chip ("configured" = ready, "needs_key" = missing vault entry).
+ * model identifier for this provider; `is_default` flips true only
+ * for the provider the user actually chose in onboarding; `status`
+ * drives the pill chip (see ProviderStatus — derived from local
+ * onboarding state, endpoints are never probed).
  */
 export interface ProviderRow {
   id: string;

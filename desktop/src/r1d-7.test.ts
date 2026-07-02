@@ -60,6 +60,7 @@ describe("settings panel — R1D-7 truthfulness", () => {
     pluginMocks.os.enabled = false;
     pluginMocks.store.clear();
     vi.mocked(autostartEnable).mockClear();
+    window.localStorage.clear();
   });
 
   afterEach(() => {
@@ -73,6 +74,53 @@ describe("settings panel — R1D-7 truthfulness", () => {
     expect(unavailable?.textContent).toContain("read-only");
     expect(document.querySelector('[data-role="test-btn"]')).toBeNull();
     expect(console.info).not.toHaveBeenCalled();
+  });
+
+  it("derives provider statuses from stored onboarding keys instead of fabricating them (A086)", async () => {
+    // No keys stored, no onboarding choice recorded: nothing may claim
+    // "configured" and no Default badge may render.
+    await mountAndOpen("providers");
+
+    const statuses = Array.from(
+      document.querySelectorAll(".r1-settings-provider-status"),
+    ).map((el) => el.getAttribute("data-status"));
+    expect(statuses.length).toBe(5);
+    expect(statuses).not.toContain("configured");
+
+    const ollama = document.querySelector(
+      '[data-provider-id="ollama"] .r1-settings-provider-status',
+    );
+    expect(ollama?.getAttribute("data-status")).toBe("not_probed");
+    expect(ollama?.textContent).toContain("not probed");
+
+    document
+      .querySelectorAll(".r1-settings-provider-default-state")
+      .forEach((el) => expect(el.textContent).not.toContain("Default"));
+  });
+
+  it("marks a provider configured + default once onboarding stored its key (A086)", async () => {
+    window.localStorage.setItem("r1.onboarding.api_key.openai", "sk-test-123");
+    window.localStorage.setItem("r1.onboarding.provider", "openai");
+    await mountAndOpen("providers");
+
+    const openaiStatus = document.querySelector(
+      '[data-provider-id="openai"] .r1-settings-provider-status',
+    );
+    expect(openaiStatus?.getAttribute("data-status")).toBe("configured");
+    const openaiDefault = document.querySelector(
+      '[data-provider-id="openai"] .r1-settings-provider-default-state',
+    );
+    expect(openaiDefault?.textContent).toContain("Default");
+
+    // Claude has no stored key and was not chosen: needs_key, no badge.
+    const claudeStatus = document.querySelector(
+      '[data-provider-id="claude"] .r1-settings-provider-status',
+    );
+    expect(claudeStatus?.getAttribute("data-status")).toBe("needs_key");
+    const claudeDefault = document.querySelector(
+      '[data-provider-id="claude"] .r1-settings-provider-default-state',
+    );
+    expect(claudeDefault?.textContent).not.toContain("Default");
   });
 
   it("renders the vault section as unavailable", async () => {
