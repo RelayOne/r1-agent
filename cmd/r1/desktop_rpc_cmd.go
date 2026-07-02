@@ -12,10 +12,18 @@
 // Wire contract: desktop/IPC-CONTRACT.md.
 // Handler interface: internal/desktopapi.Handler.
 //
-// Scaffold note (R1D-1.4): desktopapi.NotImplemented{} is wired here.
-// Per-verb real implementations land in later R1D-* phases.
-// The Tauri host handles the not_implemented error code gracefully by
-// rendering a "coming soon" state in the affected panel.
+// Handler (audit A011): desktopapi.LocalHandler serves the read-only
+// data verbs against the real in-repo subsystems — ledger.get_node /
+// ledger.list_events (internal/ledger), memory.list_scopes /
+// memory.query (internal/memory/membus), and cost.get_current /
+// cost.get_history (internal/costtrack). The verbs that still need a
+// dependency this subprocess does not yet host — session.start/pause/
+// resume (session runner), descent.current_tier/tier_history (no
+// persistent descent state store), lane control (host-side, audit
+// A052), workdir binding, and daemon control — return a per-verb
+// stokerr "not_implemented" error (JSON-RPC -32010, audit A029) whose
+// message names the missing dependency, NOT a blanket stub. The Tauri
+// host degrades a -32010 into a truthful per-panel state.
 
 package main
 
@@ -30,7 +38,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/RelayOne/r1/internal/costtrack"
 	"github.com/RelayOne/r1/internal/desktopapi"
+	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/r1dir"
 	"github.com/RelayOne/r1/internal/stokerr"
 )
 
@@ -69,8 +80,9 @@ type rpcErrorData struct {
 func runDesktopRPCCmd(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("desktop-rpc", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var sessionID string
+	var sessionID, workdir string
 	fs.StringVar(&sessionID, "session-id", "", "session ID assigned by the Tauri host")
+	fs.StringVar(&workdir, "workdir", "", "working directory for session data (.r1/.stoke ledger + memory.db); default: cwd")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(stderr, "desktop-rpc: %v\n", err)
 		return 2
@@ -80,14 +92,62 @@ func runDesktopRPCCmd(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		sessionID = fmt.Sprintf("desktop-%d", time.Now().UnixNano())
 	}
 
+	handler, cleanup := buildDesktopHandler(workdir, stderr)
+	defer cleanup()
+
 	srv := &desktopRPCServer{
 		sessionID: sessionID,
-		handler:   &desktopapi.NotImplemented{},
+		handler:   handler,
 		stdout:    stdout,
 		stderr:    stderr,
 	}
 
 	return srv.serve(stdin)
+}
+
+// buildDesktopHandler constructs the production LocalHandler for the
+// read-only desktop verbs, opening the ledger store, memory bus, and a
+// live cost tracker rooted at workdir (the session's working directory;
+// empty means the current working directory). Any backend that fails to
+// open is left nil, which makes its verbs return a per-verb
+// not_implemented rather than crashing the whole session — the panel
+// degrades, the process keeps serving the verbs that did wire.
+//
+// Returned cleanup closes the memory-bus (and its DB handle); it is safe
+// to call even when the bus never opened.
+func buildDesktopHandler(workdir string, stderr io.Writer) (*desktopapi.LocalHandler, func()) {
+	if workdir == "" {
+		workdir = "."
+	}
+	h := &desktopapi.LocalHandler{
+		// The tracker is this session's live in-process cost accumulator.
+		// It reads zero until the session runner (session.start, still
+		// not_implemented) begins recording usage into it.
+		Cost: costtrack.NewTracker(0, nil),
+	}
+	cleanup := func() {}
+
+	// Ledger (read). ledger.NewStore materializes the split chain/content/
+	// edges layout, so a fresh repo opens an empty (not failed) store and
+	// ledger verbs return empty / not_found instead of not_implemented.
+	ledgerRoot := r1dir.JoinFor(workdir, "ledger")
+	if store, err := ledger.NewStore(ledgerRoot); err != nil {
+		fmt.Fprintf(stderr, "desktop-rpc: ledger unavailable at %s: %v\n", ledgerRoot, err)
+	} else {
+		h.Ledger = store
+	}
+
+	// Memory bus (read). Open-or-create so memory.query returns real
+	// (possibly empty) rows instead of not_implemented on a fresh repo.
+	memDB := r1dir.JoinFor(workdir, "memory.db")
+	if bus, db, err := openMemoryBus(memDB, true); err != nil {
+		fmt.Fprintf(stderr, "desktop-rpc: memory bus unavailable at %s: %v\n", memDB, err)
+	} else if bus != nil {
+		h.Memory = bus
+		cleanup = func() { _ = bus.Close(); _ = db.Close() }
+	}
+
+	return h, cleanup
 }
 
 // ---------------------------------------------------------------------------

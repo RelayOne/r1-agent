@@ -7,6 +7,11 @@
 //   - session.cancel triggers session.ended event then exit code 0
 //   - session.started event pushed on startup
 //   - malformed JSON returns parse error -32700
+//
+// Every invocation is hermetic: the desktop-rpc server now materializes a
+// real ledger store + memory.db under its --workdir (audit A011), so the
+// helpers pin --workdir to a per-test t.TempDir() to keep the source tree
+// clean and each run isolated.
 
 package main
 
@@ -20,6 +25,13 @@ import (
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// hermeticArgs returns desktop-rpc args with a per-test temp workdir so the
+// real ledger/memory backends (audit A011) never touch the source tree.
+func hermeticArgs(t *testing.T, sessionID string) []string {
+	t.Helper()
+	return []string{"--session-id", sessionID, "--workdir", t.TempDir()}
+}
 
 func callRPC(t *testing.T, method string, params any) map[string]any {
 	t.Helper()
@@ -42,7 +54,7 @@ func runOneRequest(t *testing.T, reqLine string) map[string]any {
 	// stdin: startup handshake + one request line + EOF
 	stdin := strings.NewReader(reqLine + "\n")
 	code := runDesktopRPCCmd(
-		[]string{"--session-id", "test-session-1"},
+		hermeticArgs(t, "test-session-1"),
 		stdin,
 		&stdout,
 		&strings.Builder{},
@@ -74,7 +86,7 @@ func TestDesktopRPC_SessionStartedEventOnStartup(t *testing.T) {
 	var stdout strings.Builder
 	stdin := strings.NewReader("") // EOF immediately
 	runDesktopRPCCmd(
-		[]string{"--session-id", "test-startup"},
+		hermeticArgs(t, "test-startup"),
 		stdin,
 		&stdout,
 		&strings.Builder{},
@@ -92,7 +104,7 @@ func TestDesktopRPC_SessionEndedEventOnEOF(t *testing.T) {
 	var stdout strings.Builder
 	stdin := strings.NewReader("") // EOF immediately
 	runDesktopRPCCmd(
-		[]string{"--session-id", "test-eof"},
+		hermeticArgs(t, "test-eof"),
 		stdin,
 		&stdout,
 		&strings.Builder{},
@@ -120,15 +132,23 @@ func TestDesktopRPC_SessionStart_NotImplemented(t *testing.T) {
 	}
 }
 
-func TestDesktopRPC_MemoryListScopes_NotImplemented(t *testing.T) {
+// memory.list_scopes is a real implemented verb (audit A011): it returns
+// the canonical five-scope enumeration, not a -32010 stub.
+func TestDesktopRPC_MemoryListScopes_ReturnsScopes(t *testing.T) {
 	resp := callRPC(t, "memory.list_scopes", nil)
-	errObj, ok := resp["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected error field; got %v", resp)
+	if resp["error"] != nil {
+		t.Fatalf("memory.list_scopes should succeed; got error: %v", resp["error"])
 	}
-	code, _ := errObj["code"].(float64)
-	if code != -32010 {
-		t.Errorf("expected -32010, got %v", code)
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected result object; got %v", resp["result"])
+	}
+	scopes, ok := result["scopes"].([]any)
+	if !ok {
+		t.Fatalf("expected scopes array; got %v", result["scopes"])
+	}
+	if len(scopes) != 5 {
+		t.Errorf("scopes = %d, want 5 (%v)", len(scopes), scopes)
 	}
 }
 
@@ -148,7 +168,7 @@ func TestDesktopRPC_MalformedJSON_ParseError(t *testing.T) {
 	var stdout strings.Builder
 	stdin := strings.NewReader("{not valid json}\n")
 	runDesktopRPCCmd(
-		[]string{"--session-id", "test-parse"},
+		hermeticArgs(t, "test-parse"),
 		stdin,
 		&stdout,
 		&strings.Builder{},
@@ -198,15 +218,22 @@ func TestDesktopRPC_SessionSend_NoopSuccess(t *testing.T) {
 	}
 }
 
-func TestDesktopRPC_LedgerGetNode_NotImplemented(t *testing.T) {
+// ledger.get_node is a real implemented verb (audit A011): against an
+// empty ledger a missing hash returns not_found (-32002), not the
+// -32010 stub it used to.
+func TestDesktopRPC_LedgerGetNode_MissingIsNotFound(t *testing.T) {
 	resp := callRPC(t, "ledger.get_node", map[string]any{"hash": "abc123"})
 	errObj, ok := resp["error"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected error field; got %v", resp)
 	}
 	code, _ := errObj["code"].(float64)
-	if code != -32010 {
-		t.Errorf("expected -32010, got %v", code)
+	if code != -32002 {
+		t.Errorf("expected -32002 (not_found) for a missing node, got %v", code)
+	}
+	data, _ := errObj["data"].(map[string]any)
+	if sc, _ := data["stoke_code"].(string); sc != "not_found" {
+		t.Errorf("expected stoke_code not_found, got %q", sc)
 	}
 }
 
@@ -214,7 +241,7 @@ func TestDesktopRPC_MissingSessionID_GeneratesOne(t *testing.T) {
 	var stdout strings.Builder
 	stdin := strings.NewReader("") // EOF immediately
 	code := runDesktopRPCCmd(
-		[]string{}, // no --session-id
+		[]string{"--workdir", t.TempDir()}, // no --session-id
 		stdin,
 		&stdout,
 		&strings.Builder{},
@@ -296,10 +323,10 @@ func TestDesktopRPC_ContractVerbs_NeverMethodNotFound(t *testing.T) {
 }
 
 // TestDesktopRPC_LaneAndDaemonVerbs_NotImplemented (audit A029) pins
-// the scaffold degradation for the seven newly routed verbs: the
-// NotImplemented handler must surface as -32010 with
-// data.stoke_code "not_implemented" — the shape the Rust host and the
-// panels' truthful-unavailable rendering (audit A034/A052) key on.
+// the degradation for the routed-but-unimplemented verbs: the handler
+// must surface -32010 with data.stoke_code "not_implemented" — the shape
+// the Rust host and the panels' truthful-unavailable rendering
+// (audit A034/A052) key on.
 func TestDesktopRPC_LaneAndDaemonVerbs_NotImplemented(t *testing.T) {
 	verbs := []string{
 		"session.lanes.list",
