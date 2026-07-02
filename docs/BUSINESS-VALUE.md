@@ -120,7 +120,7 @@ Every Claude / Codex Skill the agent loads becomes a `SkillLoaded` ledger node; 
 **What this means for you**: you stop paying for skill text the agent isn't using anymore, and you stop debugging "why did it suddenly behave differently" — the ledger answers in two clicks.
 
 ### Provider-agnostic with a 5-tier fallback
-Claude → Codex → OpenRouter → direct API → lint-only. Subscription pool, circuit breaker, OAuth poller. When Claude rate-limits, Codex picks up; when OpenRouter is degraded, the direct API kicks in; when everything is down, lint-only mode keeps the missions on the rails.
+Claude → Codex automatic fallback with subscription pool, circuit breaker, and OAuth poller. When Claude rate-limits, Codex picks up. The router additionally defines OpenRouter / direct API / lint-only tiers, but those are not yet wired as execution runners — the honest claim today is two-provider automatic degradation.
 
 **What this means for you**: vendor-lock-out doesn't kill your dev velocity. Cost optimization is automatic (cheap-model floor with escalation only on tagged-critical paths).
 
@@ -191,7 +191,7 @@ That means:
 
 - Anti-truncation isn't an idea — it's a documented behavior pattern from real production runs that needed mechanical enforcement.
 - The cortex Lobe pattern wasn't designed in a vacuum — it's the answer to "we need plan updates and clarifying questions WITHOUT subagent latency."
-- The 5-provider fallback isn't theoretical — it's how the portfolio survived rate-limit windows on each provider.
+- The Claude→Codex fallback isn't theoretical — it's how the portfolio survived rate-limit windows; the remaining router tiers (OpenRouter / direct API / lint-only) are defined but not yet wired as runners.
 - The audit ledger isn't compliance theater — it's how the portfolio passes security reviews from clients who don't trust AI in their codebase.
 
 r1 is what survives 18 months of dogfooding inside a working portfolio. Everything in it is there because something broke without it.

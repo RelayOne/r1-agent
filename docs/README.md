@@ -148,7 +148,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 ### Mission runtime
 - **Plan / execute / verify / review loop** with cross-model reviewer gating. One strong implementer per task plus an adversarial reviewer is more reliable than loose multi-agent consensus. — `internal/app/`, `internal/workflow/`, `internal/mission/`, `internal/verify/`, `internal/critic/`, `internal/convergence/`. **Status: Done.**
 - **Content-addressed ledger + WAL-backed event bus + STOKE envelope.** Every node has a `sha256:<hex>` content ID; every event survives daemon restart. — `internal/ledger/`, `internal/bus/`. **Status: Done.**
-- **Five-provider model fallback** (Claude → Codex → OpenRouter → direct API → lint-only) with subscription pool, circuit breaker, OAuth poller, cost-aware resolver. — `internal/model/`, `internal/subscriptions/`. **Status: Done.**
+- **Model fallback + subscription pool.** Automatic fallback today resolves Claude → Codex (the wired execution runners); OpenRouter / direct API / Ember / lint-only are defined in `internal/model/` routing but not yet wired as workflow runners (`isAvailable` hardcodes them unavailable). Subscription pool, circuit breaker, OAuth poller, cost-aware resolver are live. — `internal/model/`, `internal/subscriptions/`. **Status: Partial — Claude/Codex Done; remaining tiers Scoped.**
 
 ### Cortex — parallel cognition (specs 1, 2)
 - **MemoryRecallLobe** (deterministic) surfaces top-3 prior memory + wisdom hits as `info` Notes per round.

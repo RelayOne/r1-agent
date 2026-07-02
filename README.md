@@ -76,7 +76,7 @@ Together these mean: less prompt budget burned on stale skills, a cryptographic 
 
 Most coding agents *say* they verify. r1 makes verification load-bearing:
 
-- **The harness is the product, not the model.** r1 is provider-agnostic with a five-tier fallback (Claude → Codex → OpenRouter → direct API → lint-only). The differentiator is the loop: descent verification, honesty gates, content-addressed ledger, anti-truncation enforcement.
+- **The harness is the product, not the model.** r1 is provider-agnostic; automatic fallback today resolves Claude → Codex, with OpenRouter / direct API / lint-only tiers router-defined but not yet wired as execution runners. The differentiator is the loop: descent verification, honesty gates, content-addressed ledger, anti-truncation enforcement.
 - **Refuses to truncate itself.** When the model says "good enough" or "I'll defer this to a follow-up," seven independent layers of regex + scope-completion gates + supervisor rules + post-commit hooks refuse `end_turn` while real plan items are unchecked. The model can't override this from inside; only the operator can, with an explicit flag.
 - **Parallel cognition without subagent isolation.** Six specialist Lobes run alongside the main thread, share the same context window via a 1-hour cache breakpoint, and publish typed Notes into a shared Workspace. Mid-turn user input invokes a Haiku-driven Router that decides whether to interrupt, steer, queue, or just chat.
 - **One wire, many surfaces.** The same per-user `r1 serve` daemon (Watchman pattern; one process, N session goroutines) backs the TUI, the web app at `platform.r1.run`, the Tauri desktop, and any external MCP-aware agent.
@@ -149,7 +149,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 ### Mission runtime
 - **Plan / execute / verify / review loop** with cross-model reviewer gating. One strong implementer per task plus an adversarial reviewer is more reliable than loose multi-agent consensus. — `internal/app/`, `internal/workflow/`, `internal/mission/`, `internal/verify/`, `internal/critic/`, `internal/convergence/`. **Status: Done.**
 - **Content-addressed ledger + WAL-backed event bus + STOKE envelope.** Every node has a `sha256:<hex>` content ID; every event survives daemon restart. — `internal/ledger/`, `internal/bus/`. **Status: Done.**
-- **Five-provider model fallback** (Claude → Codex → OpenRouter → direct API → lint-only) with subscription pool, circuit breaker, OAuth poller, cost-aware resolver. — `internal/model/`, `internal/subscriptions/`. **Status: Done.**
+- **Model fallback + subscription pool.** Automatic fallback today resolves Claude → Codex (the wired execution runners); OpenRouter / direct API / Ember / lint-only are defined in `internal/model/` routing but not yet wired as workflow runners (`isAvailable` hardcodes them unavailable). Subscription pool, circuit breaker, OAuth poller, cost-aware resolver are live. — `internal/model/`, `internal/subscriptions/`. **Status: Partial — Claude/Codex Done; remaining tiers Scoped.**
 
 ### Cortex — parallel cognition (specs 1, 2)
 - **MemoryRecallLobe** (deterministic) surfaces top-3 prior memory + wisdom hits as `info` Notes per round.

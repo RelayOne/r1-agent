@@ -553,17 +553,17 @@ func Doctor(claudeBin, codexBin string, showProviders bool) string {
 				if key == "" {
 					return "OPENROUTER_API_KEY not set", false
 				}
-				return "key configured", true
+				return "key configured (router-defined; not yet wired as execution runner)", true
 			}},
 			{"Direct API (Anthropic)", func() (string, bool) {
 				key := os.Getenv("ANTHROPIC_API_KEY")
 				if key == "" {
 					return "ANTHROPIC_API_KEY not set", false
 				}
-				return "key configured", true
+				return "key configured (router-defined; not yet wired as execution runner)", true
 			}},
 			{"Lint-only (fallback)", func() (string, bool) {
-				return "always available", true
+				return "router-defined; not yet wired as execution runner", true
 			}},
 		}
 
