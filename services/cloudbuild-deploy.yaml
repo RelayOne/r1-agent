@@ -14,20 +14,21 @@
 #
 # Current live trigger/secret reality as of 2026-05-15:
 #   - deploy triggers r1-services-{dev,staging,prod}-deploy exist
-#   - r1-<env>-shared-{DATABASE_URL,AUTH_JWT_SECRET,ANTHROPIC_API_KEY} exist
 #   - r1-<env>-shared-CODERADAR_DSN does NOT currently exist
 #   - relayone-coderadar-dsn exists and is readable by the Cloud Run
 #     runtime service account
 # Deploys therefore prefer an env-specific CODERADAR_DSN if present and
 # otherwise fall back to relayone-coderadar-dsn.
+#
+# Only secrets actually read by service code are bound (audit A089):
+# AUTH_JWT_SECRET (coord-api, admin) and CODERADAR_DSN. DATABASE_URL /
+# Cloud SQL and CODERADAR_SAMPLE_RATE had no reader in any services/
+# module (the sampler lives in the main module's internal/coderadar,
+# which is never compiled into these images); re-add DATABASE_URL only
+# together with a coord-api persistence layer that consumes it.
 
 substitutions:
   _ENV: prod  # override per trigger; dev | staging | prod
-  # CodeRadar dogfood (spec coderadar-dogfood.md T4). Override per trigger:
-  # dev=1.0, staging=1.0, prod=0.1 for high-volume events ONLY (the
-  # per-event override on provider.call_completed and tool.call_completed
-  # is wired in internal/coderadar/sampler.go SamplerForEnv).
-  _CODERADAR_SAMPLE_RATE: "0.1"
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -128,9 +129,8 @@ steps:
           --memory=512Mi
           --port=8080
           --no-cpu-throttling
-          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE}
-          --set-secrets=DATABASE_URL=r1-${_ENV}-shared-DATABASE_URL:latest,AUTH_JWT_SECRET=r1-${_ENV}-shared-AUTH_JWT_SECRET:latest
-          --add-cloudsql-instances=$PROJECT_ID:us-central1:r1-${_ENV}-pg
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA
+          --set-secrets=AUTH_JWT_SECRET=r1-${_ENV}-shared-AUTH_JWT_SECRET:latest
         )
         if [ -n "$$CODERADAR_SECRET" ]; then
           DEPLOY_ARGS+=(--set-secrets=CODERADAR_DSN=$$CODERADAR_SECRET:latest)
@@ -166,7 +166,7 @@ steps:
           --memory=512Mi
           --port=8080
           --no-cpu-throttling
-          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE}
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA
         )
         if [ -n "$$CODERADAR_SECRET" ]; then
           DEPLOY_ARGS+=(--set-secrets=CODERADAR_DSN=$$CODERADAR_SECRET:latest)
@@ -202,7 +202,7 @@ steps:
           --memory=512Mi
           --port=8080
           --no-cpu-throttling
-          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_BUCKET=relayone-488319-r1-releases,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE}
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_BUCKET=relayone-488319-r1-releases
         )
         if [ -n "$$CODERADAR_SECRET" ]; then
           DEPLOY_ARGS+=(--set-secrets=CODERADAR_DSN=$$CODERADAR_SECRET:latest)
@@ -243,7 +243,7 @@ steps:
           --memory=512Mi
           --port=8080
           --no-cpu-throttling
-          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_COORD_API_URL=https://api$${SUB}.r1.run,AUTH_JWT_ISSUER=r1-coord-api,AUTH_JWT_AUDIENCE=r1-coord-api,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE}
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_COORD_API_URL=https://api$${SUB}.r1.run,AUTH_JWT_ISSUER=r1-coord-api,AUTH_JWT_AUDIENCE=r1-coord-api
           --set-secrets=AUTH_JWT_SECRET=r1-${_ENV}-shared-AUTH_JWT_SECRET:latest
         )
         if [ -n "$$CODERADAR_SECRET" ]; then
