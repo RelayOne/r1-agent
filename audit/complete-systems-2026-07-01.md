@@ -162,7 +162,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **specexec production wiring scores plan-only outcomes that carry no test/diff signal — winner degenerates to 'fastest plan' and the 0.9 early-stop threshold is mathematically unreachable**
 - Evidence: The only production Run() wiring (scheduler.WithSpecExec, used by --specexec via cmd/r1/main.go:548,1499) forces every speculative strategy to PlanOnly=true ('CRITICAL: prevents execute/verify/merge', scheduler.go:452), so each Outcome has TestsPassed=TestsFailed=DiffLines=0. DefaultScorer (specexec.go:80-108) then awards the flat fallbacks: 0.3 (no test data) + 0.1 (no diff data) + up to 0.2 speed = max ~0.6 for every successful strategy, with duration the ONLY differentiator — the advertised 'Score results by test pass rate, code quality, diff size' (specexec.go:8) never applies. The spec se…
 - Fix: 1) Add PlanOutput string to scheduler.TaskResult (internal/scheduler/scheduler.go:17-28). 2) In cmd/r1/main.go execFn, when the workflow result has PlanOutput (plan-only mode), copy workflow Result.PlanOutput (workflow.go:190) into the returned scheduler.TaskResult. 3) In WithSpecExec's executor (scheduler.go:445-473), carry result.PlanOutput into the Outcome (add PlanText field to specexec.Outcome or reuse Artifacts/Insights) and replace DefaultScorer with a plan-aware Scorer for this wiring: deterministic structure scoring (non-empty plan, presence of concrete file paths verified against the…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 00fbd726)
 
 ### A025 [bug/S] internal/snapshot/workspace.go:212
 **snapshot.minLen is inverted (returns max) — Summary never truncates and Summary/Diff panic on commits shorter than 8 chars**
@@ -512,7 +512,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **patchapply.ApplyReverse cannot undo file creations or deletions — falls through to the modify path with /dev/null paths**
 - Evidence: The package doc promises "Reverse application (undo a patch)" (patch.go:10). applyPatch only special-cases `fp.IsNew && !reverse` (patch.go:200) and `fp.IsDelete && !reverse` (patch.go:212). With reverse=true, an IsNew patch falls to the generic branch where `path = fp.OldPath` == "/dev/null" (patch.go:227-232), so os.ReadFile(filepath.Join(root, "/dev/null")) fails and the created file is never removed; reversing an IsDelete patch similarly targets NewPath=="/dev/null" instead of recreating OldPath. Undo of any patch that adds or deletes files is silently a Failed entry. (Dormant: ApplyRevers…
 - Fix: In applyPatch (internal/patchapply/patch.go), normalize reverse patches before dispatch instead of adding parallel branches: at the top of the per-file loop, if reverse, transform fp — swap OldPath/NewPath, swap IsNew/IsDelete, and set fp.Hunks = reverseHunks(fp.Hunks) — then run the existing forward logic with reverse-independent guards (`fp.IsNew` creates via applyNewFile, `fp.IsDelete` removes via os.Remove, else modify without re-reversing hunks). This makes reverse-of-create remove NewPath and reverse-of-delete recreate OldPath from the hunk's delete/context lines (reverseHunks already fl…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 00fbd726)
 
 ### A083 [bug/S] internal/research/orchestrator.go:363
 **research Orchestrator: subagent write failures are swallowed while the Lead deliberately prefers disk — findings silently vanish from synthesis**
