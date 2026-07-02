@@ -45,6 +45,11 @@ func mustSubFS(f embed.FS, dir string) fs.FS {
 // to exercise the static UI surface without spinning up a SQLite
 // file.
 func mountUI(mux *http.ServeMux, db *DB) {
+	// Thread the DB to the v2 session-graph payload builder (audit
+	// A050): /session/{id}/graph hydrates its data island from the
+	// per-session ledger projection when a DB is present.
+	graphPayloadDB = db
+
 	// Static assets under /ui/ (app.js, style.css, any future
 	// chunks). http.StripPrefix peels the /ui/ so the fs lookup
 	// matches the embed's internal paths.

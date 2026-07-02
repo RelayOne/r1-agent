@@ -20,17 +20,24 @@ npm install --save-dev playwright
 npx playwright install chromium
 cd ..
 
-# 2. Seed a 3000-node fixture session (TODO — fixture seeder lands in
-#    a follow-up; until then the runner skips with the e2e Go test
-#    surfacing the missing fixture).
-
-# 3. Run the e2e Go test.
-R1_SERVER_UI_V2=1 go test -tags=e2e -run TestGraph3kFPS ./cmd/r1-server/...
+# 2. Run the e2e Go test. The 3000-node fixture session is seeded
+#    automatically by graph_e2e_fixture.go (build tag e2e) into a
+#    temp R1_DATA_DIR — no manual seeding step.
+#    Note: `node` must resolve `playwright` from an ancestor
+#    node_modules of cmd/r1-server/ (repo-root node_modules works;
+#    web/node_modules does not — symlink it if needed).
+R1_SERVER_UI_V2=1 go test -tags=e2e -run TestGraph3kFPS ./cmd/r1-server
 ```
 
 ## CI lane
 
-The `cloudbuild-e2e.yaml` step (release-rehearsal trigger) runs the
-above sequence with the fixture seeder enabled and posts the FPS
-result + p99 frame time to a build-summary annotation. A regression
-below `meanFps = 30` blocks the release.
+`services/cloudbuild-e2e.yaml`'s e2e-test step (release-rehearsal
+trigger) runs two invocations: the e2e submodule suite
+(`cd cmd/r1-server/e2e && go test -tags=e2e ./...`) and then, from the
+repo root, `go test -tags=e2e -run 'TestGraph3kFPS|TestSeedGraphFixture'
+./cmd/r1-server` with `R1_SERVER_UI_V2=1` — graph_e2e_test.go lives in
+package main one level above this submodule, so the submodule run alone
+never reaches it (this README previously claimed otherwise; audit
+A050). The FPS result + p99 frame time land in the test log; a
+regression below `meanFps = 30` fails the step and therefore the
+rehearsal lane.
