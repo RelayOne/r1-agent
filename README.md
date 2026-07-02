@@ -86,14 +86,15 @@ Most coding agents *say* they verify. r1 makes verification load-bearing:
 ### Install (CLI / daemon)
 
 ```bash
-# Hosted binary CDN (production channel)
-curl -fsSL https://downloads.r1.run/prod/r1-$(uname -s | tr A-Z a-z)-$(uname -m | sed s/x86_64/amd64/) -o r1
-chmod +x r1 && sudo mv r1 /usr/local/bin/
-
-# Or from source (Go 1.25+, CGO for SQLite)
+# From source (Go 1.25+, CGO for SQLite)
 git clone https://github.com/RelayOne/r1-agent && cd r1-agent
 go build ./cmd/r1
 sudo mv r1 /usr/local/bin/
+
+# Or hosted binary CDN (prod channel; populated by the publish-r1-channel
+# CI step in cloudbuild.yaml on push to main)
+curl -fsSL https://downloads.r1.run/prod/r1-$(uname -s | tr A-Z a-z)-$(uname -m | sed s/x86_64/amd64/) -o r1
+chmod +x r1 && sudo mv r1 /usr/local/bin/
 
 # One-line installer (legacy; verifies cosign signature when cosign is on PATH)
 curl -fsSL https://raw.githubusercontent.com/RelayOne/r1-agent/main/install.sh | bash
