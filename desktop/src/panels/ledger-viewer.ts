@@ -9,7 +9,7 @@
 // the truthful subset: a global recent-events browser with node
 // drill-down.
 
-import { invokeStub } from "../ipc-stub";
+import { classifyIpcError, invokeStub } from "../ipc-stub";
 import type {
   LedgerEventSummary,
   LedgerListEventsResult,
@@ -53,14 +53,35 @@ export function renderPanel(root: HTMLElement): void {
 }
 
 async function loadEvents(root: HTMLElement): Promise<void> {
-  const result = await invokeStub<LedgerListEventsResult>(
-    "ledger_list_events",
-    "R1D-5",
-    { events: [] },
-    { limit: 100 },
-  );
-  STATE.events = result.events;
-  renderEvents(root);
+  try {
+    const result = await invokeStub<LedgerListEventsResult>(
+      "ledger_list_events",
+      "R1D-5",
+      { events: [] },
+      { limit: 100 },
+    );
+    STATE.events = result.events;
+    renderEvents(root);
+  } catch (err) {
+    renderEventsUnavailable(root, err);
+  }
+}
+
+/**
+ * Replace the loading row with a truthful unavailable / error row when
+ * the host RPC rejects (audit A034).
+ */
+function renderEventsUnavailable(root: HTMLElement, err: unknown): void {
+  const events = root.querySelector<HTMLUListElement>('[data-role="ledger-events"]');
+  if (!events) return;
+  const failure = classifyIpcError(err);
+  const row = document.createElement("li");
+  row.className = "r1-empty";
+  row.dataset.role = "ledger-unavailable";
+  row.textContent = failure.notImplemented
+    ? "Ledger events are not available yet — the host verb ledger.list_events is unimplemented."
+    : `Couldn't load ledger events: ${failure.message}`;
+  events.replaceChildren(row);
 }
 
 function renderEvents(root: HTMLElement): void {
@@ -109,13 +130,22 @@ function renderEventRow(event: LedgerEventSummary): string {
 }
 
 async function openEventNode(hash: string): Promise<void> {
-  const node = await invokeStub<LedgerNode>(
-    "ledger_get_node",
-    "R1D-5",
-    emptyNode(hash),
-    { hash },
-  );
-  await openNodeDrawer(node);
+  try {
+    const node = await invokeStub<LedgerNode>(
+      "ledger_get_node",
+      "R1D-5",
+      emptyNode(hash),
+      { hash },
+    );
+    await openNodeDrawer(node);
+  } catch (err) {
+    // Drawer never opened; log the classified failure instead of
+    // leaving an unhandled rejection (audit A034).
+    console.error(
+      "[r1-desktop] ledger.get_node failed:",
+      classifyIpcError(err).message,
+    );
+  }
 }
 
 function emptyNode(hash: string): LedgerNode {

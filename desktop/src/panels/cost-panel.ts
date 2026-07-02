@@ -10,7 +10,7 @@
 // Real per-provider latency histogram + time-range picker lands in
 // R1D-9.1 / R1D-9.3.
 
-import { invokeStub } from "../ipc-stub";
+import { classifyIpcError, invokeStub } from "../ipc-stub";
 import type { CostSnapshot } from "../types/ipc";
 
 const EMPTY_SNAPSHOT: CostSnapshot = {
@@ -54,13 +54,36 @@ export function renderPanel(root: HTMLElement): void {
 
 async function loadCost(root: HTMLElement): Promise<void> {
   const sessionId = root.dataset.sessionId?.trim();
-  const snapshot = await invokeStub<CostSnapshot>(
-    "cost_get_current",
-    "R1D-9",
-    EMPTY_SNAPSHOT,
-    sessionId ? { session_id: sessionId } : undefined,
-  );
-  applySnapshot(root, snapshot);
+  try {
+    const snapshot = await invokeStub<CostSnapshot>(
+      "cost_get_current",
+      "R1D-9",
+      EMPTY_SNAPSHOT,
+      sessionId ? { session_id: sessionId } : undefined,
+    );
+    applySnapshot(root, snapshot);
+  } catch (err) {
+    renderCostUnavailable(root, err);
+  }
+}
+
+/**
+ * Replace the seeded $0.00 summary with a truthful unavailable / error
+ * note when the host RPC rejects (audit A034). A not_implemented
+ * rejection means the Go subprocess hasn't wired the verb yet; other
+ * errors are genuine failures and render as such.
+ */
+function renderCostUnavailable(root: HTMLElement, err: unknown): void {
+  const body = root.querySelector<HTMLElement>(".r1-panel-body");
+  if (!body) return;
+  const failure = classifyIpcError(err);
+  const note = document.createElement("p");
+  note.className = "r1-empty";
+  note.dataset.role = "cost-unavailable";
+  note.textContent = failure.notImplemented
+    ? "Cost data is not available yet — the host verb cost.get_current is unimplemented."
+    : `Couldn't load cost data: ${failure.message}`;
+  body.replaceChildren(note);
 }
 
 function applySnapshot(root: HTMLElement, snapshot: CostSnapshot): void {

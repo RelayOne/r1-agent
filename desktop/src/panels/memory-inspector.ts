@@ -9,7 +9,7 @@
 // the truthful subset: scope tabs, filtering, sorting, and a read-only
 // table of `key` / `value` / `updated_at`.
 
-import { invokeStub } from "../ipc-stub";
+import { classifyIpcError, invokeStub } from "../ipc-stub";
 import { ALL_MEMORY_SCOPES } from "../types/ipc-const";
 import type {
   MemoryEntry,
@@ -102,11 +102,17 @@ function newScopeState(): ScopeState {
 }
 
 async function loadScopes(root: HTMLElement, state: PanelState): Promise<void> {
-  const result = await invokeStub<MemoryListScopesResult>(
-    "memory_list_scopes",
-    "R1D-6",
-    { scopes: ALL_MEMORY_SCOPES.slice() },
-  );
+  let result: MemoryListScopesResult;
+  try {
+    result = await invokeStub<MemoryListScopesResult>(
+      "memory_list_scopes",
+      "R1D-6",
+      { scopes: ALL_MEMORY_SCOPES.slice() },
+    );
+  } catch (err) {
+    renderMemoryUnavailable(root, "memory.list_scopes", err);
+    return;
+  }
   if (result.scopes.length > 0) {
     state.scopes = result.scopes;
     if (!state.byScope.has(state.active) && result.scopes[0]) {
@@ -242,17 +248,45 @@ async function loadScope(
     `;
   }
 
-  const result = await invokeStub<MemoryQueryResult>(
-    "memory_query",
-    "R1D-6",
-    { entries: [], truncated: false },
-    { scope },
-  );
+  let result: MemoryQueryResult;
+  try {
+    result = await invokeStub<MemoryQueryResult>(
+      "memory_query",
+      "R1D-6",
+      { entries: [], truncated: false },
+      { scope },
+    );
+  } catch (err) {
+    renderMemoryUnavailable(root, "memory.query", err);
+    return;
+  }
   scopeState.entries = result.entries;
   scopeState.truncated = result.truncated;
   updateSortIndicators(root, scopeState);
   renderTabs(root, state);
   renderRows(root, state);
+}
+
+/**
+ * Replace the loading row with a truthful unavailable / error row when
+ * a host RPC rejects (audit A034).
+ */
+function renderMemoryUnavailable(
+  root: HTMLElement,
+  verb: string,
+  err: unknown,
+): void {
+  const tbody = root.querySelector<HTMLTableSectionElement>('[data-role="rows"]');
+  if (!tbody) return;
+  const failure = classifyIpcError(err);
+  const message = failure.notImplemented
+    ? `Memory data is not available yet — the host verb ${verb} is unimplemented.`
+    : `Couldn't load memory data: ${failure.message}`;
+  tbody.innerHTML = `
+    <tr>
+      <td colspan="3" class="r1-memory-empty" data-role="memory-unavailable">${escapeHtml(message)}</td>
+    </tr>
+  `;
 }
 
 function renderRows(root: HTMLElement, state: PanelState): void {
