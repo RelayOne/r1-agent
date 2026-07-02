@@ -357,10 +357,10 @@ Complete feature inventory for r1 as of 2026-05-15. Status reflects the merged s
 ### Potential — On Horizon
 - Marketing site with affiliate / SEO / CRO / attribution / retention stack — multi-week marketing-engineering effort; deferred until Tier A+B land.
 
-### Scoped 2026-06-03 — audit remediation (activation of built-but-unwired subsystems)
-Deep audit (audit/deep-audit-eval-runtime-2026-06-02.md) found several subsystems built and marked done but never wired into the live runtime. Already FIXED this cycle: FTS5 activated (72053d5f), cross-session memory bridge wired (72053d5f), vecindex "embeddings" relabeled as lexical (301068d6), governance first slice wired default-off (c5e5e787). Newly SCOPED, ready for /build:
-- governance-activation (specs/governance-activation.md) — finish wiring bus+ledger+supervisor into the mission path; emit the cross-model review verdict + write review.agree/dissent ledger nodes so the second-opinion trust gate becomes satisfiable; default-ON + --no-governance kill-switch.
-- cortex-activation (specs/cortex-activation.md) — wire *cortex.Cortex (4 deterministic lobes) into the native loop + chat REPL; default-ON + --no-cortex kill-switch; bounded RoundDeadline safety.
-- repomap-multilang (specs/repomap-multilang.md) — language-agnostic fallback ranker so the repo map is non-empty for non-Go repos.
-- cmd-r1-test-isolation (specs/cmd-r1-test-isolation.md) — make `go test ./cmd/r1` hermetic (no leaked serve daemons, no git in the real repo, no unix-socket-path overflow).
+### Done 2026-06-03 — audit remediation (activation of built-but-unwired subsystems)
+Deep audit (audit/deep-audit-eval-runtime-2026-06-02.md) found several subsystems built and marked done but never wired into the live runtime. Fixed earlier that cycle: FTS5 activated (72053d5f), cross-session memory bridge wired (72053d5f), vecindex "embeddings" relabeled as lexical (301068d6), governance first slice wired default-off (c5e5e787). The four activation specs scoped from that audit are all built (each spec opens with `STATUS: done`, `BUILD_COMPLETED: 2026-06-03`):
+- governance-activation (specs/governance-activation.md) — Done 2026-06-03. Governance is default-ON: the policy defaults `governance.enabled` to true when the block is absent (`internal/config/governance_default_test.go`), `internal/app/app.go` constructs `governance.New` in the run path, and `--no-governance` is the kill-switch (`cmd/r1/main.go`). This superseded the earlier default-off first slice from c5e5e787.
+- cortex-activation (specs/cortex-activation.md) — Done 2026-06-03. `--cortex` defaults true (`cmd/r1/main.go`) with the deterministic lobes wired in `internal/engine/native_runner.go`; `--no-cortex` is the kill-switch.
+- repomap-multilang (specs/repomap-multilang.md) — Done 2026-06-03 (8ed654f1, marked done 8225a060). Language-agnostic fallback ranker (`buildFromSymindex` in `internal/repomap/repomap.go`) so the repo map is non-empty for non-Go repos.
+- cmd-r1-test-isolation (specs/cmd-r1-test-isolation.md) — Done 2026-06-03 (188dd477). `go test ./cmd/r1` is hermetic (no leaked serve daemons, no git in the real repo, no unix-socket-path overflow).
 Resolved as intentional (no code): B5 CloudSwarm wire format, B7 operator-installed shell hooks. Operator action: B6 CLAUDE.md count corrections.
