@@ -14,11 +14,13 @@ Make the native, harness-owned agentloop the measured and self-improving path �
 **What to build:** Implement an agents.R1ModelInvoker in cmd/r1-bench that drives internal/agentloop.Run (via engine native_runner RunSpec) and assign it to R1Dispatcher.ModelInvoker (internal/bench/agents/r1.go:34,96 currently only ever gets notWiredR1Invoker at :136). Rewrite cmd/r1-bench/runner.go RunOne to execute inside bench/isolation.RunContainer (docker --network=none, cap-drop=ALL) and grade via bench/judge deterministic.checkHiddenTests + honesty.HonestyJudge instead of the bare workDir — all three already exist with zero non-test importers.
 
 ### #2 Wire persistent memory + top-k semantic wisdom recall into the native loop  `[transformative / M / low-risk]`  (Continual learning & memory)
+> ✅ IMPLEMENTED (commit: 72e52b49)
 **Why it matters:** The flagship 'learns across sessions' claim is a no-op on the native path: buildDeterministicCortex builds EMPTY memory.NewStore(memory.Config{}) + wisdom.NewStore() every run, so the memoryrecall lobe reads nothing; and recall triggers only on a byte-identical failure fingerprint (WHERE failure_pattern = ?), missing the common semantically-similar case. All infra (SQLite wisdom, vecindex, openCrossSessionMemory) already exists — this is wiring, the best leverage-per-effort capability win.
 
 **What to build:** In internal/engine/native_runner.go buildDeterministicCortex (~620-624) thread cfg.Memory (openCrossSessionMemory, main.go:494) and a persistent wisdom SQLiteStore into the lobes instead of the empty in-mem stores. Add wisdom.FindBySimilar(analysis, k) using the existing vecindex/tfidf embed seam, and change workflow.go:1316-1319 to call it (fall back to FindByPattern on exact hit). Also record the winning approach on success (workflow.go:1291) so recall can teach, not only warn.
 
 ### #3 Gate the always-on plan phase on task complexity  `[high / S / low-risk]`  (Planning & decomposition)
+> ✅ IMPLEMENTED (commit: 49e0df94)
 **Why it matters:** Every task pays a full read-only ~30-turn plan phase with no complexity/ambiguity gate — exactly the overthinking regime (Cuadron 2025) where plan-then-execute degrades resolve rate and burns budget on trivial work. The gate that would skip it already exists but is dead.
 
 **What to build:** Wire plan.Complexity.ShouldPlan() (internal/plan/planexec.go:76, currently self-referenced only at :125) into internal/workflow buildPhases (workflow.go:1922-1972): classify via the existing intent.Classify output, and for Trivial/Simple emit an execute+verify sequence with no plan phase. Keeps plan for Moderate/Complex.
@@ -29,6 +31,7 @@ Make the native, harness-owned agentloop the measured and self-improving path �
 **What to build:** In internal/engine/native_compact.go make buildNativeCompactor provider-backed: for the middle window, batch old tool_results into one summarization call preserving objective / files-touched / failing-tests / remaining-work, and emit a single synthetic summary block (keep the cache-preserving first+last-6 structure). Wire the already-built internal/microcompact + internal/ctxpack packages that agentloop currently never imports; keep byte-truncation as the offline fallback when no provider is available.
 
 ### #5 Execution-based grading + anti-reward-hacking (git seal, trajectory audit)  `[high / M / medium-risk]`  (Agent coding benchmarks and evaluation)
+> ✅ IMPLEMENTED (commit: 17e18b1e)
 **Why it matters:** The wired scorer grades plan items by string presence: verdict.go planItemSatisfied returns true if the diff merely contains a required symbol, touches a path, or is non-empty (len(rawDiff)>0) — a diff that never compiles scores as satisfied. Combined with a full .git left in the workDir, the 'retrieve the gold fix from git log' vector is wide open. This directly undermines the truthful-completion thesis the bench exists to defend.
 
 **What to build:** In internal/bench/verdict.go make TestCommand the required signal for scored items (demote RequiredSymbols/ChangedFiles/len>0 to advisory), executing held-out tests via ExecCommand. Strip .git history before dispatch in cmd/r1-bench/runner.go (and container.go COPY . .). Add a trajectory pass over the already-captured RawLog (r1.go BoundedLog) that flags git-log reads / mid-run test-assertion edits, feeding the existing honesty.HonestyJudge.
@@ -39,6 +42,7 @@ Make the native, harness-owned agentloop the measured and self-improving path �
 **What to build:** Add a full-execution branch to scheduler.WithSpecExec (internal/scheduler/scheduler.go:484): run N strategies with PlanOnly=false in isolated worktrees, score with specexec.DefaultScorer (specexec.go:85) on build/test outcomes, merge the winning diff via the existing mergeMu path. Populate Strategy.Model (specexec.go:31, currently unset) from model.Resolve's fallback chain for cross-model diversity, and scale N by difficulty/budget using costtrack.OverBudget rather than the hardcoded slice of 4.
 
 ### #7 Hard destructive-command breakers + compound-aware policy on the native path  `[high / M / low-risk]`  (Tool-use & sandboxing / safety)
+> ✅ IMPLEMENTED (commit: f5af34d3)
 **Why it matters:** The rm -rf /, sudo rm, curl|bash breakers live ONLY in the Claude-CLI settings.json PreToolUse script (hooks.go:220+); the native agentloop bash handler runs exec bash -c on the host with no breaker. And native policy defaults to NullClient allow-all unless an operator sets env, while policy_gate extracts only cmd[:firstSpace] so 'git status && rm -rf /' is checked as resource "git". On the path r1 drives itself there is effectively no enforcement.
 
 **What to build:** Add a pre-dispatch guard in internal/tools/tools.go handleBash (:938) and internal/engine/codex.go that runs the breaker set before exec, enforced by the harness not the model. Fix internal/engine/policy_gate.go:220 to split on &&/||/|/; and strip wrappers (timeout/nice/xargs), matching every subcommand deny>ask>allow. Ship a safe default deny-list (don't rely on NullClient) so single-user installs are protected.
@@ -54,6 +58,7 @@ Make the native, harness-owned agentloop the measured and self-improving path �
 **What to build:** Register the internal/mcp/codebase_server graph tools (call edges, references, impact) into tools.NewRegistry so the native agentloop can call them. Pass e.Task into repomap.RenderRelevant (workflow.go:2166 currently passes only e.AllowedFiles) and score candidate files with the existing tfidf.Index. Add repomap.Invalidate(path) driven by write_file/edit_file + the existing filewatcher so the structural map doesn't drift stale mid-run.
 
 ### #10 Unicode/NFC normalization tier in the str_replace cascade  `[medium / S / low-risk]`  (Tool-use & patch-apply reliability)
+> ✅ IMPLEMENTED (commit: 64dc918b)
 **Why it matters:** The fuzzy cascade normalizes whitespace only (strings.Fields). When the model emits a curly quote / em-dash where the file has ASCII (or vice versa) — a very common failure — exact, whitespace, ellipsis, and fuzzy tiers all miss, and the edit silently fails. Cheap, pure reliability on the core edit primitive.
 
 **What to build:** In internal/tools/str_replace.go add a normalization tier to whitespaceNormalizedReplace (:71) and normalizedEqual (:176): NFC-normalize and fold smart quotes / em-dashes / non-breaking spaces to ASCII before comparison, layered after whitespace and before fuzzy. Mirrors Codex apply_patch / OpenCode.
