@@ -78,7 +78,8 @@ Bubble Tea v2 + bubblelayout + lipgloss v2. Three panes (dashboard / focus / det
 
 **Desktop (Tauri 2)**
 ```bash
-r1 desktop      # if installed; or open the .dmg / .msi / .deb / .rpm bundle
+# Launch the installed R1 Desktop app (.dmg / .msi / .deb / .rpm bundle);
+# the app spawns `r1 desktop-rpc` internally — there is no `r1 desktop` subcommand
 ```
 Discovery-or-spawn:
 1. Probe `~/.r1/daemon.json`. If a healthy daemon answers `daemon.info` within 500 ms → use it.

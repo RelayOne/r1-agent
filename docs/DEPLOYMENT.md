@@ -125,7 +125,8 @@ open http://127.0.0.1:7777/
 r1 chat --interactive
 
 # Desktop (Tauri 2)
-r1 desktop      # if installed; or open the platform-specific bundle
+# Open the installed R1 Desktop app (platform bundle); it connects to the
+# daemon or spawns `r1 desktop-rpc` — there is no `r1 desktop` subcommand
 ```
 
 ### Authentication for connecting UIs
