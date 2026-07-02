@@ -731,11 +731,15 @@ func runProviderStream(
 		closeResp()
 		finishDone(res.err)
 	case <-ctx.Done():
-		// Cancel watcher already fired closeResp + finishDone. We
-		// still wait briefly for resultCh so the chat goroutine
-		// drains; but if ChatStream is hung on a network call we
-		// don't block forever — return immediately and let the chat
-		// goroutine leak until the SDK closes the underlying request.
+		// The cancel watcher's ctx.Done branch races this one; closing
+		// cancelObserved can preempt it, so we must NOT assume the
+		// watcher already ran closeResp/finishDone. Both are sync.Once
+		// guarded, so calling them here as well is safe and guarantees
+		// respCh closes and doneCh receives — otherwise the caller's
+		// drain(respCh)/<-doneCh in the interrupt path would deadlock.
+		// The chat goroutine leaks until the SDK closes the request.
 		close(cancelObserved)
+		closeResp()
+		finishDone(ctx.Err())
 	}
 }

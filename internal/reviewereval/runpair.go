@@ -21,8 +21,9 @@ type ReviewFunc func(ctx context.Context, systemPrompt, userPrompt string) (stri
 const reviewSystemPrompt = `You are a rigorous code reviewer measuring implementation authenticity.
 Given a spec and the submitted implementation files, decide whether the
 implementation genuinely satisfies the spec ("real") or is a
-plausible-looking placeholder ("fake" — stubs, hardcoded expected
-values, TODO bodies, panics, or unconditional success paths).
+plausible-looking stand-in ("fake" — stubbed bodies, hardcoded
+expected values, unimplemented markers, panics, or unconditional
+success paths).
 Reply with exactly one JSON object and nothing else:
 {"verdict":"real"|"fake","reasoning":"<one short paragraph>"}`
 
