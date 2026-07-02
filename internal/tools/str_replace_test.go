@@ -104,3 +104,71 @@ func TestStrReplaceEmptyOld(t *testing.T) {
 		t.Error("should error on empty old_string")
 	}
 }
+
+// TestStrReplaceUnicodeTier covers SOTA gap #10: LLMs and copy-paste from
+// rendered docs emit smart quotes / em-dashes / non-breaking spaces (or an
+// NFD form) where the file has ASCII/NFC. The exact tier fails on
+// visually-identical bytes; the unicode tier folds and matches, splicing
+// into the original file bytes.
+func TestStrReplaceUnicodeTier(t *testing.T) {
+	// File has ASCII apostrophe + straight quotes + hyphen; the model's
+	// old_string uses curly quotes, em-dash, and a non-breaking space.
+	content := "msg := \"it's fine\" // co-op\nnext := 1\n"
+	oldStr := "msg := “it’s fine” // co—op" // curly quotes + em-dash
+	newStr := "msg := \"it is fine\" // coop"
+
+	r, err := StrReplace(content, oldStr, newStr, false)
+	if err != nil {
+		t.Fatalf("unicode-tier StrReplace failed: %v", err)
+	}
+	if r.Method != "unicode" {
+		t.Errorf("Method = %q, want unicode", r.Method)
+	}
+	if !strings.Contains(r.NewContent, "it is fine") || strings.Contains(r.NewContent, "it's fine") {
+		t.Errorf("replacement not applied: %q", r.NewContent)
+	}
+	// The untouched second line must survive verbatim.
+	if !strings.Contains(r.NewContent, "next := 1") {
+		t.Errorf("untouched content lost: %q", r.NewContent)
+	}
+}
+
+// TestStrReplaceUnicodeNBSP covers non-breaking-space folding specifically.
+func TestStrReplaceUnicodeNBSP(t *testing.T) {
+	content := "func f(a int) {}\n"          // regular spaces
+	oldStr := "func f(a int) {}" // non-breaking spaces
+	r, err := StrReplace(content, oldStr, "func g(a int) {}", false)
+	if err != nil {
+		t.Fatalf("nbsp fold failed: %v", err)
+	}
+	if r.Method != "unicode" || !strings.Contains(r.NewContent, "func g") {
+		t.Errorf("nbsp not folded: method=%q content=%q", r.Method, r.NewContent)
+	}
+}
+
+// TestStrReplaceExactStillWins ensures the unicode tier does not shadow an
+// exact match (no false "unicode" attribution for clean ASCII).
+func TestStrReplaceExactStillWins(t *testing.T) {
+	r, err := StrReplace("a := 1\n", "a := 1", "a := 2", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Method != "exact" {
+		t.Errorf("Method = %q, want exact", r.Method)
+	}
+}
+
+// TestFoldUnicodeIsConservative ensures we only fold the intended
+// confusables and leave other Unicode intact.
+func TestFoldUnicodeIsConservative(t *testing.T) {
+	if got := foldUnicode("café — “x”"); got != "cafe - \"x\"" {
+		// NFC leaves café composed; em-dash and curly quotes fold.
+		if got != "café - \"x\"" {
+			t.Errorf("foldUnicode = %q, want ASCII punctuation with letters preserved", got)
+		}
+	}
+	// A genuinely distinct CJK char must not be folded away.
+	if foldUnicode("日本語") != "日本語" {
+		t.Error("foldUnicode altered CJK content")
+	}
+}

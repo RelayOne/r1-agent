@@ -75,9 +75,14 @@ type Recorder interface {
 	// ForPrompt renders accumulated learnings as a prompt-injectable block.
 	ForPrompt() string
 	// FindByPattern returns the first learning recorded against a failure
-	// fingerprint hash, or nil when none matches. This is the recall half of
-	// the fingerprint->prior-fix loop.
+	// fingerprint hash, or nil when none matches. This is the EXACT recall
+	// half of the fingerprint->prior-fix loop.
 	FindByPattern(hash string) *Learning
+	// FindBySimilar returns the top-k learnings whose Description is most
+	// semantically similar to query (TF-IDF cosine). This is the SEMANTIC
+	// recall half: it fires when a near-but-not-identical failure/task
+	// recurs, where the exact fingerprint would miss.
+	FindBySimilar(query string, k int) []Learning
 	// Learnings returns a snapshot of every recorded learning.
 	Learnings() []Learning
 }

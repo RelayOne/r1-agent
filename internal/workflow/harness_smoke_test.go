@@ -232,7 +232,7 @@ func TestE2EHarnessSmoke_GovernanceCortexWisdom(t *testing.T) {
 	wf := Engine{
 		RepoRoot:       repo,
 		CortexEnabled:  true,
-		Task:           "Harness smoke: full mission with governance and cortex",
+		Task:           "Investigate and implement a full governance-tracked mission wiring cortex lobes, memory, and wisdom, updating verification across several files",
 		TaskType:       model.TaskTypeRefactor,
 		WorktreeName:   "harness-smoke",
 		AuthMode:       engine.AuthModeMode1,

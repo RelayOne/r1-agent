@@ -34,6 +34,17 @@ type VerdictScorer struct {
 	// ExecCommand runs a test command from PlanItem.TestCommand in the
 	// mission's working tree. Pluggable for tests.
 	ExecCommand func(ctx context.Context, dir, cmd string) (exitCode int, err error)
+
+	// RequireExecution enables strict execution-based grading (SOTA gap
+	// #5). SWE-bench Verified and independent audits ("Are Solved Issues
+	// Really Solved", UTBoost) show ~8-11% of patches that pass symbol/
+	// file heuristics do not actually work — the only trustworthy signal
+	// is executing held-out tests. When set, a plan item counts as
+	// satisfied ONLY via a passing TestCommand; RequiredSymbols /
+	// ChangedFiles / non-empty-diff become advisory (they cannot mark an
+	// item complete on their own). Default false so existing benchmark
+	// numbers stay comparable; the strict corpus opts in.
+	RequireExecution bool
 }
 
 // CompletionJudge is the interface for the optional LLM-judge layer.
@@ -131,6 +142,17 @@ func (v *VerdictScorer) Score(
 // RequiredSymbols, then ChangedFiles, then a fallback that treats any
 // non-empty diff as satisfaction.
 func (v *VerdictScorer) planItemSatisfied(ctx context.Context, workDir string, item PlanItem, rawDiff string) bool {
+	// SOTA gap #5: in strict execution-graded mode, only a passing
+	// held-out test proves an item is done — the symbol/file/diff
+	// heuristics are demoted to advisory (they can inform a report but
+	// cannot mark an item complete on their own).
+	if v.RequireExecution {
+		if item.TestCommand == "" || v.ExecCommand == nil {
+			return false
+		}
+		exitCode, err := v.ExecCommand(ctx, workDir, item.TestCommand)
+		return err == nil && exitCode == 0
+	}
 	switch {
 	case item.TestCommand != "":
 		if v.ExecCommand == nil {
