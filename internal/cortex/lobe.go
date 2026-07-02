@@ -40,6 +40,41 @@ const (
 	KindLLM
 )
 
+// RunStyle describes how a Lobe's Run participates in the superstep
+// Round barrier.
+//
+//   - RunStyleRound (the default): Run returns once per tick. The
+//     runner signals Round.Done after each Run, so the Lobe counts as
+//     a Round participant and MidturnNote waits on it.
+//   - RunStyleDaemon: Run blocks until ctx is cancelled (long-lived
+//     subscription drainers like walkeeper / rulecheck). Daemon Lobes
+//     are EXCLUDED from the Round barrier — counting them would stall
+//     every MidturnNote at the full RoundDeadline because their Run
+//     never returns (audit A010). Their runner invokes Run exactly
+//     once at Start instead of per-tick.
+type RunStyle int
+
+const (
+	RunStyleRound RunStyle = iota
+	RunStyleDaemon
+)
+
+// RunStyler is the optional interface a Lobe implements to declare a
+// non-default RunStyle. Lobes that do not implement it are treated as
+// RunStyleRound (per-tick Run, Round-barrier participant).
+type RunStyler interface {
+	RunStyle() RunStyle
+}
+
+// lobeRunStyle resolves the effective RunStyle for a Lobe: the value
+// declared via the optional RunStyler interface, else RunStyleRound.
+func lobeRunStyle(l Lobe) RunStyle {
+	if s, ok := l.(RunStyler); ok {
+		return s.RunStyle()
+	}
+	return RunStyleRound
+}
+
 // LobeInput is the read-only context handed to each Lobe per Round.
 type LobeInput struct {
 	Round     uint64
@@ -113,6 +148,25 @@ type LobeRunner struct {
 	sem  *LobeSemaphore
 	bus  *hub.Bus
 
+	// style caches lobeRunStyle(lobe) at construction time. Daemon
+	// runners invoke lobe.Run exactly once at Start (Run blocks until
+	// ctx is cancelled) and never consume ticks; round runners follow
+	// the tick-per-round protocol.
+	style RunStyle
+
+	// prov is the model client forwarded to Lobes via LobeInput.Provider.
+	// Set by Cortex.New via SetProvider; nil for tests that construct
+	// runners directly without a provider.
+	prov provider.Provider
+
+	// roundHistory holds the conversation history for the current round.
+	// Cortex.MidturnNote deep-copies the loop's messages once per round
+	// and stores the copy here (via SetRoundHistory) before TickRound;
+	// buildInput loads it into LobeInput.History. Atomic because the
+	// producer (MidturnNote, loop goroutine) and the consumer (runOnce,
+	// runner goroutine) race by design.
+	roundHistory atomic.Pointer[[]agentloop.Message]
+
 	// tick signals "Cortex has started a new round; please run once".
 	// Producers (TASK-14 Cortex.MidturnNote) send non-blockingly; the
 	// runner consumes one tick per round inside its main select loop.
@@ -155,9 +209,30 @@ func NewLobeRunner(lobe Lobe, ws *Workspace, sem *LobeSemaphore, bus *hub.Bus) *
 		ws:      ws,
 		sem:     sem,
 		bus:     bus,
+		style:   lobeRunStyle(lobe),
 		tick:    make(chan struct{}, 1),
 		stopped: make(chan struct{}),
 	}
+}
+
+// Style returns the runner's cached RunStyle (resolved from the Lobe's
+// optional RunStyler interface at construction time).
+func (r *LobeRunner) Style() RunStyle { return r.style }
+
+// SetProvider binds the model client forwarded to the Lobe via
+// LobeInput.Provider. Called by Cortex.New with cfg.Provider; safe to
+// leave unset (LobeInput.Provider stays nil — deterministic Lobes
+// never touch it). Not safe to call concurrently with runOnce; bind
+// once before Start, which Cortex.New does.
+func (r *LobeRunner) SetProvider(p provider.Provider) { r.prov = p }
+
+// SetRoundHistory stores the conversation history handed to the Lobe
+// on its next runOnce via LobeInput.History. Callers must pass a copy
+// they will not mutate afterwards — Cortex.MidturnNote deep-copies the
+// loop's messages once per round and shares that copy across runners
+// (Lobes hold History read-only per the LobeInput contract).
+func (r *LobeRunner) SetRoundHistory(history []agentloop.Message) {
+	r.roundHistory.Store(&history)
 }
 
 // Tick returns the runner's tick channel. Test callers send on this
@@ -225,6 +300,16 @@ func (r *LobeRunner) run(ctx context.Context) {
 			r.emitPanic(rec)
 		}
 	}()
+
+	// Daemon-style Lobes (walkeeper, rulecheck) block inside Run until
+	// ctx is cancelled: invoke Run exactly once at Start instead of
+	// per-tick. They never signal the Round barrier (Cortex.New skips
+	// SetRound for daemons), so a permanently-blocked Run cannot stall
+	// MidturnNote at the RoundDeadline (audit A010).
+	if r.style == RunStyleDaemon {
+		r.runOnce(ctx)
+		return
+	}
 
 	for {
 		select {
@@ -303,12 +388,18 @@ func (r *LobeRunner) signalDone(roundID uint64) {
 
 // buildInput constructs the per-round LobeInput. The Workspace is
 // wrapped in the read-only adapter so the Lobe cannot reach Publish
-// through a type assertion; History and Provider are populated by
-// TASK-14 wiring and are nil at this layer.
+// through a type assertion. History comes from the per-round stash
+// populated by Cortex.MidturnNote via SetRoundHistory (nil when no
+// round has fired yet, e.g. a daemon Lobe's Start-time Run); Provider
+// is the Cortex-level model client bound via SetProvider.
 func (r *LobeRunner) buildInput(ctx context.Context) LobeInput {
 	_ = ctx
 	in := LobeInput{
-		Bus: r.bus,
+		Bus:      r.bus,
+		Provider: r.prov,
+	}
+	if h := r.roundHistory.Load(); h != nil {
+		in.History = *h
 	}
 	if r.ws != nil {
 		in.Workspace = WorkspaceReaderFor(r.ws)

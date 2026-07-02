@@ -162,6 +162,12 @@ func (l *WALKeeperLobe) Description() string {
 // Kind satisfies cortex.Lobe. Deterministic — no LLM calls.
 func (l *WALKeeperLobe) Kind() cortex.LobeKind { return cortex.KindDeterministic }
 
+// RunStyle satisfies cortex.RunStyler. Run blocks until ctx is
+// cancelled (subscription drainer), so the Lobe must be excluded from
+// the Round barrier — its runner invokes Run once at Cortex.Start
+// instead of per-round (audit A010).
+func (l *WALKeeperLobe) RunStyle() cortex.RunStyle { return cortex.RunStyleDaemon }
+
 // Run registers the hub subscriber, starts the drainer goroutine and
 // the backpressure-note ticker, and blocks until ctx is cancelled.
 //
