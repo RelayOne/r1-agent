@@ -1306,11 +1306,19 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			}
 			logging.Cost(log, name, result.TotalCostUSD, execRunnerName)
 
-			// Record successful completion as a wisdom pattern.
+			// Record successful completion as a wisdom pattern. SOTA gap #2:
+			// make recall able to TEACH, not only warn — include the task and
+			// the failure that the successful retry overcame, so FindBySimilar
+			// can surface "here is a task like yours that succeeded after this
+			// fix" on a future run, not just "avoid this failure".
 			if e.Wisdom != nil && attempt > 1 {
+				desc := fmt.Sprintf("Task %q succeeded on attempt %d.", e.Task, attempt)
+				if lastFailure != nil && strings.TrimSpace(lastFailure.Summary) != "" {
+					desc += " The retry overcame: " + strings.TrimSpace(lastFailure.Summary)
+				}
 				e.Wisdom.Record(e.Task, wisdom.Learning{
 					Category:    wisdom.Decision,
-					Description: fmt.Sprintf("succeeded on attempt %d after retry", attempt),
+					Description: desc,
 				})
 			}
 			break
@@ -1335,7 +1343,28 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		// run when the same failure recurs.
 		if e.Wisdom != nil {
 			if prior := e.Wisdom.FindByPattern(fp.Hash); prior != nil && prior.Description != "" {
+				// Exact fingerprint hit — the strongest signal.
 				priorFixHint = fmt.Sprintf("A previous run hit this exact failure fingerprint; recorded learning: %s\nDo NOT repeat the approach that produced it.", prior.Description)
+			} else {
+				// SOTA gap #2: semantic recall. Exact fingerprints rarely
+				// recur verbatim; surface the top prior learnings whose text
+				// is closest to this failure so a near-miss from a previous
+				// run still teaches. Query on the human-readable failure
+				// summary (falls back to the pattern).
+				query := analysis.Summary
+				if query == "" {
+					query = fp.Pattern
+				}
+				if sims := e.Wisdom.FindBySimilar(query, 3); len(sims) > 0 {
+					var b strings.Builder
+					b.WriteString("Similar prior learnings (may or may not apply — judge relevance):\n")
+					for _, s := range sims {
+						if s.Description != "" {
+							b.WriteString("- " + s.Description + "\n")
+						}
+					}
+					priorFixHint = b.String()
+				}
 			}
 		}
 		if matched, count := failure.MatchHistory(fp, priorFingerprints); matched != nil && count > 0 {
