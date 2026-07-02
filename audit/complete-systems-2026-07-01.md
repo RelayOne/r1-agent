@@ -532,7 +532,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Documented 5-provider fallback chain can never fall past Codex/Native — OpenRouter/DirectAPI/Ember/LintOnly hardwired unavailable**
 - Evidence: isAvailable in the workflow engine: `case model.ProviderOpenRouter, model.ProviderDirectAPI, model.ProviderEmber, model.ProviderLintOnly: return false // not yet wired as runners` (lines 1950-1953). CLAUDE.md key decision 15 and the package map advertise "model.Resolve() walks Primary -> FallbackChain (Claude -> Codex -> OpenRouter -> API -> lint-only)" and "5-provider fallback", but the executing layer permanently reports those providers unavailable, so the fallback chain is 2-3 providers in practice and the lint-only last resort never engages.
 - Fix: Immediate (docs correction, one commit): (1) CLAUDE.md decision 15 + model/ package-map line: state the automatic fallback currently resolves Claude → Codex (Native via --runner-mode/modelsource); OpenRouter/DirectAPI/Ember/lint-only are defined in internal/model/router.go but not wired as workflow runners (engine.APIRunner exists, unused in production). (2) docs/README.md:151 and docs/FEATURE-MAP.md:12: change Status from Done to In Progress/Scoped for the OpenRouter/direct-API/lint-only tiers. (3) docs/BUSINESS-VALUE.md:123 and :194: remove or rewrite the "lint-only mode keeps the missions o…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 09774d84)
 
 ### A081 [docs-drift/S] services/r1-browser/supervisor.go:134
 **r1-browser doc claims Google JWKS signature verification; verifyBearer only checks token shape**
