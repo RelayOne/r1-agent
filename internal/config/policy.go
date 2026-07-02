@@ -501,6 +501,7 @@ var policySearchNames = []string{
 	".stoke.yaml",
 	".stoke.yml",
 	"r1.policy.yaml",
+	"stoke.policy.yaml",
 	"stoke.policy.yml",
 }
 
