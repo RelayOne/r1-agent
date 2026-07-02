@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/RelayOne/r1/internal/boulder"
 	"github.com/RelayOne/r1/internal/convergence"
@@ -83,7 +84,14 @@ type RunConfig struct {
 	RBACPolicy       *rbac.Policy        // RBAC enforcement (nil = no enforcement)
 	RBACIdentity     string              // identity for RBAC checks (e.g., username or API key)
 	Memory           *memory.Store              // cross-session persistent knowledge (nil = disabled)
-	Telemetry        *telemetry.Collector       // structured metrics collector (nil = disabled)
+	// Telemetry is the structured metrics collector for the run. When
+	// nil, New auto-constructs one (in-memory, cheap) so every
+	// production run records task lifecycle metrics; read it back via
+	// Orchestrator.Telemetry() / telemetry.Collector.Format(). Pass a
+	// shared Collector to aggregate across runs. (Audit A096: this
+	// used to say "nil = disabled" with no production path able to
+	// enable it.)
+	Telemetry *telemetry.Collector
 	Convergence      *convergence.Validator     // adversarial self-audit gate (nil = auto-created)
 	// ConvergenceIgnores is the CTO-approved ignore list used to filter
 	// false positives before the convergence gate decides to block a
@@ -144,6 +152,13 @@ type Orchestrator struct {
 	governor *governance.Governor // V2 governance bridge (nil = disabled)
 }
 
+// Telemetry returns the run's structured metrics collector. It is
+// always non-nil after New (auto-constructed when not injected — audit
+// A096); render it with Format() or aggregate via Summary().
+func (o *Orchestrator) Telemetry() *telemetry.Collector {
+	return o.cfg.Telemetry
+}
+
 // New creates an Orchestrator from the given config, loading and validating the policy file.
 func New(cfg RunConfig) (*Orchestrator, error) {
 	// Validate required inputs at the API boundary.
@@ -158,6 +173,14 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 	}
 	if cfg.AuthMode == "" {
 		cfg.AuthMode = AuthModeMode1
+	}
+	// Auto-construct the telemetry collector (audit A096): an in-memory
+	// collector is cheap, and constructing it here means task lifecycle
+	// metrics exist on every production run instead of never (no
+	// RunConfig site ever set this field). Injected collectors are
+	// honored so callers can aggregate across runs.
+	if cfg.Telemetry == nil {
+		cfg.Telemetry = telemetry.New()
 	}
 
 	// Run preflight checks: log warnings for any failed checks (advisory, not blocking).
@@ -263,7 +286,7 @@ func DefaultPolicyYAML() string {
 }
 
 // Run executes the full workflow: auto-detects build commands, sets up worktrees, and runs plan/execute/verify phases.
-func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
+func (o *Orchestrator) Run(ctx context.Context) (res workflow.Result, err error) {
 	// Release the V2 governance layer (supervisor + ledger + bus) when
 	// the run finishes. No-op when governance is disabled (governor nil).
 	if o.governor != nil {
@@ -281,16 +304,26 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		}
 	}
 
-	// Record telemetry event for task start.
+	// Record task lifecycle telemetry. The collector is auto-constructed
+	// in New (audit A096), so these events fire on every run; task.end
+	// carries duration, success, and cost so Summary()/Format() output
+	// is meaningful. Readable via Orchestrator.Telemetry().
 	if o.cfg.Telemetry != nil {
+		runStart := time.Now()
 		o.cfg.Telemetry.Record(telemetry.Event{
-			Name: "task.start",
-			Tags: map[string]string{"task_type": o.cfg.TaskType, "repo": o.cfg.RepoRoot},
+			Name:     "task.start",
+			Category: "task",
+			Success:  true,
+			Tags:     map[string]string{"task_type": o.cfg.TaskType, "repo": o.cfg.RepoRoot},
 		})
 		defer func() {
 			o.cfg.Telemetry.Record(telemetry.Event{
-				Name: "task.end",
-				Tags: map[string]string{"task_type": o.cfg.TaskType},
+				Name:     "task.end",
+				Category: "task",
+				Duration: time.Since(runStart),
+				Success:  err == nil,
+				Cost:     res.TotalCostUSD,
+				Tags:     map[string]string{"task_type": o.cfg.TaskType},
 			})
 		}()
 	}
