@@ -162,6 +162,7 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 // working directory (r1-mcp reads cwd once at startup, matching the
 // pack-registry seeding in main.go).
 func loadStudioConfigFromCwd() (config.StudioConfig, error) {
+	// LINT-ALLOW chdir-cli-entry: r1-mcp is a single-process MCP server; cwd is read once at startup to resolve studio_config, mirroring the pack-registry seeding annotation in main.go.
 	wd, err := os.Getwd()
 	if err != nil {
 		wd = ""
