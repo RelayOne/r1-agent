@@ -16,6 +16,10 @@ builds:
       - CGO_ENABLED=1
     flags:
       - -trimpath
+      # sqlite_fts5 keeps research/wisdom FTS5 active in release
+      # binaries (audit A006) — without the tag Search silently
+      # degrades to the LIKE fallback despite working SQLite.
+      - -tags=sqlite_fts5
     ldflags:
       - -s -w -X main.version={{.Version}}
     goos:

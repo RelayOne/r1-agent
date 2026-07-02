@@ -122,6 +122,16 @@ steps:
       - -c
       - |
         set -euxo pipefail
+        # linux legs build with CGO + sqlite_fts5 (audit A006): the only
+        # SQLite driver is cgo-only mattn/go-sqlite3, so CGO_ENABLED=0
+        # ships a stub whose every Open() errors at runtime — --sqlite,
+        # session.db auto-detect, research/wisdom/membus FTS were all
+        # inert in every published linux binary. darwin/windows keep
+        # CGO_ENABLED=0: no osxcross/mingw in this image, matching the
+        # goreleaser r1-darwin build; SQLite-backed features are
+        # unavailable in those binaries.
+        apt-get update -q && apt-get install -y -q \
+          gcc-x86-64-linux-gnu gcc-aarch64-linux-gnu
         mkdir -p dist
         for OS_ARCH in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
           OS=$${OS_ARCH%/*}
@@ -130,12 +140,26 @@ steps:
           if [ "$$OS" = "windows" ]; then
             EXT=".exe"
           fi
-          CGO_ENABLED=0 GOOS=$$OS GOARCH=$$ARCH go build \
-            -mod=vendor \
-            -trimpath \
-            -ldflags "-s -w -X main.version=$SHORT_SHA" \
-            -o dist/r1-$${OS}-$${ARCH}$${EXT} \
-            ./cmd/r1
+          if [ "$$OS" = "linux" ]; then
+            CROSSCC=x86_64-linux-gnu-gcc
+            if [ "$$ARCH" = "arm64" ]; then
+              CROSSCC=aarch64-linux-gnu-gcc
+            fi
+            CGO_ENABLED=1 CC=$$CROSSCC GOOS=$$OS GOARCH=$$ARCH go build \
+              -mod=vendor \
+              -tags sqlite_fts5 \
+              -trimpath \
+              -ldflags "-s -w -X main.version=$SHORT_SHA" \
+              -o dist/r1-$${OS}-$${ARCH} \
+              ./cmd/r1
+          else
+            CGO_ENABLED=0 GOOS=$$OS GOARCH=$$ARCH go build \
+              -mod=vendor \
+              -trimpath \
+              -ldflags "-s -w -X main.version=$SHORT_SHA" \
+              -o dist/r1-$${OS}-$${ARCH}$${EXT} \
+              ./cmd/r1
+          fi
         done
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
