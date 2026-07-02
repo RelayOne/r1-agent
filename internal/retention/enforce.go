@@ -37,7 +37,7 @@ import (
 	"github.com/RelayOne/r1/internal/r1dir"
 )
 
-// SweepResult tallies what a single EnforceSweep pass removed. All four
+// SweepResult tallies what a single EnforceSweep pass removed. All five
 // counters report per-surface deletions and are populated even on partial
 // failure so operators can reason about the blast radius from the returned
 // number alone.
@@ -56,6 +56,15 @@ type SweepResult struct {
 	// CheckpointsRemoved counts files deleted from .stoke/checkpoints/
 	// whose mtime was older than the configured checkpoint_files retention.
 	CheckpointsRemoved int64
+	// ReplayFilesRemoved counts session-replay recordings deleted from
+	// .stoke/replays/ (and .r1/replays/) whose mtime aged past the retention
+	// TTL. Replays are the structured post-mortem counterpart to the raw
+	// stream files, so they currently share the stream_files TTL — the sweep
+	// keyed them off policy.StreamFiles until a dedicated replay_files policy
+	// key lands (see O4 residuals). Without this counter the replays dir grew
+	// one JSON per task attempt forever (internal/workflow/workflow.go writes
+	// one recording per task and nothing ever reaped it).
+	ReplayFilesRemoved int64
 }
 
 // streamsDir and checkpointsDir are the conventional on-disk locations for
@@ -78,6 +87,14 @@ var (
 	// as vars for test overrides.
 	canonicalStreamsDir     = filepath.Join(r1dir.Canonical, "streams")
 	canonicalCheckpointsDir = filepath.Join(r1dir.Canonical, "checkpoints")
+
+	// replaysDir / canonicalReplaysDir are the on-disk homes for session
+	// replay recordings written per task by internal/workflow (one JSON per
+	// task attempt under r1dir.JoinFor(repo, "replays")). Swept on the same
+	// dual-layout basis as streams/checkpoints. Kept as vars for test
+	// overrides.
+	replaysDir          = filepath.Join(r1dir.Legacy, "replays")
+	canonicalReplaysDir = filepath.Join(r1dir.Canonical, "replays")
 )
 
 // ensureMemoryTypeColumnOnce guards the one-time ALTER TABLE that adds the
@@ -213,9 +230,10 @@ func EnforceOnSessionEnd(ctx context.Context, policy Policy, sessionID string, b
 }
 
 // EnforceSweep is the hourly ticker-driven sweep described in §6. It runs
-// TTL-based expiry across three surfaces: memory-bus rows with a populated
-// expires_at in the past, stream files aged past policy.StreamFiles, and
-// checkpoint files aged past policy.CheckpointFiles. Each surface is
+// TTL-based expiry across four surfaces: memory-bus rows with a populated
+// expires_at in the past, stream files aged past policy.StreamFiles,
+// checkpoint files aged past policy.CheckpointFiles, and replay recordings
+// aged past the same stream_files TTL. Each surface is
 // attempted independently — a failure on one does not short-circuit the
 // others — and the per-surface counters on SweepResult always reflect what
 // actually got removed.
@@ -270,6 +288,23 @@ func EnforceSweep(ctx context.Context, policy Policy, bus *membus.Bus) (SweepRes
 				errs = append(errs, fmt.Errorf("retention: checkpoint sweep %s: %w", dir, err))
 			}
 			result.CheckpointsRemoved += n
+		}
+	}
+
+	// --- replay recordings ----------------------------------------------
+	// Session replay JSON is a per-task debug trace (the structured peer of
+	// the raw stream files) so it ages out on the stream_files TTL. Before
+	// this the directory grew one recording per task attempt forever — the
+	// `r1 replay` reader (O4) makes them worth keeping for a bounded window,
+	// this makes sure the window is actually bounded.
+	if replayTTL, ok := durationFor(policy.StreamFiles); ok {
+		for _, dir := range dedupDirs(replaysDir, canonicalReplaysDir) {
+			n, err := sweepFilesOlderThan(dir, replayTTL)
+			if err != nil {
+				log.Printf("retention: sweep replay files (%s): %v", dir, err)
+				errs = append(errs, fmt.Errorf("retention: replay sweep %s: %w", dir, err))
+			}
+			result.ReplayFilesRemoved += n
 		}
 	}
 

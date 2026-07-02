@@ -880,6 +880,11 @@ func main() {
 		// EL-CLI: hash-chain verify + session/mission/loop listing
 		// over .stoke/events.db (spec event-log-proper.md §21-35).
 		eventlogCmd(os.Args[2:])
+	case "replay":
+		// O4: read side for the per-task session replay recordings that
+		// internal/workflow persists under <repo>/.r1/replays. list | show |
+		// errors over internal/replay Load/Player/Recording.
+		os.Exit(runReplayCmd(os.Args[2:], os.Stdout, os.Stderr))
 	case "plan-status":
 		statusCmd(os.Args[2:])
 	case "pool":
@@ -7295,6 +7300,7 @@ COMMANDS:
   why-broken      Explain which decision introduced a regression
   self-tune       Recommend a better harness config from trial metrics
   watch           Live operator dashboard for an in-flight SOW run
+  replay          Inspect per-task session replay recordings: list | show | errors
   status          Show session dashboard (progress, cost, learning)
   pool            Show subscription pool utilization
   add-claude      Add a Claude Max subscription to the pool
