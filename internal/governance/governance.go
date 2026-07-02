@@ -114,6 +114,10 @@ func New(ctx context.Context, stateDir, missionID string, budgetUSD float64) (*G
 // Bus returns the Governor's durable v2 bus (for tests / introspection).
 func (g *Governor) Bus() *bus.Bus { return g.bus }
 
+// MissionID returns the mission identifier this Governor is scoped to.
+// Used by the app orchestrator when publishing bridge events (audit A037).
+func (g *Governor) MissionID() string { return g.missionID }
+
 // Ledger returns the Governor's v2 ledger (for tests / introspection).
 func (g *Governor) Ledger() *ledger.Ledger { return g.ledger }
 

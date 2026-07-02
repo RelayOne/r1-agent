@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/RelayOne/r1/internal/boulder"
+	"github.com/RelayOne/r1/internal/bridge"
 	"github.com/RelayOne/r1/internal/convergence"
 	"github.com/RelayOne/r1/internal/config"
 	"github.com/RelayOne/r1/internal/env"
@@ -328,16 +329,22 @@ func (o *Orchestrator) Run(ctx context.Context) (res workflow.Result, err error)
 		}()
 	}
 
-	// Load cross-session knowledge if a memory store is provided.
-	if o.cfg.Memory != nil {
-		entries := o.cfg.Memory.Recall(o.cfg.Task, 5)
-		for _, e := range entries {
-			if o.cfg.Wisdom != nil {
-				o.cfg.Wisdom.Record(o.cfg.Task, wisdom.Learning{
-					Category:    wisdom.Gotcha,
-					Description: e.Content,
-				})
-			}
+	// Load cross-session knowledge if a memory store is provided. On
+	// governed runs the learnings are routed through the WisdomBridge
+	// (audit A037) so wisdom.learning.recorded bus events and
+	// wisdom_learning ledger nodes fire; the bridge wraps the SAME
+	// store, so prompt injection sees identical state either way.
+	if o.cfg.Memory != nil && o.cfg.Wisdom != nil {
+		recordLearning := o.cfg.Wisdom.Record
+		if o.governor != nil {
+			wb := bridge.NewWisdomBridgeWithStore(o.governor.Bus(), o.governor.Ledger(), o.cfg.Wisdom)
+			recordLearning = wb.Record
+		}
+		for _, e := range o.cfg.Memory.Recall(o.cfg.Task, 5) {
+			recordLearning(o.cfg.Task, wisdom.Learning{
+				Category:    wisdom.Gotcha,
+				Description: e.Content,
+			})
 		}
 	}
 
@@ -455,6 +462,26 @@ func (o *Orchestrator) Run(ctx context.Context) (res workflow.Result, err error)
 				Model:    o.cfg.NativeModel,
 			}
 		}
+	}
+	// Bridge verification observability into the v2 governance bus +
+	// ledger on governed runs (audit A037): the workflow engine executes
+	// its own policy-filtered pipeline per attempt, so the bridge
+	// announces the run up front and publishes the final outcomes
+	// (verify.completed event + "verification" ledger node) when the
+	// workflow returns. Background context on the completion write: the
+	// run context may already be canceled on failure paths and the
+	// observability write should still land.
+	if o.governor != nil {
+		vb := bridge.NewVerifyBridge(o.governor.Bus(), o.governor.Ledger(), buildCmd, testCmd, lintCmd)
+		taskID := o.cfg.WorktreeName
+		if taskID == "" {
+			taskID = o.cfg.TaskType
+		}
+		missionID := o.governor.MissionID()
+		vb.PublishStarted(o.cfg.RepoRoot, taskID, missionID)
+		defer func() {
+			vb.PublishCompleted(context.Background(), taskID, missionID, res.Verification, err == nil)
+		}()
 	}
 	return wf.Run(ctx)
 }
