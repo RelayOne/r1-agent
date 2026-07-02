@@ -21,6 +21,7 @@ import (
 	"github.com/RelayOne/r1/internal/deploy"
 	"github.com/RelayOne/r1/internal/executor"
 	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1/internal/research"
 	"github.com/RelayOne/r1/internal/truecom"
 )
 
@@ -458,7 +459,10 @@ func floatFromMeta(meta map[string]any, key string) float64 {
 // touching agentserve or the CLI.
 func buildExecutorRegistry() map[executor.TaskType]executor.Executor {
 	return map[executor.TaskType]executor.Executor{
-		executor.TaskResearch: executor.NewResearchExecutor(nil),
+		// Real HTTP fetcher, same wiring as `r1 research` (research_cmd.go).
+		// A nil Fetcher made every research task fail at Execute while the
+		// capability was still advertised over /api/capabilities.
+		executor.TaskResearch: executor.NewResearchExecutor(research.NewHTTPFetcher()),
 		executor.TaskBrowser:  executor.NewBrowserExecutor(),
 		executor.TaskDeploy:   executor.NewDeployExecutor(deploy.DeployConfig{}),
 		// CodeExecutor lives in sow_native.go; direct task dispatch
