@@ -9,7 +9,6 @@ import (
 
 	"github.com/RelayOne/r1/internal/agentmsg"
 	"github.com/RelayOne/r1/internal/branch"
-	"github.com/RelayOne/r1/internal/dispatch"
 	"github.com/RelayOne/r1/internal/plan"
 	"github.com/RelayOne/r1/internal/specexec"
 )
@@ -79,10 +78,6 @@ type Scheduler struct {
 	// MessageBus enables inter-agent communication during parallel task execution.
 	// When set, tasks can broadcast status updates and conflict alerts.
 	MessageBus *agentmsg.Bus
-
-	// DispatchQueue provides reliable message delivery with retry for task events.
-	// When set, task completion/failure events are dispatched through the queue.
-	DispatchQueue *dispatch.Queue
 }
 
 // priority returns the resolved PriorityFunc for this Scheduler, always
@@ -161,18 +156,6 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 				"success":  r.Success,
 				"cost_usd": r.CostUSD,
 			})
-		}
-
-		// Dispatch task result event through the reliable delivery queue.
-		if s.DispatchQueue != nil {
-			priority := dispatch.PriorityNormal
-			if !r.Success {
-				priority = dispatch.PriorityHigh
-			}
-			s.DispatchQueue.Enqueue("task.result", "orchestrator", priority, map[string]any{
-				"task_id": r.TaskID,
-				"success": r.Success,
-			}, fmt.Sprintf("result-%s", r.TaskID))
 		}
 	}
 
