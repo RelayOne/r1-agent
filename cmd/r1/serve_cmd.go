@@ -33,6 +33,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -326,17 +327,17 @@ func runServeLoop(opts serveOptions) {
 			// concurrent shutdown RPCs coalesces into one signal; the
 			// serve loop reads it and unwinds.
 			//
-			// shutdownAckDelay gives the WS layer a brief window to flush
-			// the daemon.shutdown response back to the caller before the
-			// listener tears down. Without this delay the handler can
-			// return success, the serve loop can fire on shutdownReqCh,
-			// and the listener can close before the dispatcher's
-			// conn.WriteResponse completes — clients then see a closed
-			// connection rather than the success envelope. Found by
-			// codex review of commit 671ed37c (P1).
-			const shutdownAckDelay = 100 * time.Millisecond
+			// daemonShutdownAckDelay (package const) gives the WS layer a
+			// brief window to flush the daemon.shutdown response back to
+			// the caller before the listener tears down. Without this
+			// delay the handler can return success, the serve loop can
+			// fire on shutdownReqCh, and the listener can close before the
+			// dispatcher's conn.WriteResponse completes — clients then see
+			// a closed connection rather than the success envelope. Found
+			// by codex review of commit 671ed37c (P1). The plain-HTTP
+			// /v1/daemon/shutdown route (O1) reuses the same delay.
 			rpcHandler.SetShutdownFunc(func(graceSeconds int) {
-				time.Sleep(shutdownAckDelay)
+				time.Sleep(daemonShutdownAckDelay)
 				select {
 				case shutdownReqCh <- graceSeconds:
 				default:
@@ -356,6 +357,18 @@ func runServeLoop(opts serveOptions) {
 			wsHandler := &ws.Handler{Dispatcher: disp, Token: opts.Token}
 			muxAlias.Handle("/v1/rpc", wsHandler)
 			fmt.Fprintf(os.Stderr, "JSON-RPC over WS mounted at /v1/rpc\n")
+
+			// Plain-HTTP daemon control plane (O1): the real
+			// daemon.shutdown signal used to be reachable only over the
+			// /v1/rpc WebSocket, which no CLI client dials, and the
+			// queue-mux control verbs are gated behind
+			// --enable-queue-routes. Mount POST /v1/daemon/shutdown and
+			// GET /v1/daemon/info on the shared mux so `r1 ctl
+			// shutdown`/`info` reach a real transport against a default
+			// `r1 serve`. shutdown reuses the SAME shutdownReqCh
+			// non-blocking send as the daemon.shutdown RPC callback above.
+			mountDaemonControlRoutes(muxAlias, rpcHandler.DaemonInfo, shutdownReqCh, opts.Token)
+			fmt.Fprintf(os.Stderr, "daemon control mounted at POST /v1/daemon/shutdown + GET /v1/daemon/info\n")
 
 			// Session event journals + subscribe replay (audit A069).
 			// Sessions created via session.start get a journal-first
@@ -510,6 +523,82 @@ func portFromAddr(addr string) int {
 	var p int
 	fmt.Sscanf(addr[idx+1:], "%d", &p)
 	return p
+}
+
+// daemonShutdownAckDelay gives the response layer a brief window to
+// flush the shutdown ack before the serve loop tears the listener down.
+// Shared by the daemon.shutdown RPC callback (SetShutdownFunc) and the
+// plain-HTTP POST /v1/daemon/shutdown route (O1).
+const daemonShutdownAckDelay = 100 * time.Millisecond
+
+// daemonInfoFunc reports daemon metadata for GET /v1/daemon/info. In
+// runServeLoop this is rpcHandler.DaemonInfo; tests pass a stub.
+type daemonInfoFunc func(context.Context) (jsonrpc.DaemonInfoResponse, error)
+
+// mountDaemonControlRoutes wires the plain-HTTP daemon control plane
+// (O1) onto the shared serve mux: POST /v1/daemon/shutdown and GET
+// /v1/daemon/info.
+//
+// Before O1 the real daemon.shutdown signal was reachable ONLY over the
+// /v1/rpc WebSocket (which no CLI client dials), and every queue-backed
+// ctl verb 404s against a default `r1 serve` because MountDaemonQueue is
+// gated behind --enable-queue-routes. These two plain routes give
+// `r1 ctl shutdown`/`info` a reachable transport with no extra flags.
+//
+// Auth: both routes are wrapped with RequireBearer(token). On the
+// loopback TCP listener the CLI supplies the bearer from daemon.json; on
+// the unix control socket the caller sends no bearer but the peer-cred
+// check authenticates the connection and unixControlHandler injects the
+// bearer before dispatch — so a single RequireBearer wrap is correct for
+// both transports.
+//
+// shutdown reuses the SAME non-blocking send into shutdownReqCh that the
+// daemon.shutdown RPC callback uses, so the serve loop's select unwinds
+// identically whichever surface the operator hits. The signal fires
+// AFTER the ack flushes (daemonShutdownAckDelay) so the caller observes
+// the success envelope before the listener closes.
+func mountDaemonControlRoutes(mux *http.ServeMux, info daemonInfoFunc, shutdownReqCh chan<- int, token string) {
+	var shutdownH http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			GraceSeconds int `json:"grace_seconds"`
+		}
+		// Tolerate an empty body (curl -X POST with no payload); bound
+		// the read so a hostile client cannot stream unbounded JSON.
+		if r.Body != nil {
+			_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"accepted_at":   time.Now().UTC().Format(time.RFC3339Nano),
+			"grace_seconds": req.GraceSeconds,
+		})
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		go func(grace int) {
+			time.Sleep(daemonShutdownAckDelay)
+			select {
+			case shutdownReqCh <- grace:
+			default:
+				// channel already has a pending signal; drop.
+			}
+		}(req.GraceSeconds)
+	})
+	var infoH http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v, err := info(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(v)
+	})
+	if token != "" {
+		shutdownH = server.RequireBearer(token)(shutdownH)
+		infoH = server.RequireBearer(token)(infoH)
+	}
+	mux.Handle("POST /v1/daemon/shutdown", shutdownH)
+	mux.Handle("GET /v1/daemon/info", infoH)
 }
 
 
