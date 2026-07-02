@@ -197,6 +197,11 @@ func (v *Validator) Validate(missionID string, files []FileInput) *Report {
 	}
 	wg.Wait()
 
+	// Integration-level pass for the two cross-file test-coverage rules
+	// ("missing-test-file", "no-missing-error-test") whose per-file Check
+	// funcs cannot see the rest of the change set.
+	findings = append(findings, crossFileTestCoverageFindings(files, enabledRuleIDs(enabledRules))...)
+
 	// Phase 2: Semantic cross-file analysis (symbol reachability, type wiring)
 	// This catches gaps that no single-file regex can detect.
 	semFindings := SemanticAnalysis(files, nil)
@@ -243,6 +248,11 @@ func (v *Validator) ValidateWithCriteria(missionID string, files []FileInput, cr
 	}
 	wg.Wait()
 
+	// Integration-level pass for the two cross-file test-coverage rules
+	// ("missing-test-file", "no-missing-error-test") whose per-file Check
+	// funcs cannot see the rest of the change set.
+	findings = append(findings, crossFileTestCoverageFindings(files, enabledRuleIDs(enabledRules))...)
+
 	// Phase 2: Semantic cross-file analysis WITH criteria mapping
 	// This replaces the old naive keyword-matching approach with real
 	// symbol reachability, type wiring, and concept mapping.
@@ -250,6 +260,99 @@ func (v *Validator) ValidateWithCriteria(missionID string, files []FileInput, cr
 	findings = append(findings, semFindings...)
 
 	return buildReport(missionID, findings, len(enabledRules), start)
+}
+
+// enabledRuleIDs builds a rule-ID set from the enabled rule slice so
+// integration-level passes stay gated on EnableRule() state.
+func enabledRuleIDs(rules []Rule) map[string]bool {
+	ids := make(map[string]bool, len(rules))
+	for _, r := range rules {
+		ids[r.ID] = true
+	}
+	return ids
+}
+
+// crossFileTestCoverageFindings is the integration-level implementation
+// of the two cross-file test-coverage rules. Their per-file Check funcs
+// (missingTestFileRule, missingErrorTestRule) return nil by design — a
+// single-file check cannot know whether a _test.go exists elsewhere in
+// the change set — so Validate and ValidateWithCriteria call this pass
+// after the per-file phase, gated on the rule IDs being enabled.
+//
+//   - "missing-test-file": for each non-test .go file in the input set,
+//     emit a SevMajor finding when no _test.go exists in the same
+//     directory within the set.
+//   - "no-missing-error-test": collect error-returning function names
+//     (errorReturnFuncRe) per source file; emit one SevMajor finding per
+//     file whose error-returning functions never appear in the set's
+//     concatenated _test.go content alongside err/Error handling.
+func crossFileTestCoverageFindings(files []FileInput, enabled map[string]bool) []Finding {
+	if !enabled["missing-test-file"] && !enabled["no-missing-error-test"] {
+		return nil
+	}
+
+	// Index the test side of the change set once: directories that
+	// contain a _test.go, plus concatenated test content for
+	// error-path cross-referencing.
+	testDirs := make(map[string]bool)
+	var testContent strings.Builder
+	for _, f := range files {
+		if isGoFile(f.Path) && isTestFile(f.Path) {
+			testDirs[filepath.Dir(f.Path)] = true
+			testContent.Write(f.Content)
+			testContent.WriteByte('\n')
+		}
+	}
+	testText := testContent.String()
+	testsMentionErrors := strings.Contains(testText, "err") || strings.Contains(testText, "Error")
+
+	var findings []Finding
+	for _, f := range files {
+		if !isGoFile(f.Path) || isTestFile(f.Path) {
+			continue
+		}
+		if enabled["missing-test-file"] && !testDirs[filepath.Dir(f.Path)] {
+			findings = append(findings, Finding{
+				RuleID:      "missing-test-file",
+				Category:    CatTestCoverage,
+				Severity:    SevMajor,
+				File:        f.Path,
+				Description: "Source file has no _test.go in its directory within the change set — code lands without test coverage",
+				Suggestion:  "Add a _test.go covering this file, or include the updated existing test file in the change",
+			})
+		}
+		if enabled["no-missing-error-test"] {
+			matches := errorReturnFuncRe.FindAllSubmatch(f.Content, -1)
+			var untested []string
+			for _, m := range matches {
+				name := string(m[1])
+				if !strings.Contains(testText, name) || !testsMentionErrors {
+					untested = append(untested, name)
+				}
+			}
+			if len(untested) > 0 {
+				const maxNames = 5
+				shown := untested
+				if len(shown) > maxNames {
+					shown = shown[:maxNames]
+				}
+				desc := fmt.Sprintf("Error-returning functions without an error-path test in the change set: %s", strings.Join(shown, ", "))
+				if len(untested) > maxNames {
+					desc = fmt.Sprintf("%s (+%d more)", desc, len(untested)-maxNames)
+				}
+				findings = append(findings, Finding{
+					RuleID:      "no-missing-error-test",
+					Category:    CatTestCoverage,
+					Severity:    SevMajor,
+					File:        f.Path,
+					Description: desc,
+					Suggestion:  "Add tests that exercise the error paths of these functions (assert on the returned error)",
+					Evidence:    strings.Join(shown, ", "),
+				})
+			}
+		}
+	}
+	return findings
 }
 
 // securityRuleIDs lists the rule IDs that detect real security vulnerabilities.
@@ -660,14 +763,14 @@ func missingTestFileRule() Rule {
 		Severity: SevMajor, Enabled: true,
 		Description: "Source files without corresponding test files lack coverage",
 		Check: func(file string, content []byte) []Finding {
-			if isTestFile(file) || !isGoFile(file) {
-				return nil
-			}
-			// This rule fires on each file individually — the caller should
-			// check whether a corresponding _test.go file exists in the input set.
-			// We flag it as info here; the validator integration should promote severity
-			// based on whether tests actually exist.
-			return nil // Handled at integration level, not per-file
+			// Cross-file rule: a per-file check cannot know whether a
+			// _test.go exists elsewhere in the change set. The actual
+			// findings are produced by crossFileTestCoverageFindings,
+			// which Validate/ValidateWithCriteria run after the
+			// per-file phase. This Rule entry remains the
+			// enable/disable registry handle (EnableRule) so
+			// RulesApplied stays honest.
+			return nil
 		},
 	}
 }
@@ -1031,27 +1134,26 @@ func missingAuthCheckRule() Rule {
 
 // --- Gate 3: Test quality (additional rules) ---
 
+// errorReturnFuncRe matches Go function declarations that return an error.
+// Shared by crossFileTestCoverageFindings (the integration-level pass that
+// actually produces "no-missing-error-test" findings).
+var errorReturnFuncRe = regexp.MustCompile(`func\s+(\w+)\([^)]*\)\s*(?:\([^)]*error[^)]*\)|error)\s*\{`)
+
 // missingErrorTestRule flags functions that return errors but have no test exercising the error path.
 func missingErrorTestRule() Rule {
-	errorReturnFunc := regexp.MustCompile(`func\s+(\w+)\([^)]*\)\s*(?:\([^)]*error[^)]*\)|error)\s*\{`)
 	return Rule{
 		ID: "no-missing-error-test", Name: "Error-returning functions must have error path tests", Category: CatTestCoverage,
 		Severity: SevMajor, Enabled: true,
 		Description: "Functions returning errors should have tests that exercise the error path",
 		Check: func(file string, content []byte) []Finding {
-			// This rule only applies to Go source files (not test files themselves)
-			if !isGoFile(file) || isTestFile(file) {
-				return nil
-			}
-			matches := errorReturnFunc.FindAllSubmatch(content, -1)
-			if len(matches) == 0 {
-				return nil
-			}
-			// This is a per-file heuristic: we flag functions with error returns.
-			// The caller's integration layer should cross-reference with _test.go files
-			// to check if both the function name AND err/Error appear in the test.
-			// At the single-file level, we simply flag the function signature for awareness.
-			return nil // Handled at integration level (cross-file), not per-file
+			// Cross-file rule: error-path coverage requires reading the
+			// _test.go files elsewhere in the change set. The actual
+			// findings are produced by crossFileTestCoverageFindings
+			// (using errorReturnFuncRe), which Validate/
+			// ValidateWithCriteria run after the per-file phase. This
+			// Rule entry remains the enable/disable registry handle
+			// (EnableRule) so RulesApplied stays honest.
+			return nil
 		},
 	}
 }
