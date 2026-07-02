@@ -11,9 +11,15 @@ ci: build test vet lint-chdir
 # Build all binaries. Primary is ./cmd/r1; ./cmd/r1-acp is
 # the Agent Client Protocol adapter (S-U-002). Outputs land in
 # ./bin/ so build artifacts do not clutter the repo root.
+# VERSION is derived from git for release-quality binaries; a plain
+# `go build` still self-identifies via the embedded VCS revision
+# (see cmd/r1/version.go). Override on the command line for a pinned build.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION_LDFLAGS := -X main.version=$(VERSION)
+
 build:
 	mkdir -p bin
-	go build -tags sqlite_fts5 -o ./bin/r1 ./cmd/r1
+	go build -tags sqlite_fts5 -ldflags "$(VERSION_LDFLAGS)" -o ./bin/r1 ./cmd/r1
 	go build -o ./bin/r1-acp ./cmd/r1-acp
 
 # Run all tests. Depends on test-fts5 so the sqlite_fts5-gated

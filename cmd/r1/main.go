@@ -93,7 +93,10 @@ import (
 	"github.com/RelayOne/r1/internal/worktree"
 )
 
-// version is set at build time via ldflags.
+// version is overridden at build time via ldflags
+// (-X main.version=...; see the Makefile release/binaries targets and
+// resolveVersion in version.go, which falls back to the embedded VCS
+// revision when this is left at "dev").
 var version = "dev"
 var fatalReporter *r1coderadar.Client
 
@@ -1009,8 +1012,10 @@ func main() {
 		// STOKE-010 episodic→semantic consolidation pass over the tiered
 		// memory Router.
 		os.Exit(runMemoryCmd(os.Args[2:], os.Stdout, os.Stderr))
-	case "version", "--version", "-v":
-		fmt.Println(version)
+	case "--version", "-v":
+		fmt.Println(resolveVersion())
+	case "version":
+		fmt.Println(versionDetail())
 	case "help", "--help", "-h":
 		usage()
 	default:
