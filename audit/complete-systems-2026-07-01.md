@@ -248,13 +248,13 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **internal/bridge (V1→V2 bus/ledger adapters) has zero importers, contradicting CLAUDE.md design decision #28**
 - Evidence: internal/bridge/doc.go:1-5: "Package bridge wires v1 runtime components into the v2 bus and ledger... The supervisor's rules subscribe to these events for governance enforcement." go list + repo-wide grep for CostBridge/VerifyBridge/WisdomBridge/AuditBridge find no reference outside internal/bridge itself (452 LOC + 366 test). CLAUDE.md:208 ("28. V2 bridge adapters: v1 cost/verify/wisdom/audit emit bus events + write ledger nodes via bridge package") claims this is live wiring. Since nothing constructs the bridges, cost.recorded / verify / wisdom / audit bus events are never emitted and the su…
 - Fix: Wire the bridges at the existing construction seams: in the orchestrator path that already has (or can be handed) the durable bus + ledger — cmd/r1 constructs both in multiple commands — instantiate NewVerifyBridge alongside verify.NewPipeline (internal/app/app.go:316), and NewCostBridge/NewWisdomBridge/NewAuditBridge where costtrack/wisdom/audit components are created, then route v1 calls through the bridge wrappers so cost.recorded, verify.started/completed, wisdom.learning.recorded, and audit.completed actually reach the bus and ledger. Add one integration test asserting an event of each to…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 30f65972)
 
 ### A038 [partial-wiring/M] internal/remote/session.go:108
 **internal/remote: SessionReporter.Update is never called — 'live monitoring' pushes registration and final completion but zero progress snapshots**
 - Evidence: The package doc claims 'reports build session progress to the Ember dashboard for live monitoring' and Update (session.go:108) is the progress push. But the only production usages are cmd/r1/main.go:151-161: RegisterSession at startup and a deferred Complete at exit. grep for 'SessionUpdate{' or 'TaskProgress{' outside internal/remote returns nothing — no code ever constructs a progress snapshot, so TaskProgress, SessionUpdate, BurstWorkers, and the whole Update path (plus SessionID()/WebURL() helpers) are dead. A dashboard viewer sees a session appear and then nothing until it completes.
 - Fix: In cmd/r1/main.go runBuild, when reporter != nil, register a hub.ModeObserve subscriber on the existing eventBus (alongside hub.FlowTrackObserver) for EventTaskStarted/EventTaskCompleted/EventTaskFailed (and cost events if available). The subscriber maintains a mutex-guarded map[taskID]remote.TaskProgress plus running total cost, and pushes reporter.Update(remote.SessionUpdate{PlanID: cfg.PlanPath, Tasks: snapshot, TotalCostUSD: total}) from a single goroutine fed by a bounded channel (mirror internal/hub/builtin/analytics_subscriber.go's non-blocking pattern, since the reporter's HTTP client …
-- STATUS: PENDING
+- STATUS: FIXED (commit: 1f97aa42)
 
 ### A039 [partial-wiring/M] internal/studioclient/doc.go:1
 **Actium Studio integration is dormant on both sides: studioclient (1,196 LOC) unimported and config.LoadStudioConfig has zero callers**
@@ -344,25 +344,25 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Lane event pipeline dead-ends: LaneSubscription::ingest never called, so subscribed WebView channels receive zero events**
 - Evidence: `#[allow(dead_code)] // audit/scan-rust-stubs.md #10: pending transport ingestion` on `pub async fn ingest` (lanes.rs:254-255) and on LaneBuffer/LaneSink (:126, :212). ipc.rs:706-717 registers a ChannelSink in LanesState per subscription, but no production code ever feeds it (subprocess.rs has no LanesState reference; it emits only session://* and r1://events, subprocess.rs:486-488). LaneSidebar, lane-rail.ts and popout.tsx therefore never render a lane event in a real run.
 - Fix: Three parts, all in-repo: (a) add session.lanes.subscribe/unsubscribe (and lanes list/kill as needed) handling to cmd/r1/desktop_rpc_cmd.go dispatch so the RPC stops returning method_not_found — return a daemon-side subscription_id and start pushing lane.* server events over stdout; (b) in subprocess.rs, route lane.* events from the stdout reader / forward_event into LanesState via app.state::<crate::lanes::LanesState>(), converting the RpcResponse payload into lanes::LaneEvent and calling LaneSubscription::ingest for every subscription whose session_id matches (LanesState is keyed by subscrip…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 77418806)
 
 ### A053 [dormant/M] desktop/src/panels/daemon-status.ts:155
 **Daemon-status pill listens for daemon.up/daemon.down that nothing emits and ignores the app_discovery_status verb built for it — pill shows 'Offline (starting)' forever**
 - Evidence: `await listen<DaemonUpPayload>("daemon.up", ...)` (:155) / `"daemon.down"` (:166); grep of src-tauri shows the only emits are menu:// topics, session://started/ended and r1://events (subprocess.rs:253,271,487-488) — no daemon.up/down anywhere. Meanwhile ipc.rs:524-529 registers `app_discovery_status` whose doc says it "Backs the React DaemonStatus banner", but no TS file calls it (grep: zero hits).
 - Fix: Two complementary changes: (1) In desktop/src-tauri/src/main.rs setup_discovery, after s.set_handle(handle) emit app_handle.emit("daemon.up", {url, mode}) and after s.set_error(..) emit app_handle.emit("daemon.down", {reason, will_retry:false}), matching the DaemonUpPayload/DaemonDownPayload shapes already defined in daemon-status.ts:105-116. (2) In mountDaemonStatus (desktop/src/panels/daemon-status.ts), after registering listeners, invoke("app_discovery_status") once and map the DaemonStatusSnapshot (connected/pending/url/mode/error, discovery_state.rs:141-153) onto the pill via the existing…
-- STATUS: PENDING
+- STATUS: FIXED (commit: eefd5407)
 
 ### A054 [dormant/M] desktop/src/panels/settings.ts:748
 **Settings → Auto-start claims 'host handlers not present' while tauri-plugin-autostart is registered and a complete autostart.ts module sits uncalled**
 - Evidence: renderAutostart renders "Auto-start probing and toggles require host handlers that are not present in this build" (:754), but main.rs:48-51 registers `tauri_plugin_autostart::init(...)` with a comment saying it backs "Settings → Auto-start (item 27/29)", and desktop/src/lib/autostart.ts implements getAutostart/setAutostart/reconcileAutostart end-to-end. Grep shows no production caller of any of the three; reconcileAutostart's doc "Called once at app start" (autostart.ts:128-130) is false.
 - Fix: 1) settings.ts renderAutostart: replace the "unavailable" block with a real checkbox bound to getAutostart()/setAutostart() from src/lib/autostart.ts, showing desired vs actual (drift) state and surfacing AutostartResult.error. 2) Call reconcileAutostart() once from main.ts mount() (fire-and-forget with error log) so the :128 doc comment becomes true. 3) Add to desktop/src-tauri/capabilities/default.json: "autostart:allow-enable", "autostart:allow-disable", "autostart:allow-is-enabled", plus store permissions ("store:default" or allow-load/get/set/save) — without these the plugin invokes fail …
-- STATUS: PENDING
+- STATUS: FIXED (commit: bad820c2)
 
 ### A055 [dormant/M] internal/bridge/cost.go:44
 **internal/bridge: all four V2 bridge adapters have zero production callers — package is fully dormant despite CLAUDE.md decision #28 claiming they are wired**
 - Evidence: grep for 'RelayOne/r1/internal/bridge"' across the repo returns NO importers outside internal/bridge itself, and grep for 'NewCostBridge|NewVerifyBridge|NewWisdomBridge|NewAuditBridge' outside internal/bridge returns nothing (only bridge_test.go constructs them). Yet CLAUDE.md design decision 28 states 'V2 bridge adapters: v1 cost/verify/wisdom/audit emit bus events + write ledger nodes via bridge package' and internal/bridge/doc.go documents cost.recorded/verify.started/wisdom.learning.recorded/audit.completed events as live. None of these events is ever published in a real run because no pro…
 - Fix: Two acceptable resolutions, pick one: (A) Wire the bridges where the V2 bus+ledger runtime is bootstrapped in cmd/r1 (the same paths that call bus.New/ledger.Open, e.g. main.go / mcp_serve_runtime.go): when governance (bus+ledger) is enabled, construct bridge.NewCostBridge instead of the bare costtrack.NewTracker at cmd/r1/main.go:334 (and route run_cmd.go:49 / main.go:1140 trackers through it), wrap the verify pipeline invocation with bridge.NewVerifyBridge, and back wisdom/audit recording with NewWisdomBridge/NewAuditBridge, with a test asserting a real run publishes cost.recorded and writes…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 74d1a28e)
 
 ### A056 [dormant/M] internal/cicd/github/github.go:1
 **CI/CD runtime adapters internal/cicd/{github,gitlab,bitbucket,shared} (~2,450 LOC + 2,260 test) are dormant**
@@ -376,7 +376,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Policy.Cortex lobe enable/privacy flags (cortex: block) are parsed but have zero consumers — lobes are hardcoded in both construction sites**
 - Evidence: policy.go:456-460 parses the `cortex:` YAML block into p.Cortex (CortexConfig/LobeFlags, internal/config/schema.go:24-63, including the MemoryCurator privacy switches AutoCurateCategories/SkipPrivateMessages billed as the specs/cortex-concerns.md §Privacy & Opt-Out surface). grep for CortexConfig/`.Cortex.Lobes` outside internal/config finds only tests. Both production lobe constructions hardcode the lobe list and never consult the policy: internal/engine/native_runner.go:626-631 (memoryrecall, walkeeper, rulecheck, antitrunc) and cmd/r1/mcp_serve_runtime.go:119-122. An operator setting `corte…
 - Fix: Honor the per-lobe enabled flags at both construction sites, with presence detection to preserve default-on. (1) Change LobeFlag.Enabled (and MemoryCuratorFlag.Enabled) to *bool in internal/config/schema.go, or have parseCortexBlock return a blockPresent bool — required because an absent cortex: block yields zero-value all-false flags, and naively honoring them would disable every lobe for deployments without a cortex: block, breaking the default-on contract (specs/cortex-activation.md, schema_test default profile). Semantics: nil/absent = default (deterministic lobes on), explicit false = off…
-- STATUS: PENDING
+- STATUS: FIXED (commit: c120c0a5)
 
 ### A058 [dormant/L] internal/config/policy.go:246
 **Policy.Honesty (HonestyConfig, 8 fields) is parsed but never read; the entire hub/builtin/honesty subscriber package is never registered; a YAML honesty: section fails policy load**
@@ -388,19 +388,19 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Policy.Skills (SkillsConfig) is parsed/defaulted but never read anywhere; skill budgets are hardcoded and a YAML skills: section fails policy load**
 - Evidence: SkillsConfig (policy.go:286-293: Enabled, AlwaysOn, AutoDetect, TokenBudget, ResearchFeed, Excluded) has zero consumers outside internal/config: the only references are DefaultSkillsConfig and normalizePolicy's own defaulting (policy.go:562-563). Actual skill injection ignores it: internal/workflow/workflow.go:2019 and :2041 call `reg.InjectPromptBudgeted(prompt, e.StackMatches, 3000)` with a hardcoded 3000 budget; cmd/r1/sow_native.go:4223 hardcodes 6000. AlwaysOn, Excluded and ResearchFeed are read by nothing. hub/builtin/skill_injector.go:50 SkillInjector (which does have a TokenBudget fiel…
 - Fix: Minimal honest wiring, all in-repo: (1) In internal/workflow/workflow.go, replace the two hardcoded 3000s (lines 2019, 2041) with a helper that reads e.Policy.Skills — return the prompt unmodified when !e.Policy.Skills.Enabled, use e.Policy.Skills.TokenBudget (falling back to 3000 if 0) as the budget; Engine.Policy already exists at workflow.go:110 so no plumbing changes needed. (2) Honor Excluded by filtering selections in skill.Registry.InjectPromptBudgetedForDir (add an exclusion list parameter or registry setter). (3) Add a 'case section == "skills": continue' skip in parsePolicyYAML mirro…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 92141051)
 
 ### A060 [dormant/M] internal/convergence/validator.go:670
 **Two enabled SevMajor convergence rules always return nil — advertised test-coverage gates never fire**
 - Evidence: missingTestFileRule (ID "missing-test-file", Severity: SevMajor, Enabled: true) ends `return nil // Handled at integration level, not per-file` (line 670), and missingErrorTestRule (ID "no-missing-error-test", SevMajor, Enabled: true) ends `return nil // Handled at integration level (cross-file), not per-file` (line 1054). Grep for any integration-level handling of these rule IDs finds only these two comments — no cross-file promotion exists anywhere in internal/convergence. The adversarial self-audit therefore silently skips both checks while counting them among its enabled gates.
 - Fix: In internal/convergence/validator.go, add an integration-phase pass crossFileTestCoverageFindings(files []FileInput, enabled map[string]bool) []Finding, called from both Validate (after line 198 wg.Wait()) and ValidateWithCriteria (after line 244), gated on the rule IDs being enabled so EnableRule() still works. For "missing-test-file": for each non-test .go file in the input set, emit a SevMajor CatTestCoverage finding if no _test.go exists in the same directory within the set. For "no-missing-error-test": collect error-returning function names via the existing errorReturnFunc regex, concaten…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 6aebb1fb)
 
 ### A061 [dormant/M] internal/cortex/budget.go:108
 **Cortex BudgetTracker 30% lobe-output cap is collected but never enforced (Charge/Exceeded/ResetRound have zero production callers)**
 - Evidence: budget.go:64-70 documents the enforcement contract: 'its runOnce path consults this tracker after a successful Acquire. When Exceeded() reports true the runner Releases the slot and emits cortex.lobe.budget_skipped'. LobeRunner has no tracker field and runOnce (lobe.go:249-291) never consults it. Grep across cmd/ + internal/ (tests excluded) shows Charge/Exceeded/ResetRound/RoundOutputBudget are referenced only inside budget.go itself. Cortex.Start registers a hub subscriber feeding RecordMainTurn (cortex.go:383-402), so data flows in but the cap gates nothing — LLM lobes can spend unbounded o…
 - Fix: Wire the enforcement half per spec item 21: (1) add a tracker *BudgetTracker field to LobeRunner and a parameter to NewLobeRunner (lobe.go:152); pass c.tracker at the construction site cortex.go:233. (2) In runOnce (lobe.go:276-286), for KindLLM after a successful Acquire, if tracker != nil && tracker.Exceeded() then return early (the deferred sem.Release() frees the slot) after emitting a "cortex.lobe.budget_skipped" hub event with the lobe ID — matching the spec's Acquire-then-check ordering (cortex-core.md line 774, gotcha 7). (3) Call c.tracker.ResetRound() at the top of Cortex.MidturnNote…
-- STATUS: PENDING
+- STATUS: FIXED (commit: d72c1a43)
 
 ### A062 [dormant/M] internal/cortex/interrupt.go:571
 **Drop-partial interrupt + Router subsystem is production-dead, and its history converter silently discards all message content**
@@ -432,7 +432,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **internal/ledger/loops (7-state consensus loop tracker) is dormant — supervisor consensus rules never use it**
 - Evidence: internal/ledger/loops/loops.go:1-4: "Package loops provides query helpers for consensus loop state tracking... Their state transitions are driven by supervisor rules." go list shows zero importers (387 LOC + 497 test). grep of internal/supervisor (including supervisor/rules/consensus) finds no reference to ledger/loops. CLAUDE.md:23 lists it as the V2 "7-state consensus loop tracker", implying the consensus pipeline uses it.
 - Fix: Note: finder's suggested `loops.CurrentState` does not exist; the API is Tracker.Get/IsConverged/TransitionState. Two options. Option A (wire it, preferred): (1) unify the loop content schema — align loops.loopContent (loops.go:73-80, "artifact_id") with the registered nodes.Loop (nodes/loop.go:13, "artifact_ref") and reconcile loop-type values ("refactor" vs "refactor_proposal"); (2) replace the manual mission-wide Query + strings.Contains scan in supervisor/rules/consensus/convergence_detected.go Evaluate() with loops.Tracker.IsConverged, agreeing on one agree/dissent detection mechanism (ed…
-- STATUS: PENDING
+- STATUS: FIXED (commit: a7ee66a4)
 
 ### A067 [dormant/M] internal/lsp/client/client.go:1
 **internal/lsp/client (613 LOC, T-R1P-020 multi-language LSP client) is dormant**
@@ -570,7 +570,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Settings Providers panel fabricates inventory: hardcoded SEED_PROVIDERS with invented 'configured'/'needs_key' statuses**
 - Evidence: `const SEED_PROVIDERS: ProviderRow[] = [{ id: "claude", ... status: "configured" }, ... { id: "ollama", ... status: "configured" }]` (:91-132) is loaded into state (:185) and rendered as the Providers "inventory" (:393-411). The statuses are pure fiction — nothing probes keys or endpoints — in a panel whose sibling sections were deliberately downgraded to truthful-unavailable.
 - Fix: In desktop/src/panels/settings.ts: (a) remove the fabricated status pill and Default/Available badge from renderProviderRow, keeping the name/endpoint/model catalog, and extend the providers-unavailable banner to state the rows are static defaults not probed from the host; or (b) make them truthful — export a hasLocalKey(providerId) helper (LOCAL_API_KEY_PREFIX slot check) and the selected-provider getter from onboarding.ts, derive status = key-present ? "configured" : "needs_key" (keyless ollama stays endpoint-unprobed and should say "not probed") and is_default from the onboarding choice. Ad…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 6bf336b0)
 
 ### A087 [stub/M] services/r1-coord-api/main.go:180
 **License verification endpoint is shape-only (any 8+ char key is valid) and its doc comment contradicts the code**
@@ -624,13 +624,13 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **transport.rs reconnect run-loop and transport_reconnect_status verb are mutually dormant; cost_get_history has no caller**
 - Evidence: `#[allow(dead_code)] // ... driven by future setup() hook` on run_with (:352-353) plus 8 more dead_code markers (:283,:287,:295,:309,:317,:328,:333); ipc.rs transport_reconnect_status just sends one hardcoded `Connected` frame (:561-563) and no TS code invokes it (grep: zero hits). cost_get_history (ipc.rs:327) likewise has zero WebView callers. Host and WebView each wait for the other side to wire up.
 - Fix: Minimal honest fix, all in-repo: (a) subscribe the daemon-status pill to transport_reconnect_status via a tauri Channel in mountDaemonStatus (desktop/src/panels/daemon-status.ts), using stream frames to fill attempt/nextInMs instead of the hardcoded 0/250; (b) spawn TransportHandle::run_with from main.rs setup() feeding that channel (no-op connect closure until the daemon WS path lands), removing the 9 dead_code markers — OR, if the WS migration is deferred, delete run_with/TransportHandle/ConnectOutcome/LifecycleRx/FrameRx and the transport_reconnect_status verb, and rewrite the transport.rs …
-- STATUS: PENDING
+- STATUS: FIXED (commit: 1f68808d)
 
 ### A096 [dormant/M] internal/app/app.go:86
 **Write-only observability still open: telemetry.Collector is never constructed in any production path, and the flowtrack tracker is registered but never read back**
 - Evidence: app.go:86 `Telemetry *telemetry.Collector // structured metrics collector (nil = disabled)` — no non-test caller anywhere constructs telemetry.Collector or assigns this field (the `Telemetry: tel` at cmd/r1/main.go:3906 is a different type, plan.MetaRunTelemetry). cmd/r1/main.go:325-326 registers `flowtrack.NewTracker` on the event bus but `flowTracker` is never referenced again (no read-back of inferred phase). Deep-audit-2026-06-02 item 6 ("write-only observability — either render them or drop them") is unchanged at HEAD.
 - Fix: Pick one direction per subsystem. Minimal honest fix (recommended): delete RunConfig.Telemetry and the app.go:274-286 Record block; remove the flowtrack registrations at cmd/r1/main.go:325-326 and inside newEventBus (main.go:4418) — keep the flowtrack and telemetry packages plus hub.FlowTrackObserver only if reclassified in CLAUDE.md as not-yet-wired, otherwise delete them and their adapter too, and update the CLAUDE.md package map accordingly. Alternative (wire-up): construct telemetry.New() at the RunConfig sites and print Collector summary in the end-of-run report; retain the flowTracker ha…
-- STATUS: PENDING
+- STATUS: FIXED (commit: a2119b36)
 
 ### A097 [dormant/M] internal/browseragent/browseragent.go:1
 **internal/browseragent (399 LOC perceive-plan-act web agent) is dormant**
@@ -644,7 +644,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **concern.SkillCompactor declares itself 'production caller for skilltracker's EvictByCompactor surface' but has zero production callers**
 - Evidence: File header (skill_compactor.go:3-4): 'skill_compactor.go — production caller for skilltracker's EvictByCompactor surface.' Yet NewSkillCompactor (line 47) is constructed only in skill_compactor_test.go — grep for NewSkillCompactor outside internal/concern and tests returns nothing. The header itself concedes the gap: 'future callers (a skill-aware section shrinker or an explicit budget guard) call SkillCompactor.EvictForBudget' — no such caller exists, so skill eviction under token budget pressure never happens.
 - Fix: Do NOT wire EvictForBudget alone into internal/context or microcompact as the finder suggested — the tracker it snapshots is never populated in production (SkillInjector-with-Tracker is also test-only), so that wiring would evict from an always-empty table. Minimal honest fix: reword skill_compactor.go:3-4 to 'intended production caller for skilltracker's EvictByCompactor surface (wiring pending — see internal/skilltracker/tracker.go BLOCKED-PARTIAL note for issue #157)', and remove or correct the dangling 'Spec: skill-aware-compactor.md' reference (no such file in repo). Full fix (larger, spe…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 86b3da6f)
 
 ### A099 [dormant/M] internal/concern/templates/cto_snapshot_consultation.go:9
 **internal/concern/templates (9 role consultation templates, 290 LOC) reachable only from concern's own external tests**
@@ -674,13 +674,13 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **internal/contentid has zero importers even though CLAUDE.md lists it as core V2 governance and other files cite it as the ID spec**
 - Evidence: internal/contentid/contentid.go:1-3 ("content-addressed IDs used throughout Stoke") has zero importers per go list. The ledger computes its own IDs directly (internal/ledger/ledger.go:211 "computeID derives a NodeID = sha256(canonical(header) || content_commitment)") without contentid's 16 prefixes. Yet wired code cites it as authoritative: internal/ledger/pack_adopted_event.go:91 ("internal/contentid"), cmd/r1-server/share.go:22 ("spec (contentid package)"), internal/memory/scope.go:187. CLAUDE.md:19 lists contentid/ as a V2 GOVERNANCE package "used throughout Stoke".
 - Fix: Delete internal/contentid/ (package + test) since the ledger's inline computeID scheme is the real authority and contentid's prefix taxonomy matches nothing in production. Then fix the four false references: (1) cmd/r1-server/share.go:22 — replace "per the ledger spec (contentid package)" with a reference to ledger chain hashing (sha256 hex per internal/ledger computeID/chain); (2) internal/memory/scope.go:187-189 — drop the contentid claim, describe the 16-char width as a local scope_id choice; (3) internal/ledger/pack_adopted_event.go:91 — say "typically content-addressed by the caller via a…
-- STATUS: PENDING
+- STATUS: FIXED (commit: ea651a0b)
 
 ### A103 [dormant/M] internal/dispatch/queue.go:140
 **internal/dispatch queue is fully dormant: no production constructor and Process() is never called, so 'reliable delivery with retry' never runs**
 - Evidence: The only production reference is scheduler.Scheduler.DispatchQueue (scheduler.go:75-77, Enqueue at 159-168), but grep across cmd/ + internal/ (tests excluded) shows no code ever assigns DispatchQueue, calls dispatch.NewQueue, or calls Queue.Process() — the delivery/retry/backoff engine (queue.go:140-187) is unreachable. The package doc promises 'Failed deliveries are retried with exponential backoff' and 'deduplicated ... even across process restarts' (queue.go:1-9), yet nothing persists messages either (in-memory slice only), so the restart claim is also unimplementable as written.
 - Fix: Option A (preferred, honest deletion): remove internal/dispatch/ entirely, delete the DispatchQueue field and its dead block in internal/scheduler/scheduler.go (lines 75-77 and 158-168, plus the line-11 import), and drop the dispatch/ entry from the CLAUDE.md package map. Option B (wire it): at both scheduler construction sites (cmd/r1/main.go:272 and cmd/r1/main.go:1441) construct dispatch.NewQueue with a DeliverFunc forwarding to the hub/bus, assign sched.DispatchQueue, and run a time.Ticker goroutine calling Process() for the run's lifetime (stopped via the run context); if Option B, also f…
-- STATUS: PENDING
+- STATUS: FIXED (commit: d40287b5)
 
 ### A104 [dormant/S] internal/harness/models/mock.go:7
 **internal/harness/models (provider interface + MockProvider) has zero importers, including tests**
@@ -692,7 +692,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **harness.SpecAnchoredStance.ValidateCommitMsg has zero callers — spec-anchored commit enforcement never runs**
 - Evidence: grep for 'SpecAnchoredStance|ValidateCommitMsg' outside internal/harness returns nothing, and inside the package only spec_anchored_stance_test.go references it — harness.go never invokes it. The type ('requires commit messages to cite a real line from the spec', line 9-10) is a complete validator with no integration point: no hook, no workflow phase, no engine calls it before committing.
 - Fix: Delete internal/harness/spec_anchored_stance.go and spec_anchored_stance_test.go (dead-code removal), since no SpecPath plumbing exists anywhere to wire it into a commit path today. If spec-anchored commit enforcement is actually wanted, do it as a deliberate feature: add SpecPath to the task/spawn model, then call ValidateCommitMsg in the workflow merge phase before committing. Handle the three sibling dormant Tier-3 validators (internal/convergence/promise_vs_delivery.go, internal/memory/reconciler.go, internal/verify/doc_drift.go) in the same decision.
-- STATUS: PENDING
+- STATUS: FIXED (commit: dca38ca6)
 
 ### A106 [dormant/S] internal/hub/builtin/coderadar_integration_test.go:1
 **coderadar hub-integration test behind a build tag no lane invokes (Makefile only runs the different coderadar_smoke tag)**
@@ -718,7 +718,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **session.Journal is dormant and its Rotate() corrupts sequence numbering by swallowing write/close/rename errors**
 - Evidence: No production caller constructs a Journal (grep for NewJournal outside internal/session finds only tests). Within it, Rotate() ignores every error: `j.file.Write(data)` (journal.go:156), `j.file.Close()` (158), `os.Rename(j.path, segPath)` (163). If the rename fails, the code reopens the SAME path with O_APPEND and resets `j.seq = 0` (journal.go:166-171) — subsequent entries are appended to the same file with duplicate/decreasing seq values, breaking replay ordering; if OpenFile fails, j.file keeps pointing at the closed handle. Separately, countLines (journal.go:241-253) uses a default 64KB b…
 - Fix: Delete internal/session/journal.go and internal/session/journal_test.go — internal/journal is the live, doc-referenced session journal (journal.ndjson via sessionhub), and this .jsonl variant is an unwired duplicate. Deletion is preferred over repair; if the team instead wants to keep it for future wiring, then: (1) in Rotate(), check and propagate errors from j.file.Write, j.file.Close, and os.Rename, aborting rotation (keeping the old handle, path, and seq) on any failure so seq never resets against an un-renamed file; (2) give countLines the same 1MB scanner.Buffer as Replay and check scann…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 86472737)
 
 ### A110 [dormant/S] internal/skillselect/detect.go:75
 **skillselect.DetectStack + SelectSkills form a dead second detection path — production uses only DetectProfile + MatchSkills**
