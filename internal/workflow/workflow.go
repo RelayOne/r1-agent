@@ -439,6 +439,16 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	if e.Boulder != nil {
 		e.Boulder.TrackTask(name, e.Task, handle.Name)
 		e.Boulder.UpdateStatus(name, boulder.StatusInProgress)
+		// Wrap OnEvent to record activity on each agent event. Installed
+		// BEFORE the scanner goroutine starts so the goroutine never
+		// races the rebind below.
+		origOnEvent := e.OnEvent
+		e.OnEvent = func(ev stream.Event) {
+			e.Boulder.RecordActivity()
+			if origOnEvent != nil {
+				origOnEvent(ev)
+			}
+		}
 		// Background scanner: periodically check for idle agents.
 		// Track nudge count to escalate from warning to cancellation.
 		var boulderNudgeCount int
@@ -456,9 +466,12 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 					e.Boulder.Scan(time.Now(), func(taskID, msg string) bool {
 						boulderNudgeCount++
 						log.Warn("boulder nudge", "task", taskID, "message", msg, "nudge_count", boulderNudgeCount)
-						// Fire a system event so the TUI/observer sees the nudge.
-						if e.OnEvent != nil {
-							e.OnEvent(stream.Event{
+						// Fire a system event so the TUI/observer sees the
+						// nudge — via the ORIGINAL callback, so the nudge
+						// itself does not reset the idle timer it just
+						// detected.
+						if origOnEvent != nil {
+							origOnEvent(stream.Event{
 								Type:      "system",
 								DeltaText: fmt.Sprintf("[boulder] idle agent nudge #%d: %s", boulderNudgeCount, msg),
 							})
@@ -476,14 +489,6 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				}
 			}
 		}()
-		// Wrap OnEvent to record activity on each agent event.
-		origOnEvent := e.OnEvent
-		e.OnEvent = func(ev stream.Event) {
-			e.Boulder.RecordActivity()
-			if origOnEvent != nil {
-				origOnEvent(ev)
-			}
-		}
 	}
 
 	planPhase := phases[0]

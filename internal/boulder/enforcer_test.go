@@ -61,6 +61,38 @@ func TestScanNudgesIdleAgent(t *testing.T) {
 	}
 }
 
+// TestScanNudgeReentersEnforcer reproduces the production wiring where the
+// NudgeFunc calls back into the Enforcer (workflow wraps OnEvent to call
+// RecordActivity). Before Scan released the mutex around the callback this
+// self-deadlocked; the timeout guard turns a regression into a test failure
+// instead of a hung suite.
+func TestScanNudgeReentersEnforcer(t *testing.T) {
+	dir := t.TempDir()
+	cfg := DefaultConfig()
+	cfg.IdleTimeout = 10 * time.Millisecond
+	cfg.ScanInterval = 0
+	e := New(dir, cfg)
+
+	e.TrackTask("t1", "do work", "wt-1")
+
+	done := make(chan int, 1)
+	go func() {
+		done <- e.Scan(time.Now().Add(time.Minute), func(taskID, msg string) bool {
+			e.RecordActivity() // re-enter, as the workflow OnEvent wrapper does
+			return true
+		})
+	}()
+
+	select {
+	case sent := <-done:
+		if sent != 1 {
+			t.Errorf("expected 1 nudge, got %d", sent)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Scan deadlocked when NudgeFunc re-entered the Enforcer")
+	}
+}
+
 func TestScanRespectsMaxNudges(t *testing.T) {
 	dir := t.TempDir()
 	cfg := DefaultConfig()
