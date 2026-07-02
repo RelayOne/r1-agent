@@ -196,7 +196,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Rust host round-trips 6 verbs (session.lanes.*, session.set_workdir, daemon.status/shutdown) the Go subprocess never routes**
 - Evidence: dispatch() has no cases for session.lanes.list/subscribe/unsubscribe/kill, session.set_workdir, daemon.status, daemon.shutdown → `default: s.writeError(req.ID, -32601, "method_not_found"...)`. ipc.rs sends exactly those strings (ipc.rs:648 "session.lanes.list", :696 "session.lanes.subscribe", :793 "session.lanes.kill", :822 "session.set_workdir", :845 "daemon.status", :876 "daemon.shutdown"). The daemon API uses different names anyway (internal/server/jsonrpc/daemonapi.go:343 "lanes.list", :350 "lanes.kill", :366 "daemon.info") — verb-name drift between the two Go surfaces and the Rust host.
 - Fix: Three-part in-repo fix: (1) Extend internal/desktopapi Handler + NotImplemented with the six verb methods (SessionLanesList/Subscribe/Unsubscribe/Kill, SessionSetWorkdir, DaemonStatus, DaemonShutdown) using the request/response shapes already specified in desktop/IPC-CONTRACT.md §2.7-2.8, and add the six dispatch cases in cmd/r1/desktop_rpc_cmd.go so they return -32010 not_implemented per the scaffold contract (restoring the documented "coming soon" degradation instead of -32601). (2) Reconcile verb naming with internal/server/jsonrpc/daemonapi.go before the WS transport switch: either registe…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 9b9224cf)
 
 ### A030 [partial-wiring/M] cmd/r1/retention_policy.go:48
 **--retention-permanent flag is a no-op: setRetentionPolicy validates and discards the policy; no retention enforcement exists in cmd/r1**
