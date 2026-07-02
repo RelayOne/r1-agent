@@ -527,6 +527,21 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		e.CostTracker.Record(planRunner, e.Task+"/plan", planResult.Tokens.Input, planResult.Tokens.Output, planResult.Tokens.CacheRead, planResult.Tokens.CacheCreation)
 	}
 
+	// P1: thread the plan-phase output into the execute prompt. The plan
+	// phase runs a full agent turn but its result was previously consumed
+	// ONLY in PlanOnly mode — every task paid plan cost for zero effect on
+	// execution. Capture it unconditionally into Result.PlanOutput and
+	// build a bounded plan block that is prepended to the execute prompt on
+	// EVERY attempt (attempt 1 verbatim, retries via buildRetryPrompt's
+	// originalPrompt) so the executor works from the vetted decomposition.
+	result.PlanOutput = planResult.ResultText
+	var planContext string
+	if planText := strings.TrimSpace(planResult.ResultText); planText != "" {
+		// Cap to ~4k tokens so a verbose plan cannot crowd out the task.
+		capped, _ := tokenest.TruncateToFit(planText, 4000, tokenest.ContentMixed)
+		planContext = "\n\n## Implementation plan (from plan phase)\n" + capped
+	}
+
 	// Checkpoint after plan phase completion.
 	cpStore.Save(checkpoint.Checkpoint{
 		ID: checkpoint.IdempotencyKey(name, 1, 0), TaskID: name,
@@ -538,7 +553,6 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	// --- PLAN-ONLY MODE: structurally prevents execute/verify/commit/merge ---
 	// This is not a prompt instruction. The harness does not call execute.
 	if e.PlanOnly {
-		result.PlanOutput = planResult.ResultText
 		e.Worktrees.Cleanup(ctx, handle)
 		return result, nil
 	}
@@ -596,8 +610,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			result.Branch = handle.Branch
 		}
 
-		// Build execute prompt
-		prompt := executePhase.Prompt
+		// Build execute prompt. P1: the plan block rides on the base
+		// prompt so it is present on attempt 1 and, because
+		// buildRetryPrompt re-emits its originalPrompt argument, on every
+		// retry as well.
+		prompt := executePhase.Prompt + planContext
 		if attempt > 1 && lastFailure != nil {
 			prompt = buildRetryPrompt(prompt, attempt, lastFailure, lastDiff, handle.Path)
 			// Invoke BeforeRetry hooks for additional prompt augmentation

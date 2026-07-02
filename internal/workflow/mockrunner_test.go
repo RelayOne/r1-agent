@@ -30,6 +30,11 @@ type mockRunner struct {
 	ExecuteSubtype string
 	// Calls tracks how many times Run was called per phase name.
 	Calls map[string]int
+	// Prompts records the spec.Prompt observed on each Run call, keyed by
+	// phase name (appended in call order). Lets tests assert on what the
+	// harness actually handed the runner — e.g. that the execute prompt
+	// carries the plan-phase output (P1) or the ranked repomap (P2).
+	Prompts map[string][]string
 }
 
 func newMockRunner() *mockRunner {
@@ -52,6 +57,7 @@ func newMockRunner() *mockRunner {
 }`,
 		FilesToWrite: map[string]string{},
 		Calls:        map[string]int{},
+		Prompts:      map[string][]string{},
 	}
 }
 
@@ -66,6 +72,9 @@ func (m *mockRunner) Prepare(spec engine.RunSpec) (engine.PreparedCommand, error
 func (m *mockRunner) Run(ctx context.Context, spec engine.RunSpec, onEvent engine.OnEventFunc) (engine.RunResult, error) {
 	phase := spec.Phase.Name
 	m.Calls[phase]++
+	if m.Prompts != nil {
+		m.Prompts[phase] = append(m.Prompts[phase], spec.Prompt)
+	}
 
 	// Emit a realistic start event
 	if onEvent != nil {
