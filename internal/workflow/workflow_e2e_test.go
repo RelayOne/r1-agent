@@ -60,7 +60,7 @@ func TestE2EWorkflowSuccess(t *testing.T) {
 
 	wf := Engine{
 		RepoRoot:       repo,
-		Task:           "Add user authentication",
+		Task:           "Investigate the session model and add user authentication with token refresh, updating middleware, storage, and tests",
 		TaskType:       model.TaskTypeRefactor,
 		WorktreeName:   "e2e-test",
 		AuthMode:       engine.AuthModeMode1,

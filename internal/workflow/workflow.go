@@ -31,6 +31,7 @@ import (
 	"github.com/RelayOne/r1/internal/hooks"
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/intent"
+	planpkg "github.com/RelayOne/r1/internal/plan"
 	"github.com/RelayOne/r1/internal/jsonutil"
 	"github.com/RelayOne/r1/internal/logging"
 	"github.com/RelayOne/r1/internal/microcompact"
@@ -496,54 +497,73 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	}
 
 	planPhase := phases[0]
-	e.emitEvent(ctx, &hub.Event{
-		Type:   hub.EventMissionPlanStart,
-		TaskID: name, Phase: "plan",
-		Lifecycle: &hub.LifecycleEvent{Entity: "task", State: "plan_start"},
-	})
-	planRunner, planEngine := pickRunner(e, planPhase.Name)
-	planSpec := e.buildSpec(planPhase, handle)
-	planResult, err := planEngine.Run(execCtx, planSpec, e.OnEvent)
-	if err != nil {
-		_ = e.advanceState(taskstate.Failed, "plan phase failed: "+err.Error())
-		// Clean up the prepared worktree so failed-plan runs
-		// don't leak .stoke/worktrees/<name> directories + git
-		// worktree metadata. Other error paths in this function
-		// already do this; the plan-phase path missed it.
-		if !e.DryRun && e.Worktrees != nil {
-			e.Worktrees.Cleanup(ctx, handle)
-		}
-		return result, fmt.Errorf("plan phase: %w", err)
-	}
-	result.Steps = append(result.Steps, StepResult{Phase: "plan", Engine: planRunner, Command: planResult.Prepared})
-	result.TotalCostUSD += planResult.CostUSD
-	e.emitEventAsync(&hub.Event{
-		Type:   hub.EventMissionPlanDone,
-		TaskID: name, Phase: "plan",
-		Model: &hub.ModelEvent{
-			Provider:     planRunner,
-			InputTokens:  planResult.Tokens.Input,
-			OutputTokens: planResult.Tokens.Output,
-			CostUSD:      planResult.CostUSD,
-		},
-	})
-	if e.CostTracker != nil && planResult.CostUSD > 0 {
-		e.CostTracker.Record(planRunner, e.Task+"/plan", planResult.Tokens.Input, planResult.Tokens.Output, planResult.Tokens.CacheRead, planResult.Tokens.CacheCreation)
-	}
-
-	// P1: thread the plan-phase output into the execute prompt. The plan
-	// phase runs a full agent turn but its result was previously consumed
-	// ONLY in PlanOnly mode — every task paid plan cost for zero effect on
-	// execution. Capture it unconditionally into Result.PlanOutput and
-	// build a bounded plan block that is prepended to the execute prompt on
-	// EVERY attempt (attempt 1 verbatim, retries via buildRetryPrompt's
-	// originalPrompt) so the executor works from the vetted decomposition.
-	result.PlanOutput = planResult.ResultText
+	// SOTA gap #3: gate the always-on plan phase on task complexity.
+	// SWE-bench evidence (Agentless, OpenHands) shows a separate planning
+	// pass helps on genuinely multi-step work but adds a full agent turn
+	// of latency + cost with no benefit on trivial/clear-scope edits — the
+	// plan phase previously ran for EVERY task. Classify via the existing
+	// intent heuristic and skip planning for trivial/simple tasks; keep it
+	// for moderate/complex work (and always when the caller asked for a
+	// plan via --plan-only).
 	var planContext string
-	if planText := strings.TrimSpace(planResult.ResultText); planText != "" {
-		// Cap to ~4k tokens so a verbose plan cannot crowd out the task.
-		capped, _ := tokenest.TruncateToFit(planText, 4000, tokenest.ContentMixed)
-		planContext = "\n\n## Implementation plan (from plan phase)\n" + capped
+	shouldPlan := e.PlanOnly || taskComplexity(e.Task).ShouldPlan()
+	if shouldPlan {
+		e.emitEvent(ctx, &hub.Event{
+			Type:   hub.EventMissionPlanStart,
+			TaskID: name, Phase: "plan",
+			Lifecycle: &hub.LifecycleEvent{Entity: "task", State: "plan_start"},
+		})
+		planRunner, planEngine := pickRunner(e, planPhase.Name)
+		planSpec := e.buildSpec(planPhase, handle)
+		planResult, err := planEngine.Run(execCtx, planSpec, e.OnEvent)
+		if err != nil {
+			_ = e.advanceState(taskstate.Failed, "plan phase failed: "+err.Error())
+			// Clean up the prepared worktree so failed-plan runs
+			// don't leak .stoke/worktrees/<name> directories + git
+			// worktree metadata. Other error paths in this function
+			// already do this; the plan-phase path missed it.
+			if !e.DryRun && e.Worktrees != nil {
+				e.Worktrees.Cleanup(ctx, handle)
+			}
+			return result, fmt.Errorf("plan phase: %w", err)
+		}
+		result.Steps = append(result.Steps, StepResult{Phase: "plan", Engine: planRunner, Command: planResult.Prepared})
+		result.TotalCostUSD += planResult.CostUSD
+		e.emitEventAsync(&hub.Event{
+			Type:   hub.EventMissionPlanDone,
+			TaskID: name, Phase: "plan",
+			Model: &hub.ModelEvent{
+				Provider:     planRunner,
+				InputTokens:  planResult.Tokens.Input,
+				OutputTokens: planResult.Tokens.Output,
+				CostUSD:      planResult.CostUSD,
+			},
+		})
+		if e.CostTracker != nil && planResult.CostUSD > 0 {
+			e.CostTracker.Record(planRunner, e.Task+"/plan", planResult.Tokens.Input, planResult.Tokens.Output, planResult.Tokens.CacheRead, planResult.Tokens.CacheCreation)
+		}
+
+		// P1: thread the plan-phase output into the execute prompt. The plan
+		// phase runs a full agent turn but its result was previously consumed
+		// ONLY in PlanOnly mode — every task paid plan cost for zero effect on
+		// execution. Capture it unconditionally into Result.PlanOutput and
+		// build a bounded plan block that is prepended to the execute prompt on
+		// EVERY attempt (attempt 1 verbatim, retries via buildRetryPrompt's
+		// originalPrompt) so the executor works from the vetted decomposition.
+		result.PlanOutput = planResult.ResultText
+		if planText := strings.TrimSpace(planResult.ResultText); planText != "" {
+			// Cap to ~4k tokens so a verbose plan cannot crowd out the task.
+			capped, _ := tokenest.TruncateToFit(planText, 4000, tokenest.ContentMixed)
+			planContext = "\n\n## Implementation plan (from plan phase)\n" + capped
+		}
+	} else {
+		// Plan skipped for a trivial/simple task — go straight to execute.
+		// Emit a lifecycle event so the skip is observable, not silent.
+		e.emitEventAsync(&hub.Event{
+			Type:   hub.EventMissionPlanDone,
+			TaskID: name, Phase: "plan",
+			Lifecycle: &hub.LifecycleEvent{Entity: "task", State: "plan_skipped"},
+		})
 	}
 
 	// Checkpoint after plan phase completion.
@@ -1904,6 +1924,27 @@ that states what was miswritten (e.g., "assumed foo.Bar() took 2 args
 then proceed with the fix.
 `)
 	return sb.String()
+}
+
+// taskComplexity maps the heuristic intent classification onto the
+// planning-complexity ladder (plan.Complexity). Trivial and clear-scope
+// explicit tasks are treated as simple (planning adds cost without
+// benefit); exploratory / open-ended / ambiguous tasks are moderate-or-
+// complex and keep the plan phase (SOTA gap #3). The mapping is
+// intentionally conservative — when in doubt, plan.
+func taskComplexity(task string) planpkg.Complexity {
+	switch intent.Classify(task).Class {
+	case intent.ClassTrivial:
+		return planpkg.ComplexityTrivial
+	case intent.ClassExplicit:
+		return planpkg.ComplexitySimple
+	case intent.ClassExploratory, intent.ClassAmbiguous:
+		return planpkg.ComplexityModerate
+	case intent.ClassOpenEnded:
+		return planpkg.ComplexityComplex
+	default:
+		return planpkg.ComplexityModerate
+	}
 }
 
 func buildPhases(e Engine) []engine.PhaseSpec {
