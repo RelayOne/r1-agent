@@ -25,6 +25,13 @@ type TaskResult struct {
 	TestsPassed int
 	TestsFailed int
 	DiffLines   int
+
+	// PlanOutput carries the plan text when the task ran in plan-only
+	// mode (plan.Task.PlanOnly). Executors surface it from the
+	// workflow's Result.PlanOutput; WithSpecExec feeds it into
+	// specexec.Outcome.PlanText so the plan-aware scorer can rank
+	// speculative strategies by plan quality instead of raw speed.
+	PlanOutput string
 }
 
 // ExecuteFunc is the callback the scheduler invokes to run one task.
@@ -403,7 +410,11 @@ type SpecExecConfig struct {
 // WithSpecExec wraps an ExecuteFunc to use speculative parallel execution
 // for tasks that match the predicate. For each speculative task, it runs
 // parallel PLAN-ONLY explorations with different strategy prompts, scores
-// the plans, and then executes the winning strategy through the real pipeline.
+// the plans by deterministic structural quality plus speed
+// (specexec.PlanScorer over TaskResult.PlanOutput — plan-only outcomes
+// carry no test/diff signal, so DefaultScorer would reduce winner
+// selection to wall-clock latency), and then executes the winning
+// strategy through the real pipeline.
 //
 // SAFETY: Speculative strategies are plan-only (no execute, no verify, no merge).
 // Only the winning strategy runs through the full pipeline with side effects.
@@ -440,13 +451,20 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 			strategyBranches[s.ID] = b.ID
 		}
 
+		// Plan-only outcomes have TestsPassed=TestsFailed=DiffLines=0,
+		// so DefaultScorer would award every successful strategy the
+		// same flat fallbacks and the winner would degenerate to
+		// "fastest plan" (its old 0.9 threshold was also unreachable —
+		// plan-only scores capped at ~0.6, audit A024). PlanScorer
+		// ranks by plan structure instead, and PlanStopThreshold is
+		// reachable exactly when a plan shows full structural quality.
 		spec := specexec.Spec{
 			Strategies:    strategies,
 			MaxParallel:   cfg.MaxParallel,
 			Timeout:       cfg.Timeout,
 			EarlyStop:     true,
-			StopThreshold: 0.9,
-			Scorer:        specexec.DefaultScorer,
+			StopThreshold: specexec.PlanStopThreshold,
+			Scorer:        specexec.PlanScorer,
 		}
 
 		// PHASE 1: Run plan-only explorations in parallel.
@@ -470,6 +488,7 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 				TestsPassed: result.TestsPassed,
 				TestsFailed: result.TestsFailed,
 				DiffLines:   result.DiffLines,
+				PlanText:    result.PlanOutput,
 			}
 			if result.Error != nil {
 				outcome.Error = result.Error.Error()

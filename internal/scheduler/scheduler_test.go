@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -40,15 +41,23 @@ func TestParallelIndependent(t *testing.T) {
 		c := atomic.AddInt32(&current, 1)
 		for {
 			old := atomic.LoadInt32(&maxConcurrent)
-			if c <= old { break }
-			if atomic.CompareAndSwapInt32(&maxConcurrent, old, c) { break }
+			if c <= old {
+				break
+			}
+			if atomic.CompareAndSwapInt32(&maxConcurrent, old, c) {
+				break
+			}
 		}
 		time.Sleep(10 * time.Millisecond)
 		atomic.AddInt32(&current, -1)
 		return TaskResult{TaskID: task.ID, Success: true}
 	})
-	if err != nil { t.Fatal(err) }
-	if len(results) != 3 { t.Errorf("results=%d", len(results)) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Errorf("results=%d", len(results))
+	}
 	if maxConcurrent < 2 {
 		t.Errorf("maxConcurrent=%d, expected >=2 for independent tasks", maxConcurrent)
 	}
@@ -109,15 +118,23 @@ func TestFileConflictSequential(t *testing.T) {
 		c := atomic.AddInt32(&current, 1)
 		for {
 			old := atomic.LoadInt32(&maxConcurrent)
-			if c <= old { break }
-			if atomic.CompareAndSwapInt32(&maxConcurrent, old, c) { break }
+			if c <= old {
+				break
+			}
+			if atomic.CompareAndSwapInt32(&maxConcurrent, old, c) {
+				break
+			}
 		}
 		time.Sleep(10 * time.Millisecond)
 		atomic.AddInt32(&current, -1)
 		return TaskResult{TaskID: task.ID, Success: true}
 	})
-	if err != nil { t.Fatal(err) }
-	if len(results) != 2 { t.Errorf("results=%d", len(results)) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Errorf("results=%d", len(results))
+	}
 	if maxConcurrent > 1 {
 		t.Errorf("maxConcurrent=%d, want 1 (file conflict should force sequential)", maxConcurrent)
 	}
@@ -136,7 +153,9 @@ func TestDependencyOrdering(t *testing.T) {
 		order = append(order, task.ID)
 		return TaskResult{TaskID: task.ID, Success: true}
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(order) != 2 || order[0] != "A" {
 		t.Errorf("order=%v, want [A B]", order)
 	}
@@ -161,7 +180,9 @@ func TestFailedDependencyBlocksDownstream(t *testing.T) {
 	})
 
 	// Should not error (blocked tasks are reported in results, not as scheduler error)
-	if err != nil { t.Fatalf("unexpected scheduler error: %v", err) }
+	if err != nil {
+		t.Fatalf("unexpected scheduler error: %v", err)
+	}
 
 	// Only A should have executed -- B and C should be blocked
 	if len(executed) != 1 || executed[0] != "A" {
@@ -202,7 +223,9 @@ func TestFailedTaskDoesNotBlockUnrelated(t *testing.T) {
 		}
 		return TaskResult{TaskID: task.ID, Success: true}
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Both should execute -- B has no dependency on A
 	mu.Lock()
@@ -241,6 +264,53 @@ func TestWithSpecExecSelectsWinner(t *testing.T) {
 	// At least one strategy must have been called
 	if calls.Load() < 1 {
 		t.Errorf("expected at least 1 strategy call, got %d", calls.Load())
+	}
+}
+
+func TestWithSpecExecPrefersHigherQualityPlan(t *testing.T) {
+	// Regression for audit A024: with DefaultScorer, plan-only
+	// outcomes carried no test/diff signal, so the winner degenerated
+	// to "fastest plan". A slower strategy that produces a structured
+	// plan must now beat a faster strategy that produces nothing.
+	const richPlan = `Plan:
+1. Update internal/auth/token.go to add refresh-token support.
+2. Add regression coverage in internal/auth/token_test.go.
+3. Verify with go test ./internal/auth/... before committing.`
+
+	var chosen atomic.Value // description executed in phase 2
+
+	base := func(ctx context.Context, task plan.Task) TaskResult {
+		if task.PlanOnly {
+			if strings.Contains(task.Description, "approach QUALITY") {
+				time.Sleep(50 * time.Millisecond) // slower, but substantive
+				return TaskResult{TaskID: task.ID, Success: true, PlanOutput: richPlan}
+			}
+			return TaskResult{TaskID: task.ID, Success: true} // instant, empty plan
+		}
+		chosen.Store(task.Description)
+		return TaskResult{TaskID: task.ID, Success: true}
+	}
+
+	wrapped := WithSpecExec(base, SpecExecConfig{
+		Approaches:  []string{"approach FAST", "approach QUALITY"},
+		MaxParallel: 2,
+		Timeout:     5 * time.Second,
+	})
+
+	result := wrapped(context.Background(), plan.Task{
+		ID:          "T1",
+		Description: "refactor auth module",
+	})
+	if !result.Success {
+		t.Fatalf("expected success, got failure: %v", result.Error)
+	}
+
+	got, _ := chosen.Load().(string)
+	if got == "" {
+		t.Fatal("phase 2 never executed a winning strategy")
+	}
+	if !strings.Contains(got, "approach QUALITY") {
+		t.Errorf("winner = %q, want the structured-plan strategy (approach QUALITY) — faster empty plan must not win", got)
 	}
 }
 

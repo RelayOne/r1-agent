@@ -176,6 +176,62 @@ func TestDefaultScorerPartialCreditForMissingData(t *testing.T) {
 	}
 }
 
+const structuredPlan = `Plan for the auth refactor:
+1. Update internal/auth/token.go to add refresh-token support.
+2. Add regression coverage in internal/auth/token_test.go.
+3. Verify with go test ./internal/auth/... before committing.`
+
+func TestPlanScorerFailureScoresZero(t *testing.T) {
+	if got := PlanScorer(Outcome{Success: false, PlanText: structuredPlan}); got != 0 {
+		t.Errorf("failed outcome should score 0, got %f", got)
+	}
+}
+
+func TestPlanScorerRanksStructureOverSpeed(t *testing.T) {
+	rich := PlanScorer(Outcome{
+		Success:  true,
+		PlanText: structuredPlan,
+		Duration: 2 * time.Minute, // slow but substantive
+	})
+	empty := PlanScorer(Outcome{
+		Success:  true,
+		PlanText: "",
+		Duration: 1 * time.Second, // fast but empty
+	})
+	if rich <= empty {
+		t.Errorf("structured plan (%.3f) should outscore fast empty plan (%.3f)", rich, empty)
+	}
+	if rich > 1 {
+		t.Errorf("score should be <= 1, got %f", rich)
+	}
+}
+
+func TestPlanScorerThresholdReachable(t *testing.T) {
+	// A structurally complete plan must reach the early-stop
+	// threshold regardless of speed — with DefaultScorer the old 0.9
+	// threshold was mathematically unreachable for plan-only outcomes
+	// (audit A024).
+	got := PlanScorer(Outcome{
+		Success:  true,
+		PlanText: structuredPlan,
+		Duration: 5 * time.Minute,
+	})
+	if got < PlanStopThreshold {
+		t.Errorf("fully structured plan scored %.3f, below PlanStopThreshold %.2f", got, PlanStopThreshold)
+	}
+}
+
+func TestPlanScorerEmptyPlanDegradesToSpeedOnly(t *testing.T) {
+	fast := PlanScorer(Outcome{Success: true, Duration: 10 * time.Second})
+	slow := PlanScorer(Outcome{Success: true, Duration: 300 * time.Second})
+	if fast <= slow {
+		t.Errorf("faster (%.3f) should outscore slower (%.3f) when plan text is absent", fast, slow)
+	}
+	if slow >= PlanStopThreshold {
+		t.Errorf("empty plan (%.3f) must never reach the early-stop threshold %.2f", slow, PlanStopThreshold)
+	}
+}
+
 func TestExtractInsights(t *testing.T) {
 	result := &Result{
 		Outcomes: []Outcome{
