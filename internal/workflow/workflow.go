@@ -1509,6 +1509,16 @@ func (e Engine) runCrossModelReview(
 	e.emitReviewEvent(name, evidence.ReviewEngine, verdict.Pass)
 	if !verdict.Pass {
 		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+		// A review rejection is a learning like any other failure: the
+		// generic verification-failure path records a wisdom gotcha,
+		// but this early return skipped it — so review dissent left no
+		// trace for subsequent tasks (audit A049).
+		if e.Wisdom != nil {
+			e.Wisdom.Record(e.Task, wisdom.Learning{
+				Category:    wisdom.Gotcha,
+				Description: fmt.Sprintf("cross-model review rejected: %s severity, %d findings", verdict.Severity, len(verdict.Findings)),
+			})
+		}
 		e.Worktrees.Cleanup(ctx, handle)
 		_ = e.advanceState(taskstate.Failed, "cross-model review rejected")
 		return nil, fmt.Errorf("cross-model review rejected: %s severity, %d findings", verdict.Severity, len(verdict.Findings))

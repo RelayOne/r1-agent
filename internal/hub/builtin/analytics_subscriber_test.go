@@ -149,12 +149,17 @@ func TestAnalyticsSubscriber_DropsUnmappedEvent(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	// The wildcard subscriber dispatch is async; pre-call may not have
-	// dispatched at all because the subscriber declares its events
-	// explicitly. Either zero handlers OR an explicit no_match counts.
-	got := metrics.DefaultRegistry.Counter("analytics.no_match").Value()
-	if got != before {
-		t.Logf("analytics.no_match delta = %d (acceptable)", got-before)
+	// PRIMARY assertion (audit A090 — the old body ended in t.Logf and
+	// could never fail): the unmapped event must NOT be forwarded.
+	// Shutdown flushes any pending batch before we inspect the recorder.
+	if err := client.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown/flush: %v", err)
+	}
+	rec.mu.Lock()
+	forwarded := len(rec.events)
+	rec.mu.Unlock()
+	if forwarded != 0 {
+		t.Fatalf("unmapped event was forwarded to analytics: %d events", forwarded)
 	}
 }
 

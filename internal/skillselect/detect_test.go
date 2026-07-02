@@ -550,17 +550,27 @@ func TestSelectSkillsNilInputs(t *testing.T) {
 }
 
 func TestSelectSkillsMatchesKeywords(t *testing.T) {
-	reg := skill.NewRegistry() // empty dirs, no disk
-	// Manually add a skill with keywords that match stack tags.
+	// Dir-backed registry so Add succeeds — the old version constructed
+	// a dirless registry, always hit the t.Skip, and asserted nothing
+	// even when it didn't (audit A093).
+	dir := t.TempDir()
+	reg := skill.NewRegistry(dir)
 	if err := reg.Add("go-testing", "Go test patterns", "Run go test ./...", []string{"go", "testing"}); err != nil {
-		// Add requires a directory; create one.
-		t.Skip("cannot add skills without directory")
+		t.Fatalf("Add: %v", err)
 	}
 
 	info := &StackInfo{Languages: []string{"go"}}
 	skills := SelectSkills(info, reg)
-	// We may or may not match depending on registry Add succeeding.
-	_ = skills
+	found := false
+	for _, s := range skills {
+		if s.Name == "go-testing" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("go-testing not selected for a go stack, got %d skills", len(skills))
+	}
 }
 
 func TestSelectSkillsWithRegistry(t *testing.T) {
