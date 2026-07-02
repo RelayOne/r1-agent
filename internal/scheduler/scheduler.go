@@ -274,6 +274,18 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 				allResults = append(allResults, r)
 				recordResult(r)
 			case <-ctx.Done():
+				// Workers only exit by delivering into results; wg.Done
+				// happens on the receive side. Drain every in-flight
+				// result (bounded: execFn honors ctx and returns once
+				// its process group is torn down) or wg.Wait blocks
+				// forever and the whole r1 process hangs on Ctrl-C.
+				for active > 0 {
+					r := <-results
+					wg.Done()
+					active--
+					allResults = append(allResults, r)
+					recordResult(r)
+				}
 				wg.Wait()
 				return allResults, ctx.Err()
 			}

@@ -54,6 +54,46 @@ func TestParallelIndependent(t *testing.T) {
 	}
 }
 
+// TestCancelWithInFlightTaskReturns reproduces audit A003: cancelling the
+// ctx while a task is executing must return ctx.Err(), not deadlock.
+// Workers only wg.Done() via the receive path, so the ctx.Done branch has
+// to drain in-flight results before wg.Wait().
+func TestCancelWithInFlightTaskReturns(t *testing.T) {
+	p := &plan.Plan{Tasks: []plan.Task{{ID: "slow"}}}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	started := make(chan struct{})
+	type runOut struct {
+		results []TaskResult
+		err     error
+	}
+	done := make(chan runOut, 1)
+	s := New(1)
+	go func() {
+		results, err := s.Run(ctx, p, func(ctx context.Context, task plan.Task) TaskResult {
+			close(started)
+			<-ctx.Done() // honor cancellation like the engine runners do
+			return TaskResult{TaskID: task.ID, Success: false, Error: ctx.Err()}
+		})
+		done <- runOut{results, err}
+	}()
+
+	<-started
+	cancel()
+
+	select {
+	case out := <-done:
+		if out.err != context.Canceled {
+			t.Errorf("err=%v, want context.Canceled", out.err)
+		}
+		if len(out.results) != 1 {
+			t.Errorf("in-flight result dropped: got %d results, want 1", len(out.results))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Scheduler.Run deadlocked on ctx cancel with an in-flight task")
+	}
+}
+
 func TestFileConflictSequential(t *testing.T) {
 	tasks := []plan.Task{
 		{ID: "A", Files: []string{"shared.go"}},
