@@ -185,7 +185,7 @@ docs-agentic:
 # CI); the expected count below is the single numeric source of truth —
 # docs reference it as "at last count".
 check-pkg-count:
-	@expected=265; \
+	@expected=259; \
 	actual=$$(find . -path ./vendor -prune -o -name "*.go" -print | xargs grep -l "^package " | sed 's|/[^/]*$$||' | sort -u | grep "^./internal/" | wc -l | tr -d ' '); \
 	if [ "$$actual" != "$$expected" ]; then \
 		echo "ERROR: internal package count drifted: expected $$expected, got $$actual"; \
