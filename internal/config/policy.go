@@ -670,7 +670,20 @@ func parsePolicyYAML(input string) (Policy, error) {
 			if key != "protected" {
 				return Policy{}, fmt.Errorf("unknown files key %q", key)
 			}
-			p.Files.Protected = parseListValue(val)
+			if val == "" {
+				// Block-style list follows (what the wizard emits);
+				// items are consumed by the case below.
+				currentListField = "protected"
+			} else {
+				currentListField = ""
+				p.Files.Protected = parseListValue(val)
+			}
+		case section == "files" && indent >= 4 && strings.HasPrefix(text, "- "):
+			if currentListField != "protected" {
+				return Policy{}, fmt.Errorf("list item without list field: %q", raw)
+			}
+			item := unquote(strings.TrimSpace(strings.TrimPrefix(text, "- ")))
+			p.Files.Protected = append(p.Files.Protected, item)
 		case section == "promptguard" && indent == 2 && strings.HasSuffix(text, ":"):
 			pgPhase = strings.TrimSuffix(text, ":")
 		case section == "promptguard" && pgPhase == "tool_input":

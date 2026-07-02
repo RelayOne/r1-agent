@@ -985,7 +985,7 @@ func initCmd(args []string) {
 	if autoMode {
 		err = w.RunAutoDetect()
 		if err == nil {
-			fmt.Printf("  stoke.policy.yaml generated (auto-detect mode)\n")
+			fmt.Printf("  r1.policy.yaml generated (auto-detect mode)\n")
 		}
 	} else {
 		err = w.Run()
