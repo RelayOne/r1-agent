@@ -175,7 +175,8 @@ func Diff(a, b *Snapshot) []string {
 		diffs = append(diffs, fmt.Sprintf("branch: %s → %s", a.Branch, b.Branch))
 	}
 	if a.Commit != b.Commit {
-		diffs = append(diffs, fmt.Sprintf("commit: %s → %s", a.Commit[:8], b.Commit[:8]))
+		diffs = append(diffs, fmt.Sprintf("commit: %s → %s",
+			a.Commit[:minLen(8, len(a.Commit))], b.Commit[:minLen(8, len(b.Commit))]))
 	}
 
 	// Compare modified files
@@ -211,9 +212,9 @@ func (s *Snapshot) Summary() string {
 
 func minLen(a, b int) int {
 	if a < b {
-		return b
+		return a
 	}
-	return a
+	return b
 }
 
 func gitOutput(dir string, args ...string) (string, error) {

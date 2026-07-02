@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -178,5 +179,25 @@ func TestFileState(t *testing.T) {
 	}
 	if !found {
 		t.Error("should capture main.go")
+	}
+}
+
+// TestSummaryAndDiffShortCommit covers audit A025: minLen was inverted
+// (returned max), so Summary paniced on commits shorter than 8 chars and
+// Diff had the same unguarded slice.
+func TestSummaryAndDiffShortCommit(t *testing.T) {
+	short := &Snapshot{Label: "l", Branch: "b", Commit: "abc12"}
+	long := &Snapshot{Label: "l", Branch: "b", Commit: "abcdef0123456789"}
+
+	// Must not panic, and must not over-slice.
+	if got := short.Summary(); !strings.Contains(got, "abc12") {
+		t.Errorf("Summary() = %q, want it to contain the full short commit", got)
+	}
+	if got := long.Summary(); !strings.Contains(got, "abcdef01") || strings.Contains(got, "abcdef012") {
+		t.Errorf("Summary() = %q, want exactly 8 commit chars", got)
+	}
+	diffs := Diff(short, long)
+	if len(diffs) == 0 {
+		t.Fatal("expected a commit diff entry")
 	}
 }
