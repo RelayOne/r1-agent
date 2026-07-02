@@ -71,7 +71,7 @@ type RunConfig struct {
 	Pools            *subscriptions.Manager
 	Worktrees        *worktree.Manager
 	State            *taskstate.TaskState
-	Wisdom           *wisdom.Store       // cross-task learning (nil = disabled)
+	Wisdom           wisdom.Recorder     // cross-task learning (nil = disabled); *wisdom.Store or persistent *wisdom.SQLiteStore
 	Boulder          *boulder.Enforcer   // idle agent detection (nil = disabled)
 	CostTracker      *costtrack.Tracker  // per-session cost tracking (nil = disabled)
 	Recorder         *replay.Recorder    // session replay recording (nil = disabled)

@@ -275,7 +275,12 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			replayDir := r1dir.JoinFor(e.RepoRoot, "replays")
 			if mkErr := os.MkdirAll(replayDir, 0o755); mkErr == nil {
 				replayPath := filepath.Join(replayDir, rec.ID+".json")
-				_ = replay.Save(rec, replayPath)
+				if saveErr := replay.Save(rec, replayPath); saveErr != nil {
+					// O4: surface a silently-failed recording write — operators
+					// relying on `r1 replay` for post-mortem must know when a
+					// recording never landed rather than discover an empty dir.
+					log.Warn("replay recording save failed", "path", replayPath, "err", saveErr)
+				}
 			}
 		}()
 	}

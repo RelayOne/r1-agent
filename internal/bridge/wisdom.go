@@ -12,7 +12,7 @@ import (
 
 // WisdomBridge wraps a wisdom.Store and emits bus events when learnings are recorded.
 type WisdomBridge struct {
-	store  *wisdom.Store
+	store  wisdom.Recorder
 	bus    *bus.Bus
 	ledger *ledger.Ledger
 }
@@ -27,7 +27,7 @@ func NewWisdomBridge(b *bus.Bus, l *ledger.Ledger) *WisdomBridge {
 // learnings through the bridge while the same store keeps serving prompt
 // injection, so wisdom.learning.recorded events and wisdom_learning
 // ledger nodes fire without forking the learning state.
-func NewWisdomBridgeWithStore(b *bus.Bus, l *ledger.Ledger, store *wisdom.Store) *WisdomBridge {
+func NewWisdomBridgeWithStore(b *bus.Bus, l *ledger.Ledger, store wisdom.Recorder) *WisdomBridge {
 	return &WisdomBridge{
 		store:  store,
 		bus:    b,

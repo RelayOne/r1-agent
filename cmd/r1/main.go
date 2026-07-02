@@ -328,7 +328,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	} else {
 		fmt.Printf("  ⚠ stancesign: could not resolve identity (%v) — commits will be unsigned\n", sErr)
 	}
-	wisdomStore := wisdom.NewStore()
+	wisdomStore := newPersistentWisdom(absRepo)
 
 	// Metrics registry: shared across all tasks in this build session.
 	metricsReg := metrics.NewRegistry()
