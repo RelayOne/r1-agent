@@ -494,16 +494,17 @@ type Finding struct {
 ## API surface
 
 ### MCP catalog — 38 tools across 10 categories
-- **sessions** (5): `r1.session.list`, `.get`, `.create`, `.pause`, `.cancel`
+- **sessions** (6): `r1.session.start`, `.send`, `.cancel`, `.list`, `.get`, `.resume`
 - **lanes** (5): `r1.lanes.list`, `.subscribe`, `.get`, `.kill`, `.pin`
-- **cortex** (4): `r1.cortex.notes`, `.workspace`, `.lobes`, `.round`
-- **mission** (4): `r1.mission.start`, `.status`, `.abort`, `.report`
-- **worktree** (3): `r1.worktree.create`, `.merge`, `.cleanup`
-- **bus** (1): `r1.bus.tail`
-- **verify** (4): `r1.verify.build`, `.test`, `.vet`, `.lint`
-- **TUI** (5): `r1.tui.snapshot`, `.dispatch`, `.assertA11y`, `.cycle`, `.quit`
-- **anti-truncation** (1): `r1.antitrunc.verify`
-- **plus** legacy `stoke_*` aliases (deprecated; removal scheduled v2.0.0).
+- **cortex** (5): `r1.cortex.notes`, `.publish`, `.lobes_list`, `.lobe_pause`, `.lobe_resume`
+- **mission** (4): `r1.mission.create`, `.list`, `.cancel`, `.get`
+- **worktree** (4): `r1.worktree.list`, `.diff`, `.merge`, `.clean`
+- **bus** (2): `r1.bus.tail`, `.replay`
+- **verify** (3): `r1.verify.build`, `.test`, `.lint`
+- **TUI** (4): `r1.tui.press_key`, `.snapshot`, `.get_model`, `.focus_lane`
+- **web** (4): `r1.web.navigate`, `.click`, `.fill`, `.snapshot`
+- **cli** (1): `r1.cli.invoke`
+- **plus** legacy `stoke_*` aliases (deprecated; removal scheduled v2.0.0). Anti-truncation verification is exposed on the stoke MCP server as `stoke_antitrunc_verify` (canonical alias `r1_antitrunc_verify`), not in the dotted `r1.*` catalog. Regenerate this list with `r1 mcp serve --print-tools --markdown`.
 
 ### r1d JSON-RPC (loopback HTTP+WS)
 - `session.start | pause | resume | cancel | send | subscribe | unsubscribe`

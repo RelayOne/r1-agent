@@ -158,7 +158,7 @@ Complete feature inventory for r1 as of 2026-05-15. Status reflects the merged s
 | Layer 4: Supervisor rules | `truncation_phrase_detected`, `scope_underdelivery`, `subagent_summary_truncation` | Done | `internal/supervisor/rules/antitrunc/` |
 | Layer 5: agentloop wiring | Gate composes BEFORE all other end-turn hooks | Done | `internal/agentloop/antitrunc.go` |
 | Layer 6: post-commit git hook | Observes false-completion phrases in commit bodies; writes `audit/antitrunc/post-commit-<sha>.md` | Done | `scripts/git-hooks/post-commit-antitrunc.sh` |
-| Layer 7: CLI + MCP tool | `r1 antitrunc verify -n N` + `r1.antitrunc.verify` MCP tool; classifies commits Verified / Unverified / Lying; exits non-zero on lying | Done | `cmd/r1/antitrunc_cmd.go`, `internal/mcp/r1_server.go` |
+| Layer 7: CLI + MCP tool | `r1 antitrunc verify -n N` + `stoke_antitrunc_verify` MCP tool (canonical alias `r1_antitrunc_verify`); classifies commits Verified / Unverified / Lying; exits non-zero on lying | Done | `cmd/r1/antitrunc_cmd.go`, `internal/mcp/r1_server.go` |
 | `r1 antitrunc tail` | Streams audit/antitrunc/ in real time | Done | `cmd/r1/antitrunc_cmd.go` |
 | 1M-iteration soak | 0 FP / 0 FN / 499K TP at 16,891 iter/sec | Done | `internal/antitrunc/soak_extended_test.go` (build tag `soak`) |
 | Cortex-mission integration test | `TestMissionIntegration_GateRefusesAndForcesContinuation` end-to-end | Done | `internal/cortex/lobes/antitrunc/integration_test.go` |
