@@ -284,8 +284,11 @@ func (c *Cortex) Workspace() *Workspace { return c.workspace }
 // spec interface in §"Cortex — the bundle".
 func (c *Cortex) Spotlight() *Spotlight { return c.workspace.Spotlight() }
 
-// Router returns the mid-turn input Router. Exposed so the chat REPL
-// (cmd/r1) can call Route directly without reaching through Config.
+// Router returns the mid-turn input Router. The chat REPL (cmd/r1
+// chat-interactive) routes mid-turn user input through
+// Cortex.OnUserInputMidTurn (userinput.go), which wraps Route and
+// enacts the decision; this accessor remains for tests and callers
+// that need the raw Route decision without side effects.
 func (c *Cortex) Router() *Router { return c.router }
 
 // Tracker returns the BudgetTracker. Exposed so the hub.Bus subscriber
