@@ -151,6 +151,12 @@ func run() error {
 		}
 		defer os.RemoveAll(workDir)
 	}
+	// Seal a git baseline so end-of-run diff capture works and the
+	// graded tree has no history to mine. No-op for caller-supplied
+	// dirs that are already git work trees.
+	if err := prepareWorkDir(workDir); err != nil {
+		return err
+	}
 
 	// Cross-vendor judge check happens BEFORE we dispatch the agent
 	// so a misconfiguration fails fast.

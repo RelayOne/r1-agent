@@ -104,6 +104,8 @@ func (in *NativeInvoker) Invoke(ctx context.Context, mission *bench.MissionConfi
 		EstimatedBytes:      int64(len(result.ResultText)),
 		CompletionAttempted: !result.IsError && strings.TrimSpace(result.ResultText) != "",
 		ExitReason:          mapExitReason(result, runErr),
+		CostUSD:             result.CostUSD,
+		TokensUsed:          int64(result.Tokens.Input + result.Tokens.Output),
 	}
 	if runErr != nil {
 		return out, runErr

@@ -11,6 +11,7 @@ package agents
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -56,7 +57,9 @@ func WritePlan(workDir string, plan []bench.PlanItem) error {
 	return nil
 }
 
-// GitDiff returns the unified diff of unstaged changes in workDir.
+// GitDiff returns the unified diff of the work the agent left in
+// workDir: tracked changes (staged + unstaged, against HEAD when a
+// commit exists) plus untracked files rendered as additions.
 //
 // A non-git workspace (no .git directory and no parent .git) returns
 // the empty string with a nil error — the truthful-completion bench
@@ -81,7 +84,22 @@ func GitDiff(workDir string) (string, error) {
 			return "", nil
 		}
 	}
-	cmd := exec.Command("git", "diff")
+	var buf strings.Builder
+
+	// Tracked changes. Diff against HEAD when a commit exists so staged
+	// work is captured too; a repo with no commits yet falls back to the
+	// plain index diff. Bare `git diff` alone misses BOTH staged changes
+	// and new files — for greenfield missions the agent's entire output
+	// is untracked, which used to make a completed mission score as an
+	// empty diff (and the judge then correctly ruled the claim
+	// untruthful against no evidence).
+	diffArgs := []string{"diff"}
+	head := exec.Command("git", "rev-parse", "--verify", "-q", "HEAD")
+	head.Dir = workDir
+	if head.Run() == nil {
+		diffArgs = []string{"diff", "HEAD"}
+	}
+	cmd := exec.Command("git", diffArgs...)
 	cmd.Dir = workDir
 	out, err := cmd.Output()
 	if err != nil {
@@ -89,7 +107,35 @@ func GitDiff(workDir string) (string, error) {
 		// tree exits 0 with empty output.
 		return "", fmt.Errorf("GitDiff: %w", err)
 	}
-	return string(out), nil
+	buf.Write(out)
+
+	// Untracked files, rendered as /dev/null additions so the scorer and
+	// judge see the new content. `git diff --no-index` exits 1 whenever
+	// the operands differ — that exit code is success here; its stdout
+	// is still the diff. Unreadable entries are skipped: a partial diff
+	// beats failing the whole capture.
+	ls := exec.Command("git", "ls-files", "--others", "--exclude-standard", "-z")
+	ls.Dir = workDir
+	lsOut, lsErr := ls.Output()
+	if lsErr != nil {
+		return buf.String(), nil
+	}
+	for _, f := range strings.Split(string(lsOut), "\x00") {
+		if f == "" {
+			continue
+		}
+		nd := exec.Command("git", "diff", "--no-index", "--", os.DevNull, f)
+		nd.Dir = workDir
+		ndOut, ndErr := nd.Output()
+		if ndErr != nil {
+			var ee *exec.ExitError
+			if !errors.As(ndErr, &ee) || ee.ExitCode() != 1 {
+				continue
+			}
+		}
+		buf.Write(ndOut)
+	}
+	return buf.String(), nil
 }
 
 // BoundedLog truncates buf to limit bytes (defaulting to 64 KiB when

@@ -52,6 +52,10 @@ type R1InvocationResult struct {
 	ExitReason          string
 	EstimatedBytes      int64
 	RawLog              string
+	// CostUSD and TokensUsed carry the native runner's usage
+	// accounting through to the Trace (zero = not reported).
+	CostUSD    float64
+	TokensUsed int64
 }
 
 // Agent returns the agent identity. ID includes a suffix when
@@ -113,6 +117,8 @@ func (d *R1Dispatcher) Run(ctx context.Context, mission *bench.MissionConfig, wo
 			WallClockMs:         result.WallClockMs,
 			ExitReason:          orDefault(result.ExitReason, ExitReasonToolError),
 			RawLog:              BoundedLog([]byte(result.RawLog), 0),
+			CostUSD:             result.CostUSD,
+			TokensUsed:          result.TokensUsed,
 		}, err
 	}
 
@@ -124,6 +130,8 @@ func (d *R1Dispatcher) Run(ctx context.Context, mission *bench.MissionConfig, wo
 		WallClockMs:         result.WallClockMs,
 		ExitReason:          orDefault(result.ExitReason, ExitReasonCompletionClaimed),
 		RawLog:              BoundedLog([]byte(result.RawLog), 0),
+		CostUSD:             result.CostUSD,
+		TokensUsed:          result.TokensUsed,
 	}, nil
 }
 

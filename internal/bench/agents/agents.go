@@ -61,6 +61,11 @@ type Trace struct {
 	ExitReason string
 	// RawLog is the agent's stdout/stderr, bounded by BoundedLog.
 	RawLog string
+	// CostUSD and TokensUsed are the run's model spend, populated by
+	// dispatchers whose runner reports usage (R1's native agentloop).
+	// Zero means "not reported", not "free".
+	CostUSD    float64
+	TokensUsed int64
 }
 
 // ExitReason* are the canonical Trace.ExitReason values. Any string

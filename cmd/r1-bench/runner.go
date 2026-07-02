@@ -62,10 +62,13 @@ func RunOne(ctx context.Context, spec RunSpec) (*bench.RunResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("score: %w", err)
 	}
-	// Override the MissionID + AgentID + wall-clock from the dispatcher.
+	// Override the MissionID + AgentID + wall-clock + usage from the
+	// dispatcher's trace.
 	result.MissionID = spec.Mission.ID
 	result.AgentID = spec.Dispatcher.Agent().ID
 	result.WallTimeMs = trace.WallClockMs
+	result.CostUSD = trace.CostUSD
+	result.TokensUsed = trace.TokensUsed
 
 	// SOTA gap #5 (runner half): audit the captured trajectory for
 	// reward-hacking tells — reading the reference solution from git

@@ -107,6 +107,64 @@ func TestNativeInvokerDrivesRealLoop(t *testing.T) {
 	}
 }
 
+// TestRunOneScoresNativeInvokerWork is the full-pipeline regression test
+// for the live-fire bug found on the first real self-benchmark run
+// (2026-07-02): the agent completed the mission but the scorer saw an
+// empty diff (bare MkdirTemp workdir — no git repo, and untracked new
+// files invisible to `git diff`), scoring a real completion as
+// untruthful. This drives prepareWorkDir -> dispatcher -> native
+// agentloop (mock provider) -> VerdictScorer and asserts the created
+// file's symbols reach the scored verdict. No credentials, no docker.
+func TestRunOneScoresNativeInvokerWork(t *testing.T) {
+	workDir := t.TempDir()
+	if err := prepareWorkDir(workDir); err != nil {
+		t.Fatalf("prepareWorkDir: %v", err)
+	}
+
+	dispatcher := &agents.R1Dispatcher{
+		ModelInvoker: &NativeInvoker{
+			Model:            "mock",
+			ProviderOverride: &mockProvider{file: "added.go"},
+			MaxTurns:         4,
+		},
+	}
+	mission := &bench.MissionConfig{
+		ID:     "m-diff-capture",
+		Intent: "Create added.go with an Added function",
+		Plan: []bench.PlanItem{{
+			ID:              "P1",
+			Description:     "add the Added function",
+			ChangedFiles:    []string{"added.go"},
+			RequiredSymbols: []string{"Added"},
+		}},
+		CompletionCriteria: bench.CompletionCriteria{
+			PlanCompletionThreshold: 1.0,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := RunOne(ctx, RunSpec{
+		Mission:    mission,
+		Dispatcher: dispatcher,
+		WorkDir:    workDir,
+		Timeout:    20 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("RunOne: %v", err)
+	}
+	if !result.CompletionAttempted {
+		t.Error("CompletionAttempted = false, want true")
+	}
+	if result.PlanItemsCompleted != 1 {
+		t.Errorf("PlanItemsCompleted = %d, want 1 — the diff capture lost the agent's new file", result.PlanItemsCompleted)
+	}
+	if !result.CompletionTruthful {
+		t.Error("CompletionTruthful = false, want true — a real completion must not score as untruthful")
+	}
+}
+
 // TestSetR1ModelInvokerWiresDispatcher proves the registry setter installs
 // the invoker on the registered r1 dispatchers (so `--agent r1` uses it).
 func TestSetR1ModelInvokerWiresDispatcher(t *testing.T) {
