@@ -108,13 +108,13 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **bus.restoreDelayed mutates b.delayed without the mutex while its own timers fire concurrently; past-due events can be lost**
 - Evidence: restoreDelayed (called from New) arms `time.AfterFunc(remaining, ...)` with remaining clamped to 1ms for past-due entries (lines 868-871, 876) BEFORE inserting into the map with no lock held: `b.delayed[cancelID] = e` (line 887). The timer callback locks b.mu and reads/deletes the same map (878-885). With 2+ past-due entries, entry A's 1ms timer can run while the loop is still writing entry B → unsynchronized map write vs locked map access = data race / 'concurrent map writes' panic. Worse, if A's callback runs before line 887 executes, `b.delayed[cancelID]` lookup fails, the callback returns,…
 - Fix: In restoreDelayed (internal/bus/bus.go:856-890), acquire b.mu for the restore loop and insert each entry into b.delayed under the lock, matching PublishDelayed's invariant. Since restoreDelayed runs before New returns and the callback's first action is b.mu.Lock(), holding the lock across the whole loop is safe (callbacks simply block until restore completes, then find their entry): after `entries, err := b.wal.ReadDelayed()`, add `b.mu.Lock(); defer b.mu.Unlock()`, keep the per-entry body unchanged (arm timer, then `b.delayed[cancelID] = e` — ordering no longer matters under the lock). Also d…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 2982fb3e)
 
 ### A016 [bug/S] internal/checkpoint/resume.go:203
 **checkpoint.PruneTimelineAfter ignores write/close errors then renames a possibly-truncated file over the authoritative WAL**
 - Evidence: The WAL rewrite loop drops all errors: `for _, e := range keep { b, _ := json.Marshal(e); f.Write(b); f.Write([]byte{'\n'}) }; f.Close(); return os.Rename(tmp, p)` (resume.go:201-207). If the disk fills or an I/O error occurs mid-write, f.Write returns an error that is discarded, f.Close's flush error is discarded, and the truncated .prune-tmp is renamed over timeline.jsonl — silently corrupting/losing checkpoint history that --resume-from depends on (including possibly the target checkpoint itself). This contradicts the package's own design goal of an fsync-protected append-only WAL (timeline…
 - Fix: In PruneTimelineAfter (internal/checkpoint/resume.go), check every error in the rewrite: for each entry, handle json.Marshal error and check both f.Write calls (or build the full buffer and do one checked Write); then call f.Sync() and f.Close(), checking both. On any failure: f.Close() if still open, os.Remove(tmp), and return a wrapped error WITHOUT renaming, leaving the original timeline.jsonl intact (the caller at cmd/r1/main.go:2030 already degrades gracefully by warning and continuing). Also os.Remove(tmp) if os.Rename fails, to avoid leaking .prune-tmp. Optionally add a test that pre-cr…
-- STATUS: PENDING
+- STATUS: FIXED (commit: e60faf50)
 
 ### A017 [bug/S] internal/config/policy.go:498
 **Policy auto-discovery omits stoke.policy.yaml even though ~10 CLI help strings name exactly that file**
@@ -126,13 +126,13 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **seqAllocator.Stop can strand concurrent next() callers blocked forever on their reply channel**
 - Evidence: next() checks quit only BEFORE enqueueing, then blocks unconditionally: `case a.requests <- reply: } ; return <-reply` (lines 96-101). run()'s select exits immediately on `<-a.quit` (line 73-74) without draining the buffered requests channel (cap 64). If Stop() closes quit while requests are pending (or the select randomly picks the quit branch when both are ready), the enqueued caller's `<-reply` never receives → permanent goroutine leak; a lane-event emitter (emitLaneEvent -> nextLaneSeq, lane_lifecycle.go:195-207) hangs while holding no way to recover. The doc claims 'Safe to call from any …
 - Fix: In internal/cortex/seq_allocator.go: (1) run(): on <-a.quit, before returning, drain a.requests in a non-blocking loop and close() each drained reply channel (close = 'stopped' signal). (2) next(): after enqueueing, replace `return <-reply` with a select on `v, ok := <-reply` and `<-a.done`; on ok==false or done-with-empty-reply (do one final non-blocking reply read to catch a serviced-then-exited race), panic("cortex: seq allocator stopped") to honor the documented post-stop contract. This closes both strand windows: quit chosen over a buffered request, and enqueue landing after run() exited …
-- STATUS: PENDING
+- STATUS: FIXED (commit: 394816f4)
 
 ### A019 [bug/S] internal/cortex/workspace.go:287
 **Late lobe Notes are silently lost, contradicting the documented 'land on a future round' contract**
 - Evidence: Publish stamps `n.Round = w.currentRound` at publish time (workspace.go:198); Drain returns only `n.Round >= sinceRound` (workspace.go:287) and MidturnNote further filters to exactly the new roundID (cortex.go:584-589). A slow lobe that finishes after MidturnNote's Drain(N) but before the next round's SetRound(N+1) publishes a Note stamped Round=N; the next drain asks for Round >= N+1, so the Note is never surfaced to the model — yet cortex.go:570-571 documents 'late Notes will surface on a future round's Drain'. Failure: lobe exceeds the 2s RoundDeadline (Wait error is logged and drain procee…
 - Fix: Switch Drain to an undrained-index cursor, and fix BOTH filter sites: (1) In internal/cortex/workspace.go, repurpose drainedUpTo as a note-index cursor: Drain returns w.notes[drainedUpTo:] (deep copy), then sets drainedUpTo = uint64(len(w.notes)); keep the (notes, cursor) signature with the cursor now meaning notes-consumed count. This also reconciles persist.go:142, which already sets drainedUpTo = len(w.notes) per spec cortex-core.md:712, so post-replay Drain correctly returns nothing. (2) In internal/cortex/cortex.go MidturnNote, remove the exact-round filter at lines 584-589 (otherwise lat…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 388b7cb2)
 
 ### A020 [bug/M] internal/ledger/ledger.go:510
 **Ledger.Batch claims 'all operations succeed or none do' but has no rollback — failed batches persist partial graphs**
@@ -150,7 +150,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **memory.Store.RememberWithContext has a lock-gap race that mutates and returns the wrong entry under concurrency**
 - Evidence: RememberWithContext calls s.Remember (which locks, appends, unlocks) and then re-acquires the lock and assumes the last element is its own entry: `s.mu.Lock(); idx := len(s.entries) - 1; s.entries[idx].Context = context; s.entries[idx].File = file; return &s.entries[idx]` (memory.go:109-116). If another goroutine's Remember interleaves between the two critical sections, Context/File are written onto the OTHER goroutine's entry and the wrong *Entry is returned. Store is explicitly concurrency-safe (sync.RWMutex, memory.go:52) and has concurrent production callers: the MCP memory tool (internal/…
 - Fix: In internal/memory/memory.go: add an unexported func (s *Store) rememberLocked(cat Category, content, context, file string, tags []string) Entry that builds the complete Entry (ID, Context, File, timestamps) and appends it while the caller holds s.mu. Rewrite Remember and RememberWithContext to each acquire s.mu once, call rememberLocked with all fields, and return a copy of the entry (change signatures to return Entry, or keep *Entry but return a pointer to a heap copy, never &s.entries[i]) so callers hold no alias into the slice. Update the three call sites that use the return value (interna…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 262a58bf)
 
 ### A023 [bug/M] internal/patchapply/patch.go:248
 **patchapply concurrent-edit detection is advisory-only and computes the wrong line number, and Apply itself is dormant**
@@ -168,7 +168,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **snapshot.minLen is inverted (returns max) — Summary never truncates and Summary/Diff panic on commits shorter than 8 chars**
 - Evidence: `func minLen(a, b int) int { if a < b { return b } return a }` (workspace.go:212-217) returns the MAXIMUM. Summary's `s.Commit[:minLen(8, len(s.Commit))]` (workspace.go:208) therefore slices to max(8, len): for a normal 40-char SHA it prints the full SHA (guard is a no-op), and for any Commit shorter than 8 (zero-value Snapshot, truncated/hand-edited snapshot JSON via Load at workspace.go:124-134) it evaluates Commit[:8] and panics with slice bounds out of range. Diff has the same unguarded panic at workspace.go:178 (`a.Commit[:8]`).
 - Fix: In internal/snapshot/workspace.go: (1) delete minLen and use the Go builtin min (go.mod declares go 1.25.5) — Summary becomes s.Commit[:min(8, len(s.Commit))]; (2) guard Diff the same way: fmt.Sprintf("commit: %s → %s", a.Commit[:min(8, len(a.Commit))], b.Commit[:min(8, len(b.Commit))]); (3) strengthen workspace_test.go TestSummary to assert the short-SHA truncation (40-char commit renders 8-char prefix) and add a short-commit case (e.g. Commit "abc" and Commit "") for both Summary and Diff so the regression cannot recur silently.
-- STATUS: PENDING
+- STATUS: FIXED (commit: 4881aeaf)
 
 ### A026 [bug/S] services/r1-admin/main.go:561
 **r1-admin prod SSO redirect loops forever: /v1/auth/sso/start is not served by this service and not in isPublic**
@@ -524,13 +524,13 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **session.ForkSession ignores marshal/write errors for the fork state copy — fork reports success but its state is silently absent**
 - Evidence: `forkData, _ := json.MarshalIndent(&forkState, "", "  ")` then `os.WriteFile(statePath, forkData, 0o600)` with the error discarded (fork.go:59-61). If the write fails (disk full, permissions), ForkSession still returns the Fork with no error; a later LoadForkState (fork.go:102-113) fails with a confusing not-exist error and the branched session state is unrecoverable. Also `parentState, _ := s.LoadState()` (fork.go:55) conflates 'no state' with 'state unreadable'.
 - Fix: In ForkSession (internal/session/fork.go:54-62): (1) replace `parentState, _ := s.LoadState()` with an error check that returns fmt.Errorf("load parent state: %w", err) on failure (LoadState already returns nil,nil for absent state, so absent-state still yields a metadata-only fork); (2) check json.MarshalIndent and os.WriteFile errors for the state copy, and on either failure os.Remove(forkPath) before returning the error so no half-created 'active' fork remains visible to ListForks; (3) add a test that makes the state write fail (e.g. pre-create statePath as a directory) and asserts ForkSess…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 4b93ac2c)
 
 ### A085 [bug/S] internal/session/store.go:202
 **session.Store.SaveAttempt silently discards unreadable attempt history and overwrites it, resetting attempt numbering**
 - Evidence: SaveAttempt ignores the read error: `s.readJSON(path, &attempts)` (store.go:202) — if history/<task>.json exists but fails to parse (corrupt file, wrong shape, permission error), `attempts` stays nil, the new attempt is appended to an empty slice, and writeJSON (store.go:213) atomically replaces the file with a single-element array — silently destroying all prior attempt history. NextAttemptNumber (store.go:191-194) swallows the same error (`prior, _ := store.LoadAttempts(taskID)`) and returns 1, so retry intelligence (failure escalation, learned patterns keyed off prev attempt at store.go:206…
 - Fix: In Store.SaveAttempt (internal/session/store.go:202), capture the readJSON error and branch: if err != nil && !os.IsNotExist(err), quarantine the unreadable file by renaming it to history/<task>.json.corrupt (preserving evidence), log a warning, and proceed with a fresh slice — or return fmt.Errorf("read attempt history %s: %w", path, err). If returning the error, also surface it at the four call sites that drop it (cmd/r1/main.go:514, 530, 1486, 1492), otherwise the fix stays silent. Apply the same IsNotExist distinction where LoadAttempts errors are blanked at main.go:496 and 1482. Additiona…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 4b93ac2c)
 
 ### A086 [stub/S] desktop/src/panels/settings.ts:91
 **Settings Providers panel fabricates inventory: hardcoded SEED_PROVIDERS with invented 'configured'/'needs_key' statuses**
