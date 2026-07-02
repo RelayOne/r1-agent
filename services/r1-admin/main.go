@@ -602,12 +602,15 @@ func bearerTokenFromHeader(authHeader string) (string, bool) {
 }
 
 func loadAdminJWTConfig() (adminJWTConfig, error) {
+	// Issuer/audience default to the coord-api token minter's own
+	// defaults (r1-coord-api/main.go) so only the shared secret is
+	// mandatory — the settings page already displayed these defaults.
 	cfg := adminJWTConfig{
-		issuer:   os.Getenv("AUTH_JWT_ISSUER"),
-		audience: os.Getenv("AUTH_JWT_AUDIENCE"),
+		issuer:   getenv("AUTH_JWT_ISSUER", "r1-coord-api"),
+		audience: getenv("AUTH_JWT_AUDIENCE", "r1-coord-api"),
 		secret:   os.Getenv("AUTH_JWT_SECRET"),
 	}
-	if cfg.issuer == "" || cfg.audience == "" || cfg.secret == "" {
+	if cfg.secret == "" {
 		return adminJWTConfig{}, errAdminJWTConfigMissing
 	}
 	return cfg, nil

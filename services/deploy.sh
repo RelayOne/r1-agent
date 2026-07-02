@@ -127,7 +127,11 @@ deploy_one() {
       ;;
     r1-admin)
       # Admin needs the coord-api URL so its widgets can hit /api/sessions etc.
-      args+=(--set-env-vars="R1_COORD_API_URL=$(coord_api_url_for_env "$env")")
+      # It also verifies coord-api-minted JWTs, so it needs the shared
+      # secret + issuer/audience (audit A012 — without these every
+      # authenticated request 503'd in staging/prod).
+      args+=(--set-env-vars="R1_COORD_API_URL=$(coord_api_url_for_env "$env"),AUTH_JWT_ISSUER=r1-coord-api,AUTH_JWT_AUDIENCE=r1-coord-api")
+      args+=(--set-secrets="AUTH_JWT_SECRET=r1-$env-shared-AUTH_JWT_SECRET:latest")
       ;;
   esac
 

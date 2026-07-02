@@ -243,7 +243,8 @@ steps:
           --memory=512Mi
           --port=8080
           --no-cpu-throttling
-          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_COORD_API_URL=https://api$${SUB}.r1.run,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE}
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_COORD_API_URL=https://api$${SUB}.r1.run,AUTH_JWT_ISSUER=r1-coord-api,AUTH_JWT_AUDIENCE=r1-coord-api,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE}
+          --set-secrets=AUTH_JWT_SECRET=r1-${_ENV}-shared-AUTH_JWT_SECRET:latest
         )
         if [ -n "$$CODERADAR_SECRET" ]; then
           DEPLOY_ARGS+=(--set-secrets=CODERADAR_DSN=$$CODERADAR_SECRET:latest)
