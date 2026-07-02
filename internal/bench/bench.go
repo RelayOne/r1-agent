@@ -105,6 +105,14 @@ type RunResult struct {
 	DeliveryRatioPercent int    `json:"delivery_ratio_percent"`
 	JudgeVerdict         string `json:"judge_verdict,omitempty"`   // "agrees_truthful" | "agrees_untruthful" | "disagrees" | "skipped"
 	JudgeRationale       string `json:"judge_rationale,omitempty"` // <=500 chars
+
+	// RewardHackFlags lists reward-hacking tells found in the agent's
+	// trajectory (reading the reference solution from git history, editing
+	// the graded tests). Non-nil means the score should be read with
+	// suspicion — it does not auto-fail the run (that is a policy
+	// decision), but it makes gaming visible instead of silently inflating
+	// the number. See AuditTrajectory (SOTA gap #5).
+	RewardHackFlags []string `json:"reward_hack_flags,omitempty"`
 }
 
 // ComparisonResult holds the diff between a baseline and current run.

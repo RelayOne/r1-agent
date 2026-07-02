@@ -106,7 +106,7 @@ type indexedDoc struct {
 // The constructor registers the memory_added subscriber synchronously so
 // the first event after construction triggers a rebuild even if Run has
 // not yet been called.
-func NewMemoryRecallLobe(ws *cortex.Workspace, mem *memory.Store, wis *wisdom.Store, bus *hub.Bus) *MemoryRecallLobe {
+func NewMemoryRecallLobe(ws *cortex.Workspace, mem *memory.Store, wis wisdomStore, bus *hub.Bus) *MemoryRecallLobe {
 	l := &MemoryRecallLobe{
 		ws:  ws,
 		mem: mem,

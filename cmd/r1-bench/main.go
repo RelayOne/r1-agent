@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/RelayOne/r1/internal/bench"
@@ -35,17 +36,17 @@ func main() {
 }
 
 type cliFlags struct {
-	mission     string
-	agent       string
-	corpus      string
-	workDir     string
-	output      string
-	timeout     time.Duration
-	judgeModel  string
-	noJudge     bool
-	listAgents  bool
-	listCorpus  bool
-	aggregate   string // directory of *.json result files to aggregate; empty = run mode
+	mission         string
+	agent           string
+	corpus          string
+	workDir         string
+	output          string
+	timeout         time.Duration
+	judgeModel      string
+	noJudge         bool
+	listAgents      bool
+	listCorpus      bool
+	aggregate       string // directory of *.json result files to aggregate; empty = run mode
 	aggregateFormat string // "markdown" | "per-mission" | "both"
 }
 
@@ -119,6 +120,16 @@ func run() error {
 			return werr
 		}
 		return os.WriteFile(f.output, []byte(out), 0o644)
+	}
+
+	// SOTA gap #1: wire r1's real native agentloop into the r1/r1-antitrunc
+	// dispatchers so `--agent r1` benchmarks r1 itself, not the stub. No-op
+	// for other agents. The invoker reads model/creds from the environment
+	// (ANTHROPIC_API_KEY / R1_NATIVE_MODEL / R1_NATIVE_BASE_URL); without
+	// them the run fails honestly at the first model call rather than
+	// reporting a fake completion.
+	if strings.HasPrefix(f.agent, "r1") {
+		agents.SetR1ModelInvoker(resolveNativeInvoker(os.Getenv("R1_NATIVE_MODEL")))
 	}
 
 	dispatcher := agents.Lookup(f.agent)

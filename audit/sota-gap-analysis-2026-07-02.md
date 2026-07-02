@@ -9,6 +9,7 @@ Make the native, harness-owned agentloop the measured and self-improving path �
 ## Prioritized gaps
 
 ### #1 Make r1 self-benchmarkable end-to-end on the sealed/hidden-test harness  `[transformative / M / medium-risk]`  (Agent coding benchmarks and evaluation)
+> ✅ IMPLEMENTED (commit: 1fc0b3e7) — real NativeInvoker drives r1's native agentloop; proven with a mock provider. Native-loop half of #2 + runner-half of #5 also landed (branch enhance/sota-self-benchmark-2026-07-02).
 **Why it matters:** r1 cannot currently produce a real number for itself: the bench dispatcher falls back to notWiredR1Invoker (CompletionAttempted:false) and the runnable path (cmd/r1-bench) grades in a bare MkdirTemp with no container/hidden-test/honesty judging. This is the meta-lever — without it, none of the other improvements can be shown to help, and it IS the truthful-completion evaluator the whole repo is built around.
 
 **What to build:** Implement an agents.R1ModelInvoker in cmd/r1-bench that drives internal/agentloop.Run (via engine native_runner RunSpec) and assign it to R1Dispatcher.ModelInvoker (internal/bench/agents/r1.go:34,96 currently only ever gets notWiredR1Invoker at :136). Rewrite cmd/r1-bench/runner.go RunOne to execute inside bench/isolation.RunContainer (docker --network=none, cap-drop=ALL) and grade via bench/judge deterministic.checkHiddenTests + honesty.HonestyJudge instead of the bare workDir — all three already exist with zero non-test importers.
@@ -64,6 +65,7 @@ Make the native, harness-owned agentloop the measured and self-improving path �
 **What to build:** In internal/tools/str_replace.go add a normalization tier to whitespaceNormalizedReplace (:71) and normalizedEqual (:176): NFC-normalize and fold smart quotes / em-dashes / non-breaking spaces to ASCII before comparison, layered after whitespace and before fuzzy. Mirrors Codex apply_patch / OpenCode.
 
 ### #11 Use the semantic LLM decomposer on the default/oneshot path  `[medium / S / low-risk]`  (Planning & decomposition)
+> ⛔ DECLINED on inspection: plan.DecomposeTaskGap is gap-oriented (splits a stuck retry gap via StuckGap + PriorDirectives), not a fresh-task decomposer — the suggested wiring is a semantic mismatch. A proper oneshot task decomposer is separate work.
 **Why it matters:** The oneshot path splits compound tasks by regex on ' and ', numbered lists, and semicolons, so 'authentication and authorization' becomes two tasks with a spurious linear dependency. The faithful LLM decomposer already exists but is walled off inside the SOW pipeline.
 
 **What to build:** Route internal/oneshot/oneshot.go:137 through plan.DecomposeTaskGap (currently only called at cmd/r1/sow_native.go:5298,5713) instead of plan.Decompose's regex splitter (internal/plan/decompose.go:140-215); keep the regex path as a no-provider fallback.
