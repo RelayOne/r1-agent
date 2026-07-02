@@ -16,6 +16,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/concern"
+	ctemplates "github.com/RelayOne/r1/internal/concern/templates"
 	"github.com/RelayOne/r1/internal/harness/prompts"
 	htools "github.com/RelayOne/r1/internal/harness/tools"
 	"github.com/RelayOne/r1/internal/ledger"
@@ -50,6 +51,20 @@ func New(cfg Config, l *ledger.Ledger, b *bus.Bus, cb *concern.Builder) *Harness
 		concern: cb,
 		stances: make(map[string]*StanceSession),
 	}
+}
+
+// NewWithRoleTemplates creates a Harness whose concern Builder carries the
+// full role-template registry (internal/concern/templates). This is the
+// production stance-spawn path (audit A099/A100): every SpawnStance call
+// selects the registered template matching the requested role/face — e.g.
+// cto/reviewing resolves templates.CTOSnapshotConsultation — and projects
+// its ledger-backed sections into the stance's concern field. Callers that
+// need a trimmed registry (like bench's deliberately section-less fixtures)
+// build their own concern.Builder and use New instead.
+func NewWithRoleTemplates(cfg Config, l *ledger.Ledger, b *bus.Bus) *Harness {
+	cb := concern.NewBuilder(l, b)
+	ctemplates.RegisterAll(cb)
+	return New(cfg, l, b, cb)
 }
 
 // SpawnStance creates and initializes a new worker stance. It prepares the
