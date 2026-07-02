@@ -1,13 +1,10 @@
-// Package trustplane is Stoke's internal view of the TrustPlane
+// Package truecom is Stoke's internal view of the TrustPlane
 // gateway (STOKE-011). This interface does not match any TrustPlane
-// Go type exactly. Translation to TrustPlane's wire format will
-// happen inside RealClient (real.go), which is scheduled by the
-// TrustPlane implementation SOW but not yet present in this
-// package. We deliberately do NOT import any TrustPlane Go module —
-// the only coupling will be a vendored OpenAPI spec added under
-// internal/trustplane/openapi/ by SOW task B-2 (also not yet
-// present), which is used for hand-writing HTTP calls, not code
-// generation.
+// Go type exactly. Translation to TrustPlane's wire format happens
+// inside RealClient (real.go). We deliberately do NOT import any
+// TrustPlane Go module — the only coupling is the vendored OpenAPI
+// spec under internal/truecom/openapi/ (SOW task B-2), which is
+// used for hand-writing HTTP calls, not code generation.
 //
 // Scope consumed:
 //

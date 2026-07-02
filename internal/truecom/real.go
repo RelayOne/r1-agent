@@ -1,6 +1,6 @@
-// RealClient is the production HTTP implementation of trustplane.Client.
+// RealClient is the production HTTP implementation of truecom.Client.
 // It talks to the TrustPlane gateway over hand-written HTTP calls that
-// match the vendored OpenAPI spec at internal/trustplane/openapi/gateway.yaml.
+// match the vendored OpenAPI spec at internal/truecom/openapi/gateway.yaml.
 //
 // Design rules:
 //

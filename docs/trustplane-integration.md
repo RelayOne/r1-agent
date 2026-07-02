@@ -6,20 +6,20 @@ the wiring.
 
 ## Architecture in one paragraph
 
-R1 defines a narrow interface (`trustplane.Client`, 8 methods) for
+R1 defines a narrow interface (`truecom.Client`, 8 methods) for
 everything it asks TrustPlane to do: identity registration, audit
 anchoring, HITL approvals, reputation read/write, delegation
 create/verify/revoke, and Cedar policy evaluation. Two
 implementations ship: `StubClient` (in-process, always-pass, default)
 and `RealClient` (hand-written HTTP against the vendored OpenAPI spec
-at `internal/trustplane/openapi/gateway.yaml`). R1 deliberately
+at `internal/truecom/openapi/gateway.yaml`). R1 deliberately
 does **not** import any TrustPlane Go module; the only TrustPlane
 artifact in-tree is the vendored spec, used as documentation for the
 hand-written client.
 
 ## Selecting a client at startup
 
-`stoke-mcp` (and any future binary using `trustplane.NewFromEnv`)
+`stoke-mcp` (and any future binary using `truecom.NewFromEnv`)
 picks an implementation from environment variables:
 
 | Variable                    | Purpose                                          | Required for mode |
@@ -50,7 +50,7 @@ gateway verifies the signature against the JWK, checks that the JWK's
 thumbprint matches the public key registered at identity creation,
 and rejects `jti` replays inside a 5-minute window.
 
-R1's DPoP signer is `internal/trustplane/dpop`, Go-stdlib-only
+R1's DPoP signer is `internal/truecom/dpop`, Go-stdlib-only
 (`crypto/ed25519`, `encoding/base64`, `encoding/json`). No go-jose
 dependency — EdDSA signing is 50 lines in-tree.
 
@@ -83,10 +83,10 @@ from the old key remain valid until expiry.
 `RealClient` returns three kinds of error:
 
 1. **Sentinels** for branch-worthy states:
-   - `trustplane.ErrPolicyDenied` — policy evaluation returned deny.
-   - `trustplane.ErrDelegationInvalid` — delegation is revoked,
+   - `truecom.ErrPolicyDenied` — policy evaluation returned deny.
+   - `truecom.ErrDelegationInvalid` — delegation is revoked,
      expired, or over-scoped.
-2. **`*trustplane.httpError`** (internal type; reach via
+2. **`*truecom.httpError`** (internal type; reach via
    `errors.As(err, &he)`) for any other non-2xx response, carrying
    `Status`, `Method`, `URL`, and truncated `Body` for diagnostics.
 3. **Plain `error`** for pre-flight problems: marshalling,
@@ -109,13 +109,13 @@ can be retried freely by the caller on transport errors.
 
 ## Updating the vendored spec
 
-The OpenAPI YAML at `internal/trustplane/openapi/gateway.yaml` is
+The OpenAPI YAML at `internal/truecom/openapi/gateway.yaml` is
 hand-maintained. When TrustPlane ships a gateway change R1
 consumes:
 
 1. Edit `gateway.yaml` to match the new contract.
 2. Update the corresponding method on `RealClient`
-   (`internal/trustplane/real.go`).
+   (`internal/truecom/real.go`).
 3. Add a test in `real_test.go` that uses `httptest.NewServer` to
    verify the new request shape and response decoding.
 4. Update this doc with any new env var, error sentinel, or
