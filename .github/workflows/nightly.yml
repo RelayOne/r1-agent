@@ -1,12 +1,21 @@
 name: nightly
 
 # Nightly cron lane. PR CI continues to run `go test ./...`
-# (which skips the integration-tagged 1000-concurrent benchmark);
-# this workflow drives the heavier oneshot-concurrent job from
-# the operator's `large-linux` self-hosted runner. Guarded by
-# `if: github.event.schedule != ''` so it only runs on the
-# scheduled cron — PR CI continues to run `go test ./...`
-# which skips integration-tagged files.
+# (which skips the integration-tagged 1000-concurrent benchmark).
+#
+# Two jobs (audit A042 — the original single job pinned the nightly
+# cron to a `large-linux` self-hosted runner that was never registered,
+# so every scheduled run queued for 24h and was cancelled by GitHub's
+# queue cap; timeout-minutes only bounds execution, not queue time):
+#
+#   - oneshot-concurrent: scheduled cron, ubuntu-latest, reduced-size
+#     benchmark via the Makefile-documented commodity-host overrides
+#     (R1_BENCH_CONCURRENCY=100, R1_BENCH_WALL_BUDGET_S=10) so the
+#     nightly lane produces real regression signal on a hosted runner.
+#   - oneshot-concurrent-full: workflow_dispatch only, pinned to
+#     [self-hosted, large-linux] for the full 1000-concurrent run.
+#     Registering that runner is an operator task; until then this
+#     job is only reachable manually and never blocks the cron lane.
 #
 # Spec: specs/oneshot-production-hardening.md §T5.4.
 on:
@@ -16,14 +25,47 @@ on:
 
 jobs:
   oneshot-concurrent:
-    if: github.event.schedule != '' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: ulimits and host info
+        run: |
+          ulimit -n 65535 || true
+          ulimit -u 4096 || true
+          echo "nofile=$(ulimit -n)"
+          echo "nproc=$(ulimit -u)"
+          echo "host_nproc=$(nproc)"
+          uname -a
+      - name: reduced-size concurrent benchmark (commodity runner)
+        env:
+          R1_BENCH_CONCURRENCY: "100"
+          R1_BENCH_WALL_BUDGET_S: "10"
+        run: make test-oneshot-concurrent | tee oneshot-concurrent-summary.txt
+      - name: upload summary
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: oneshot-concurrent-summary
+          path: oneshot-concurrent-summary.txt
+
+  # Full-size benchmark. Requires an operator-registered self-hosted
+  # runner with the `large-linux` label (65k nofile, >=8 cores).
+  # Deliberately NOT on the cron: with no matching runner registered
+  # a scheduled job queues for 24h and is cancelled every night.
+  oneshot-concurrent-full:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, large-linux]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version-file: go.mod
       - name: ulimits and host info
         run: |
           ulimit -n 65535 || true
@@ -38,5 +80,5 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: oneshot-concurrent-summary
+          name: oneshot-concurrent-full-summary
           path: oneshot-concurrent-summary.txt
