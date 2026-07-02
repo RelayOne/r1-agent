@@ -20,6 +20,7 @@ import (
 	"github.com/RelayOne/r1/internal/harness/prompts"
 	htools "github.com/RelayOne/r1/internal/harness/tools"
 	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/sharedmem"
 )
 
 // Config holds mission-level harness configuration.
@@ -40,16 +41,27 @@ type Harness struct {
 	stances map[string]*StanceSession
 	mu      sync.RWMutex
 	seq     uint64 // monotonic stance counter
+
+	// memInner is the concrete backing store (needed for reducer
+	// registration, which is not on the Store interface); mem is the
+	// namespace-scoped view stances collaborate through. Together they
+	// activate STOKE-017 shared-memory blocks for concurrent stances —
+	// see sharedmem.go (audit A070).
+	memInner *sharedmem.MemoryStore
+	mem      *sharedmem.NamespacedStore
 }
 
 // New creates a Harness wired to the given ledger, bus, and concern builder.
 func New(cfg Config, l *ledger.Ledger, b *bus.Bus, cb *concern.Builder) *Harness {
+	inner := sharedmem.NewMemoryStore()
 	return &Harness{
-		config:  cfg,
-		ledger:  l,
-		bus:     b,
-		concern: cb,
-		stances: make(map[string]*StanceSession),
+		config:   cfg,
+		ledger:   l,
+		bus:      b,
+		concern:  cb,
+		stances:  make(map[string]*StanceSession),
+		memInner: inner,
+		mem:      sharedmem.NewNamespacedStore(inner, nil),
 	}
 }
 
