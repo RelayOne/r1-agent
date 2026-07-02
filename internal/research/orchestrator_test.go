@@ -746,3 +746,36 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// TestOrchestrator_LeadFallsBackWhenPersistFails covers audit A083:
+// writeSubagentDir failures were swallowed, and the Lead path re-read
+// findings from disk where an unwritten dir reads back as an EMPTY
+// Findings — silently degrading the report. The Lead must now receive
+// the in-memory findings for exactly the subagents whose persist failed.
+func TestOrchestrator_LeadFallsBackWhenPersistFails(t *testing.T) {
+	stub := &StubFetcher{Pages: map[string]string{
+		"https://example.com/pg": "Postgres documents its core feature clearly. Postgres is well-known.",
+	}}
+	dir := t.TempDir()
+	// Sabotage subagent-1's dir: a regular file makes MkdirAll fail.
+	if err := os.WriteFile(filepath.Join(dir, "subagent-1"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o := NewOrchestrator(stub)
+	o.RunRoot = dir
+	o.GlobalURLs = []string{"https://example.com/pg"}
+	var leadSaw []Findings
+	o.Lead = func(ctx context.Context, query string, findings []Findings) (string, error) {
+		leadSaw = findings
+		return "lead body", nil
+	}
+	if _, err := o.Run(context.Background(), "How does Postgres work?", EffortStandard); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(leadSaw) == 0 {
+		t.Fatal("lead received zero findings")
+	}
+	if leadSaw[0].Summary == "" && len(leadSaw[0].Sentences) == 0 {
+		t.Fatalf("lead findings[0] is empty — persist failure fed the Lead a hollow Findings: %+v", leadSaw[0])
+	}
+}
