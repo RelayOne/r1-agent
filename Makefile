@@ -1,5 +1,5 @@
 .PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic smoke-coderadar test-coderadar-integration
-.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic test-oneshot-concurrent
+.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic test-oneshot-concurrent test-fts5
 
 # Default: run the CI gate
 all: build test vet
@@ -16,9 +16,20 @@ build:
 	go build -tags sqlite_fts5 -o ./bin/r1 ./cmd/r1
 	go build -o ./bin/r1-acp ./cmd/r1-acp
 
-# Run all tests
-test:
+# Run all tests. Depends on test-fts5 so the sqlite_fts5-gated
+# regression guard runs on every `make test` / `make ci` (audit A068).
+test: test-fts5
 	go test ./... -count=1 -timeout=120s
+
+# FTS5-tagged test lane (audit A068). The FTS5 dormancy regression
+# guard (internal/research/fts5_active_test.go) is behind
+# //go:build sqlite_fts5 — the tag `make build` ships with — so an
+# untagged `go test ./...` never even compiles it, and the exact
+# regression it was written to catch (Search silently degrading to
+# the LIKE fallback) would ship undetected. Also exercises wisdom's
+# opportunistic hasFTS/searchFTS path under the tag.
+test-fts5:
+	go test -tags sqlite_fts5 -count=1 -timeout=120s ./internal/research/ ./internal/wisdom/
 
 # Run go vet
 vet:

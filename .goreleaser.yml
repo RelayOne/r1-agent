@@ -7,6 +7,10 @@ before:
     - go mod tidy
     - go vet ./...
     - go test ./... -count=1 -timeout=120s
+    # sqlite_fts5-tagged lane (audit A068): the FTS5 dormancy guard in
+    # internal/research/fts5_active_test.go only compiles under the tag,
+    # which the untagged run above never sets.
+    - go test -tags sqlite_fts5 -count=1 -timeout=120s ./internal/research/ ./internal/wisdom/
 
 builds:
   - id: r1
