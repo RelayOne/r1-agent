@@ -2024,15 +2024,39 @@ func sandboxDomainsForPhase(phase string) []string {
 	return nil
 }
 
-func planPromptWithSkills(e Engine) string {
-	prompt := stokeprompts.BuildPlanPrompt(e.Task, false, "")
+// defaultSkillTokenBudget is the fallback injection budget used when the
+// engine carries no normalized policy (zero-value SkillsConfig). Matches
+// config.DefaultSkillsConfig().TokenBudget.
+const defaultSkillTokenBudget = 3000
+
+// injectSkillsBudgeted applies policy-configured skill injection to the
+// prompt (audit A059). Enabled / TokenBudget / AlwaysOn / Excluded come
+// from e.Policy.Skills. A zero-value SkillsConfig (engine constructed
+// without a loaded policy — normalized policies always carry a non-zero
+// TokenBudget) preserves the historical default: injection enabled with
+// a 3000-token budget. An explicit enabled:false disables injection.
+func injectSkillsBudgeted(e Engine, prompt string) string {
+	s := e.Policy.Skills
+	if !s.Enabled && s.TokenBudget > 0 {
+		return prompt // explicit skills.enabled: false in the policy
+	}
+	budget := s.TokenBudget
+	if budget <= 0 {
+		budget = defaultSkillTokenBudget
+	}
 	reg := e.SkillRegistry
 	if reg == nil {
 		reg = skill.DefaultRegistry(e.RepoRoot)
 		_ = reg.Load()
 	}
-	prompt, _ = reg.InjectPromptBudgeted(prompt, e.StackMatches, 3000)
-	return prompt
+	reg.ConfigureInjection(s.AlwaysOn, s.Excluded)
+	out, _ := reg.InjectPromptBudgeted(prompt, e.StackMatches, budget)
+	return out
+}
+
+func planPromptWithSkills(e Engine) string {
+	prompt := stokeprompts.BuildPlanPrompt(e.Task, false, "")
+	return injectSkillsBudgeted(e, prompt)
 }
 
 func executePromptWithContext(e Engine) string {
@@ -2047,13 +2071,9 @@ func executePromptWithContext(e Engine) string {
 	basePrompt := executePrompt(e.Task, e.TaskType, e.TaskVerification)
 
 	// Inject matching built-in skills (keyword-triggered prompt augmentation).
-	// Use Engine's registry if available, otherwise auto-create from project root.
-	reg := e.SkillRegistry
-	if reg == nil {
-		reg = skill.DefaultRegistry(e.RepoRoot)
-		_ = reg.Load()
-	}
-	prompt, _ := reg.InjectPromptBudgeted(basePrompt, e.StackMatches, 3000)
+	// Budget and enable/always-on/excluded lists come from the policy
+	// (e.Policy.Skills) via injectSkillsBudgeted.
+	prompt := injectSkillsBudgeted(e, basePrompt)
 
 	// Append Tool RAG hits AFTER skill injection so the
 	// retrieval terms don't back-feed into skill keyword

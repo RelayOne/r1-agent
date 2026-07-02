@@ -12,6 +12,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/mcp"
 	"github.com/RelayOne/r1/internal/promptguard"
+	"gopkg.in/yaml.v3"
 )
 
 // PromptGuardConfig is the operator-facing per-phase action knob for
@@ -246,6 +247,14 @@ type Policy struct {
 	// DefaultHonestyConfig() in normalizePolicy, while an explicit
 	// `honesty:` block (even all-false) is honored as written.
 	honestyExplicit bool
+
+	// skillsExplicit is true when the YAML/JSON had a skills section.
+	// Mirrors honestyExplicit: an omitted section gets
+	// DefaultSkillsConfig() in normalizePolicy, while an explicit
+	// `skills:` block (even enabled:false) is honored as written —
+	// only a missing token_budget is back-filled so budget math never
+	// sees zero.
+	skillsExplicit bool
 }
 
 // HonestyConfig controls the 7-layer Honesty Judge.
@@ -288,14 +297,21 @@ func DefaultGovernanceConfig() GovernanceConfig {
 	return GovernanceConfig{Enabled: false}
 }
 
-// SkillsConfig controls skill injection behavior.
+// SkillsConfig controls skill injection behavior. Consumed by the
+// workflow engine's prompt-building path (injectSkillsBudgeted in
+// internal/workflow): Enabled gates injection, TokenBudget caps it,
+// AlwaysOn force-includes named skills ahead of budgeting, and Excluded
+// filters skills out of every tier. AutoDetect and ResearchFeed are
+// declared config surface without a consumer yet — the repo-stack
+// detection and research feed currently run unconditionally where
+// implemented (see internal/app and skill.Registry.UpdateFromResearch).
 type SkillsConfig struct {
-	Enabled      bool     `json:"enabled"`       // master switch (default true)
-	AlwaysOn     []string `json:"always_on"`     // skill names always injected
-	AutoDetect   bool     `json:"auto_detect"`   // run skillselect to detect repo stack
-	TokenBudget  int      `json:"token_budget"`  // max tokens for injection (default 3000)
-	ResearchFeed bool     `json:"research_feed"` // auto-update skills from research store
-	Excluded     []string `json:"excluded"`      // skill names to never load
+	Enabled      bool     `json:"enabled" yaml:"enabled"`             // master switch (default true)
+	AlwaysOn     []string `json:"always_on" yaml:"always_on"`         // skill names always injected
+	AutoDetect   bool     `json:"auto_detect" yaml:"auto_detect"`     // run skillselect to detect repo stack (not yet consumed)
+	TokenBudget  int      `json:"token_budget" yaml:"token_budget"`   // max tokens for injection (default 3000)
+	ResearchFeed bool     `json:"research_feed" yaml:"research_feed"` // auto-update skills from research store (not yet consumed)
+	Excluded     []string `json:"excluded" yaml:"excluded"`           // skill names to never load
 }
 
 // DefaultSkillsConfig returns the recommended skills configuration.
@@ -432,16 +448,18 @@ func LoadPolicy(path string) (Policy, error) {
 		if err = json.Unmarshal(raw, &p); err != nil {
 			return Policy{}, err
 		}
-		// Detect whether the JSON had a verification / governance / honesty section.
+		// Detect whether the JSON had a verification / governance / honesty / skills section.
 		var probe struct {
 			Verification *json.RawMessage `json:"verification"`
 			Governance   *json.RawMessage `json:"governance"`
 			Honesty      *json.RawMessage `json:"honesty"`
+			Skills       *json.RawMessage `json:"skills"`
 		}
 		json.Unmarshal(raw, &probe)
 		p.verificationExplicit = probe.Verification != nil
 		p.governanceExplicit = probe.Governance != nil
 		p.honestyExplicit = probe.Honesty != nil
+		p.skillsExplicit = probe.Skills != nil
 		return normalizePolicy(p), nil
 	}
 	p, err := parsePolicyYAML(trimmed)
@@ -509,7 +527,64 @@ func LoadPolicy(path string) (Policy, error) {
 	}
 	p.Honesty = honesty
 	p.honestyExplicit = honestyPresent
+	// Parse the skills top-level block (if any) via yaml.v3; the custom
+	// line-scanner above skips its contents. Absent block yields the zero
+	// SkillsConfig; normalizePolicy substitutes DefaultSkillsConfig()
+	// when the section was omitted.
+	skills, skillsPresent, err := parseSkillsBlock(raw)
+	if err != nil {
+		return Policy{}, err
+	}
+	p.Skills = skills
+	p.skillsExplicit = skillsPresent
 	return normalizePolicy(p), nil
+}
+
+// skillsConfigSchema is the top-level container used to round-trip the
+// `skills:` section by itself out of the raw policy YAML bytes.
+// parseSkillsBlock uses it internally to extract the section via
+// yaml.v3 — the same pattern used for `governance:` (governance_config.go)
+// and `honesty:` (honesty_config.go).
+type skillsConfigSchema struct {
+	Skills SkillsConfig `yaml:"skills" json:"skills"`
+}
+
+// parseSkillsBlock extracts the `skills:` top-level mapping from the raw
+// policy YAML bytes using yaml.v3. Returns the zero SkillsConfig and nil
+// error when the block is absent. The second return value, present,
+// reports whether a top-level `skills:` key exists in the parsed YAML —
+// it powers the "absent vs explicit" distinction so normalizePolicy
+// substitutes DefaultSkillsConfig() only when the operator omitted the
+// section entirely. Mirrors parseGovernanceBlock / parseHonestyBlock.
+func parseSkillsBlock(raw []byte) (SkillsConfig, bool, error) {
+	var doc skillsConfigSchema
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return SkillsConfig{}, false, fmt.Errorf("skills: yaml parse: %w", err)
+	}
+	return doc.Skills, topLevelYAMLKeyPresent(raw, "skills"), nil
+}
+
+// topLevelYAMLKeyPresent reports whether the raw policy YAML has the given
+// top-level mapping key. A `skills: null` or `skills:\n  enabled: false`
+// block still counts as present, while an omitted section does not.
+func topLevelYAMLKeyPresent(raw []byte, key string) bool {
+	var root yaml.Node
+	if err := yaml.Unmarshal(raw, &root); err != nil {
+		return false
+	}
+	doc := &root
+	if doc.Kind == yaml.DocumentNode && len(doc.Content) > 0 {
+		doc = doc.Content[0]
+	}
+	if doc.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i+1 < len(doc.Content); i += 2 {
+		if doc.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
 }
 
 // policySearchNames are the filenames checked (in order) when auto-discovering
@@ -583,9 +658,16 @@ func normalizePolicy(p Policy) Policy {
 	if !p.honestyExplicit {
 		p.Honesty = d.Honesty
 	}
-	// Apply skill defaults if not explicitly configured
-	if p.Skills.TokenBudget == 0 {
+	// Skills defaults apply when the section was never explicitly
+	// provided. An explicit skills: block (even enabled:false) is
+	// honored as written; only a missing token_budget is back-filled so
+	// budget math never sees zero. Previously an explicit
+	// skills.enabled:false without a token_budget was silently clobbered
+	// back to the (enabled) defaults.
+	if !p.skillsExplicit && p.Skills.TokenBudget == 0 {
 		p.Skills = d.Skills
+	} else if p.Skills.TokenBudget == 0 {
+		p.Skills.TokenBudget = d.Skills.TokenBudget
 	}
 	return p
 }
@@ -646,6 +728,12 @@ func parsePolicyYAML(input string) (Policy, error) {
 			// honesty.check_imports, ...); the custom scanner skips its
 			// contents and leaves parsing to parseHonestyBlock (yaml.v3).
 			// Mirrors the governance skip pattern above.
+			continue
+		case section == "skills":
+			// skills is a nested-map block (skills.enabled,
+			// skills.token_budget, ...); the custom scanner skips its
+			// contents and leaves parsing to parseSkillsBlock (yaml.v3).
+			// Mirrors the honesty skip pattern above.
 			continue
 		case section == "phases" && indent == 2 && strings.HasSuffix(text, ":"):
 			currentPhase = strings.TrimSuffix(text, ":")
