@@ -324,7 +324,7 @@ After PR #128 merges:
 # 2. Wire 3 Cloud Build triggers (one per env)
 ./services/scripts/setup-cloudbuild-triggers.sh
 
-# 3. Add the 9 CNAMEs to Cloudflare (see plans/HANDOFF-deploy-state.md)
+# 3. Verify the 12 CNAMEs in Cloudflare (already live; see the CNAME table in docs/DEPLOYMENT.md)
 # 4. Set real values on the 6 r1-{env}-shared-{DATABASE_URL,ANTHROPIC_API_KEY} secrets
 # 5. Smoke-check live: curl https://platform.r1.run/livez ; curl https://api.r1.run/v1/version
 ```

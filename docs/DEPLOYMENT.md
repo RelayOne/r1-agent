@@ -209,6 +209,7 @@ gcloud secrets versions add r1-prod-shared-DATABASE_URL \
 us-central1-docker.pkg.dev/relayone-488319/r1/r1-coord-api:<sha>      # 3.2 MB
 us-central1-docker.pkg.dev/relayone-488319/r1/r1-docs:<sha>           # 4.3 MB
 us-central1-docker.pkg.dev/relayone-488319/r1/r1-downloads-cdn:<sha>  # 7.0 MB
+us-central1-docker.pkg.dev/relayone-488319/r1/r1-admin:<sha>
 ```
 
 All distroless static (`gcr.io/distroless/static-debian12:nonroot`). Multi-stage builds; no glibc; no shell.
@@ -297,7 +298,7 @@ TAG=$(git rev-parse --short HEAD) ./services/deploy.sh prod
 TAG=$(git rev-parse --short HEAD) ./services/deploy.sh all   # all 3 envs sequentially
 ```
 
-The script runs `gcloud run deploy` for each of the 3 services × N envs, then smoke-checks `/livez` on each deployed service.
+The script runs `gcloud run deploy` for each of the 4 services (r1-coord-api, r1-docs, r1-downloads-cdn, r1-admin) × N envs, then smoke-checks `/livez` on each deployed service.
 
 ---
 
@@ -331,11 +332,11 @@ GET /v1/version  — version + env
 GET /            — service metadata
 ```
 
-Smoke-check all 9 services:
+Smoke-check all 12 services:
 
 ```bash
 for ENV in dev staging prod; do
-  for SVC in r1-coord-api r1-docs r1-downloads-cdn; do
+  for SVC in r1-coord-api r1-docs r1-downloads-cdn r1-admin; do
     URL=$(gcloud run services describe $SVC-$ENV --region=us-central1 --format='value(status.url)')
     CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$URL/livez")
     printf "%-30s %s %s\n" "$SVC-$ENV" "$CODE" "$URL"
@@ -343,7 +344,7 @@ for ENV in dev staging prod; do
 done
 ```
 
-Expected: 9 × `200`.
+Expected: 12 × `200`.
 
 ### Logs
 
@@ -500,7 +501,7 @@ done
 
 # 5. Build + push images
 TAG=$(git rev-parse --short HEAD)
-for SVC in r1-coord-api r1-docs r1-downloads-cdn; do
+for SVC in r1-coord-api r1-docs r1-downloads-cdn r1-admin; do
   gcloud builds submit services/$SVC \
     --tag=us-central1-docker.pkg.dev/$PROJECT/r1/$SVC:$TAG \
     --machine-type=e2-medium --timeout=600
@@ -523,9 +524,11 @@ for ENV in prod staging dev; do
     --domain=api$SUB.r1.run --region=us-central1
   gcloud beta run domain-mappings create --service=r1-downloads-cdn-$ENV \
     --domain=downloads$SUB.r1.run --region=us-central1
+  gcloud beta run domain-mappings create --service=r1-admin-$ENV \
+    --domain=admin$SUB.r1.run --region=us-central1
 done
 
-# 9. Add 9 CNAMEs to Cloudflare (ghs.googlehosted.com., proxy OFF)
+# 9. Add 12 CNAMEs to Cloudflare (ghs.googlehosted.com., proxy OFF)
 
 # 10. Wire deploy triggers
 ./services/scripts/setup-cloudbuild-triggers.sh
@@ -535,14 +538,14 @@ done
 
 # 12. Final smoke
 for ENV in dev staging prod; do
-  for SVC in r1-coord-api r1-docs r1-downloads-cdn; do
+  for SVC in r1-coord-api r1-docs r1-downloads-cdn r1-admin; do
     URL=$(gcloud run services describe $SVC-$ENV --region=us-central1 --format='value(status.url)')
     curl -sSf "$URL/livez" >/dev/null && echo "$SVC-$ENV OK" || echo "$SVC-$ENV FAIL"
   done
 done
 ```
 
-Expected: 9 × OK.
+Expected: 12 × OK.
 
 ---
 

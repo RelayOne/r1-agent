@@ -558,7 +558,7 @@ type Finding struct {
 - **Domain mappings** (live): 12 subdomains under `r1.run` — `platform|api|downloads|admin` across `prod|staging|dev`. Each maps to its Cloud Run service via CNAME → `ghs.googlehosted.com.`.
 
 ### DNS — Cloudflare zone for `r1.run`
-- 9 CNAME records (operator action; see `plans/HANDOFF-deploy-state.md`).
+- 12 CNAME records (live; see the CNAME table in `docs/DEPLOYMENT.md`).
 - Proxy mode MUST be **off** (gray cloud). Cloud Run provisions its own Google-managed TLS cert.
 
 ## Testing architecture
