@@ -63,6 +63,28 @@ type Learning struct {
 	ValidUntil *time.Time `json:"valid_until,omitempty"` // nil = no expiry
 }
 
+// Recorder is the behavior the workflow needs from a wisdom store: record
+// learnings, format them for prompt injection, recall a prior learning by
+// its failure-fingerprint hash, and enumerate everything recorded. Both the
+// in-memory Store and the persistent SQLiteStore satisfy it, so callers can
+// hold either — an ephemeral per-session store or a cross-run SQLite store —
+// behind one type without a build-time dependency on the SQLite/CGO driver.
+type Recorder interface {
+	// Record persists a learning under the given task ID.
+	Record(taskID string, l Learning)
+	// ForPrompt renders accumulated learnings as a prompt-injectable block.
+	ForPrompt() string
+	// FindByPattern returns the first learning recorded against a failure
+	// fingerprint hash, or nil when none matches. This is the recall half of
+	// the fingerprint->prior-fix loop.
+	FindByPattern(hash string) *Learning
+	// Learnings returns a snapshot of every recorded learning.
+	Learnings() []Learning
+}
+
+// Compile-time proof that the in-memory store satisfies Recorder.
+var _ Recorder = (*Store)(nil)
+
 // Store holds accumulated learnings for a build session.
 type Store struct {
 	mu        sync.Mutex

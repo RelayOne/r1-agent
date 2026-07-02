@@ -130,7 +130,7 @@ type Engine struct {
 	CodexHome       string
 	OnEvent         engine.OnEventFunc
 	State           *taskstate.TaskState
-	Wisdom          *wisdom.Store      // cross-task learning accumulator (nil = disabled)
+	Wisdom          wisdom.Recorder    // cross-task learning accumulator (nil = disabled); *wisdom.Store or *wisdom.SQLiteStore
 	CostTracker     *costtrack.Tracker // per-session cost tracking (nil = disabled)
 	Hooks           []TaskHook         // lifecycle hooks (nil = no hooks)
 	Recorder        *replay.Recorder   // session replay recording (nil = disabled)
@@ -565,6 +565,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	var lastFailure *failure.Analysis
 	var lastDiff string
 	var priorFingerprints []failure.Fingerprint // track failure fingerprints across attempts
+	// P4: cross-run fix recall. Set on a failure whose fingerprint a PRIOR
+	// run (or attempt) already recorded a learning for; consumed by the NEXT
+	// attempt's retry prompt so later runs against a persistent wisdom store
+	// get the prior context instead of rediscovering it.
+	var priorFixHint string
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// Budget gate: stop before spending more if over budget.
@@ -616,6 +621,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		prompt := executePhase.Prompt + planContext
 		if attempt > 1 && lastFailure != nil {
 			prompt = buildRetryPrompt(prompt, attempt, lastFailure, lastDiff, handle.Path)
+			// P4: if a prior run recorded a learning for this exact failure
+			// fingerprint, surface it so the retry doesn't rediscover it.
+			if priorFixHint != "" {
+				prompt += "\n\n--- CROSS-RUN RECALL ---\n" + priorFixHint + "\n"
+			}
 			// Invoke BeforeRetry hooks for additional prompt augmentation
 			for _, h := range e.Hooks {
 				aug, err := h.BeforeRetry(ctx, e.Task, attempt, lastFailure)
@@ -1283,6 +1293,17 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 
 		// Compute failure fingerprint for dedup across retries and tasks.
 		fp := failure.Compute(analysis)
+		// P4: close the fingerprint->prior-fix recall loop. The retry loop
+		// already RECORDS the fingerprint into wisdom (below) but never
+		// RECALLED it before this. Look the pattern up now; on a hit, stage a
+		// hint that the next attempt's retry prompt injects. Against a
+		// persistent (SQLite) store this surfaces a fix learned on a previous
+		// run when the same failure recurs.
+		if e.Wisdom != nil {
+			if prior := e.Wisdom.FindByPattern(fp.Hash); prior != nil && prior.Description != "" {
+				priorFixHint = fmt.Sprintf("A previous run hit this exact failure fingerprint; recorded learning: %s\nDo NOT repeat the approach that produced it.", prior.Description)
+			}
+		}
 		if matched, count := failure.MatchHistory(fp, priorFingerprints); matched != nil && count > 0 {
 			log.Error("fingerprint dedup: same failure repeated", "pattern", fp.Pattern, "count", count+1)
 			_ = e.advanceState(taskstate.Failed,
