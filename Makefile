@@ -181,13 +181,15 @@ lint-views:
 docs-agentic:
 	go run ./cmd/r1 mcp serve --print-tools --markdown > docs/AGENTIC-API-CATALOG.md
 	@echo "wrote docs/AGENTIC-API-CATALOG.md ($$(wc -l < docs/AGENTIC-API-CATALOG.md) lines)"
-# Verify package count hasn't drifted (CI check)
+# Verify package count hasn't drifted. Local drift guard (not wired into
+# CI); the expected count below is the single numeric source of truth —
+# docs reference it as "at last count".
 check-pkg-count:
-	@expected=180; \
+	@expected=265; \
 	actual=$$(find . -path ./vendor -prune -o -name "*.go" -print | xargs grep -l "^package " | sed 's|/[^/]*$$||' | sort -u | grep "^./internal/" | wc -l | tr -d ' '); \
 	if [ "$$actual" != "$$expected" ]; then \
 		echo "ERROR: internal package count drifted: expected $$expected, got $$actual"; \
-		echo "Update README.md, PACKAGE-AUDIT.md, and CLAUDE.md, then update this check."; \
+		echo "Update expected= in the Makefile check-pkg-count target, and refresh the 'at last count' figures in README.md, docs/README.md, docs/ARCHITECTURE.md, and CLAUDE.md."; \
 		exit 1; \
 	fi; \
 	echo "OK: $$actual internal packages (expected $$expected)"

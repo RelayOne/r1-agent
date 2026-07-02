@@ -294,7 +294,7 @@ make lint-views                             # spec 8 UI-without-API gate
 r1 antitrunc verify -n 20                   # spec 9 false-completion gate
 ```
 
-These commands are the gate. They must be green on every PR. CI also runs `-race`, `golangci-lint` (advisory), `govulncheck`, `gosec`, and `make check-pkg-count`.
+These commands are the gate. They must be green on every PR. CI also runs `-race`, `golangci-lint` (advisory), `govulncheck`, and `gosec`. `make check-pkg-count` is a local drift guard (not wired into CI); run it when adding or removing internal packages.
 
 ## Environments
 
