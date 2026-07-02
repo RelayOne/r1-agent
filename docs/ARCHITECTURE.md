@@ -40,10 +40,10 @@ R1 currently has five architectural planes that matter together:
 | SaaS DB | Cloud SQL Postgres 16 | db-g1-small (prod) / db-f1-micro (staging+dev) |
 | Auth (planned) | `@relayone/auth-core` (Path A: Go port) | private package |
 
-## Repository map (175 internal packages + 10 cmd binaries + services + web + desktop)
+## Repository map (265 internal packages + 11 cmd binaries + services + web + desktop)
 
 ```
-cmd/r1/                            CLI entrypoint — 30+ subcommands. Anti-truncation, lanes, missions, MCP serve, etc.
+cmd/r1/                            CLI entrypoint — 71 subcommands (see usage() in cmd/r1/main.go). Anti-truncation, lanes, missions, MCP serve, etc.
 cmd/r1-mcp/                        Standalone MCP-over-stdio server.
 cmd/r1-server/                     Mission API HTTP server. Hosts GET /api/session/{id}/export.tracebundle (always-on post-Spec-D; the prior R1_SERVER_UI_V2 envelope was removed). tracebundle_source.go is the production ledger-backed source; calls Store.ListNodesForSession / ListEdgesForSession / ChainRootHashForSession / CanonicalManifestSignBody.
 cmd/r1-acp/                        Agent Client Protocol adapter.
@@ -53,6 +53,7 @@ cmd/r1-skill-compile/              Deterministic skill compiler.
 cmd/chat-probe/                    Chat session probe utility.
 cmd/critique-compare/              Cross-model critique comparison.
 cmd/heroa-e2e/                     Heroa-platform end-to-end harness.
+cmd/r1-bench/                      Benchmark runner CLI (see the bench section below).
 
 --- V2 GOVERNANCE ---
 contentid/                         Content-addressed ID generation (SHA256, 16 prefixes)
@@ -561,7 +562,7 @@ type Finding struct {
 
 ## Testing architecture
 
-- **Go**: `go test ./...` runs all 175 packages; race-clean across the suite.
+- **Go**: `go test ./...` runs the full module (294 packages via `go list ./...` at last count); race-clean across the suite.
 - **Web** (vitest + jsdom + MSW): unit tests as sibling `<Component>.test.tsx`. Coverage threshold 80% statements / 70% branches enforced via `vitest.config.ts`. Coverage manifest test (`web/src/test/coverage-manifest.test.ts`) walks the source tree and fails if any component lacks a sibling `.test.tsx`.
 - **Web e2e** (Playwright + axe-core): `web/src/test/e2e/csp-axe.spec.ts` enforces zero CSP errors + zero serious/critical axe findings on every route across chromium + firefox + webkit. 9 `*.agent.feature.md` Gherkin-flavored flows for the spec 8 MCP harness.
 - **Storybook MCP**: every web component has a sibling `.stories.tsx` (CSF 3). Stories manifest test enforces this.
