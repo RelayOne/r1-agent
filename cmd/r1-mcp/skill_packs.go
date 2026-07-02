@@ -65,6 +65,14 @@ func (b *Backends) SeedSkillPackRoots(packRoots []string) (int, int, error) {
 			if err != nil {
 				return registered, skipped, fmt.Errorf("load bundled pack %s: %w", packPath, err)
 			}
+			// R1S-1.2 (audit A039): the actium-studio pack registers
+			// only when studio_config.enabled is true, per the contract
+			// in internal/config/studio.go — studio.* skills must not
+			// be advertised while uninvokable.
+			if !b.StudioConfig.Enabled && packHasStudioManifests(pack.Manifests) {
+				skipped += len(pack.Manifests)
+				continue
+			}
 			for _, manifest := range pack.Manifests {
 				if _, exists := b.ManifestRegistry.Get(manifest.Name); exists {
 					skipped++
@@ -120,4 +128,16 @@ func absolutizeManifestRefs(packPath string, manifest skillmfr.Manifest) skillmf
 		manifest.CompileProofRef = filepath.Join(manifestDir, manifest.CompileProofRef)
 	}
 	return manifest
+}
+
+// packHasStudioManifests reports whether any manifest in the pack
+// belongs to the Actium Studio surface (studio.* names). Used to gate
+// registration on studio_config.enabled (audit A039).
+func packHasStudioManifests(manifests []skillmfr.Manifest) bool {
+	for _, m := range manifests {
+		if strings.HasPrefix(m.Name, "studio.") {
+			return true
+		}
+	}
+	return false
 }

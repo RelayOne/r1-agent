@@ -31,11 +31,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/RelayOne/r1/internal/config"
 	"github.com/RelayOne/r1/internal/delegation"
 	"github.com/RelayOne/r1/internal/ledger"
 	"github.com/RelayOne/r1/internal/metrics"
@@ -43,6 +46,7 @@ import (
 	r1registry "github.com/RelayOne/r1/internal/r1skill/registry"
 	"github.com/RelayOne/r1/internal/skill"
 	"github.com/RelayOne/r1/internal/skillmfr"
+	"github.com/RelayOne/r1/internal/studioclient"
 	"github.com/RelayOne/r1/internal/truecom"
 	"github.com/RelayOne/r1/internal/verify"
 )
@@ -59,6 +63,20 @@ type Backends struct {
 	Evaluator        verify.Evaluator
 	MetricsRegistry  *metrics.Registry
 	SkillRuntime     *interp.Runtime
+
+	// StudioConfig gates the Actium Studio skill pack (audit A039):
+	// pack registration (skill_packs.go) and studio.* dispatch in
+	// Invoke both consult it. Resolved at construction from
+	// <cwd r1 dir>/studio.json + R1_ACTIUM_STUDIO_* env; tests
+	// overwrite it directly.
+	StudioConfig config.StudioConfig
+
+	// StudioHTTPClient overrides the HTTP client handed to
+	// studioclient.Resolve. Nil → default client. Used by tests.
+	StudioHTTPClient *http.Client
+
+	studioMu        sync.Mutex
+	studioTransport studioclient.Transport
 }
 
 const defaultPureFuncTimeout = 30 * time.Second
@@ -97,7 +115,16 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 	}
 	delMgr := delegation.NewManager(tp)
 	metricsRegistry := metrics.NewRegistry()
+	// Actium Studio runtime config (audit A039). Fail-soft: an
+	// invalid studio_config logs and leaves the pack disabled rather
+	// than killing the MCP server at startup.
+	studioCfg, studioErr := loadStudioConfigFromCwd()
+	if studioErr != nil {
+		fmt.Fprintf(os.Stderr, "r1-mcp: studio_config invalid, actium-studio pack disabled: %v\n", studioErr)
+		studioCfg = config.DefaultStudioConfig()
+	}
 	backends := &Backends{
+		StudioConfig:     studioCfg,
 		ManifestRegistry: skillmfr.NewRegistry(),
 		VerifyRegistry:   verify.NewRegistry(),
 		Ledger:           led,
@@ -131,10 +158,30 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 	return backends, nil
 }
 
+// loadStudioConfigFromCwd resolves the studio_config for the process
+// working directory (r1-mcp reads cwd once at startup, matching the
+// pack-registry seeding in main.go).
+func loadStudioConfigFromCwd() (config.StudioConfig, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		wd = ""
+	}
+	return config.LoadStudioConfig(wd)
+}
+
 // Close releases backend resources. Called from the binary
 // at shutdown.
 func (b *Backends) Close() error {
-	if b == nil || b.Ledger == nil {
+	if b == nil {
+		return nil
+	}
+	b.studioMu.Lock()
+	if b.studioTransport != nil {
+		_ = b.studioTransport.Close()
+		b.studioTransport = nil
+	}
+	b.studioMu.Unlock()
+	if b.Ledger == nil {
 		return nil
 	}
 	return b.Ledger.Close()
@@ -238,6 +285,18 @@ func (b *Backends) Invoke(ctx context.Context, missionID, capability string, inp
 	} else {
 		resp["manifest_registered"] = false
 	}
+	// Actium Studio dispatch (audit A039): non-IR studio.* capabilities
+	// ride the resolved studioclient Transport instead of the previous
+	// audit-only no-op. A disabled studio_config surfaces
+	// studioclient.ErrStudioDisabled to the caller.
+	if resp["deterministic"] != true && strings.HasPrefix(capability, "studio.") {
+		output, transportName, studioErr := b.invokeStudio(ctx, capability, input)
+		if studioErr != nil {
+			return nil, studioErr
+		}
+		resp["output"] = output
+		resp["studio_transport"] = transportName
+	}
 	// Record the invocation in the ledger so the audit
 	// trail captures WHO invoked WHAT (even for unregistered
 	// capabilities — callers should be able to reconstruct
@@ -297,6 +356,37 @@ func (b *Backends) invokeDeterministicSkill(ctx context.Context, manifest skillm
 		return nil, fmt.Errorf("decode deterministic skill output: %w", err)
 	}
 	return output, nil
+}
+
+// invokeStudio resolves (once, session-cached) the Transport for the
+// active studio_config and carries a studio.* capability invocation
+// over it (audit A039). The transport is resolved lazily so a
+// disabled or misconfigured Studio costs nothing until the first
+// studio.* call.
+func (b *Backends) invokeStudio(ctx context.Context, capability string, input json.RawMessage) (json.RawMessage, string, error) {
+	b.studioMu.Lock()
+	if b.studioTransport == nil {
+		t, err := studioclient.Resolve(b.StudioConfig, b.StudioHTTPClient, nil)
+		if err != nil {
+			b.studioMu.Unlock()
+			return nil, "", fmt.Errorf("r1-mcp: studio dispatch for %s: %w", capability, err)
+		}
+		b.studioTransport = t
+	}
+	transport := b.studioTransport
+	b.studioMu.Unlock()
+
+	var payload any
+	if len(input) > 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return nil, transport.Name(), fmt.Errorf("r1-mcp: studio input for %s: %w", capability, err)
+		}
+	}
+	out, err := transport.Invoke(ctx, capability, payload)
+	if err != nil {
+		return nil, transport.Name(), err
+	}
+	return out, transport.Name(), nil
 }
 
 func (b *Backends) wrapRuntimePureFunc(registryRef string, timeout time.Duration, fn interp.PureFunc) interp.PureFunc {
