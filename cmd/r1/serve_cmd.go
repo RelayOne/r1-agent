@@ -29,6 +29,7 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -36,6 +37,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -43,6 +45,7 @@ import (
 	"github.com/RelayOne/r1/internal/daemon"
 	"github.com/RelayOne/r1/internal/daemondisco"
 	"github.com/RelayOne/r1/internal/daemonlock"
+	"github.com/RelayOne/r1/internal/mcp"
 	"github.com/RelayOne/r1/internal/r1env"
 	"github.com/RelayOne/r1/internal/server"
 	"github.com/RelayOne/r1/internal/server/jsonrpc"
@@ -402,6 +405,12 @@ func runServeLoop(opts serveOptions) {
 			// designed for exactly this).
 			muxAlias.Handle("GET /v1/sessions/{id}/sse", buildSessionSSEHandler(rpcHandler, opts.Token))
 			fmt.Fprintf(os.Stderr, "session SSE mounted at /v1/sessions/{id}/sse\n")
+
+			// Lane control over the lanes WS (audit A040): route
+			// r1.lanes.list/kill/pin (+ killAll as iterated kill) by
+			// delegating to the MCP lane tool semantics against each
+			// session's cortex workspace, resolved at call time.
+			srv.WithLanes(&server.LanesWiring{Tools: newHubLanesTools(hub)})
 		}
 	}
 
@@ -542,3 +551,61 @@ func buildSessionSSEHandler(rpcHandler *jsonrpc.HubHandler, token string) http.H
 	return sse.AttachAuthFromQuery(inner)
 }
 
+// hubLanesTools adapts the multi-session SessionHub to
+// server.LaneToolInvoker (audit A040). The MCP lane tools
+// (internal/mcp/lanes_server.go) are written against a single
+// session's cortex workspace; the daemon hosts N sessions, so this
+// adapter resolves the session named by args["session_id"] at call
+// time, casts its Workspace to mcp.LanesBackend (*cortex.Workspace
+// satisfies it), and delegates to a per-session LanesServer. Sessions
+// without a cortex workspace — every session until the workspace
+// attach glue (audit A073/A041) lands — get an honest not_found
+// envelope instead of -32601.
+type hubLanesTools struct {
+	hub     *sessionhub.SessionHub
+	mu      sync.Mutex
+	servers map[string]*mcp.LanesServer
+}
+
+func newHubLanesTools(hub *sessionhub.SessionHub) *hubLanesTools {
+	return &hubLanesTools{hub: hub, servers: map[string]*mcp.LanesServer{}}
+}
+
+// laneToolErrorEnvelope builds the spec §7 error envelope shape the
+// WS route unwraps (matching mcp.LanesServer.envelopeError).
+func laneToolErrorEnvelope(code, msg string) string {
+	b, _ := json.Marshal(map[string]any{
+		"ok":            false,
+		"error_code":    code,
+		"error_message": msg,
+	})
+	return string(b)
+}
+
+// HandleToolCall implements server.LaneToolInvoker.
+func (t *hubLanesTools) HandleToolCall(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
+	sid, _ := args["session_id"].(string)
+	if sid == "" {
+		return laneToolErrorEnvelope("internal", "session_id is required"), nil
+	}
+	sess, err := t.hub.Get(sid)
+	if err != nil {
+		t.mu.Lock()
+		delete(t.servers, sid)
+		t.mu.Unlock()
+		return laneToolErrorEnvelope("not_found", fmt.Sprintf("session %q not found", sid)), nil
+	}
+	backend, ok := sess.Workspace.(mcp.LanesBackend)
+	if !ok || backend == nil {
+		return laneToolErrorEnvelope("not_found",
+			fmt.Sprintf("session %q has no cortex workspace (lanes unavailable)", sid)), nil
+	}
+	t.mu.Lock()
+	ls := t.servers[sid]
+	if ls == nil {
+		ls = mcp.NewLanesServer(backend, nil)
+		t.servers[sid] = ls
+	}
+	t.mu.Unlock()
+	return ls.HandleToolCall(ctx, toolName, args)
+}
