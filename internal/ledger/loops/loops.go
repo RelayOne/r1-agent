@@ -1,7 +1,15 @@
 // Package loops provides query helpers for consensus loop state tracking.
-// Loops are ledger nodes with type "loop". Their state transitions are driven
-// by supervisor rules. This package makes it easy to ask "what is the current
-// state of this loop" without walking the full supersede chain manually.
+// Loops are ledger nodes with type "loop". Supervisor consensus rules
+// (internal/supervisor/rules/consensus) read loop state through Tracker
+// (see ConvergenceDetected.Evaluate) and announce transitions as
+// "consensus.loop.state.changed" bus events; Tracker.SubscribeStateChanges
+// (registered at governance boot) persists those transitions back to the
+// ledger. This package makes it easy to ask "what is the current state of
+// this loop" without walking the full supersede chain manually.
+//
+// The persisted content schema matches the registered nodes.Loop struct
+// (internal/ledger/nodes/loop.go): state, loop_type, artifact_ref,
+// parent_loop_ref, convened_partners, terminal_reason.
 package loops
 
 import (
@@ -63,20 +71,26 @@ const (
 	LoopTypeTicket LoopType = "ticket"
 	// LoopTypePR governs a pull-request review.
 	LoopTypePR LoopType = "pr_review"
-	// LoopTypeRefactor governs a structural refactor proposal.
-	LoopTypeRefactor LoopType = "refactor"
+	// LoopTypeRefactor governs a structural refactor proposal. The value
+	// matches nodes.Loop's validLoopTypes ("refactor_proposal"), not the
+	// former divergent "refactor".
+	LoopTypeRefactor LoopType = "refactor_proposal"
 	// LoopTypeResearch governs a research-request lifecycle.
 	LoopTypeResearch LoopType = "research"
 )
 
 // loopContent is the JSON schema for the Content field of a loop node.
+// Field tags match the registered nodes.Loop struct
+// (internal/ledger/nodes/loop.go) so loop nodes written via either type
+// parse identically: artifact_ref / parent_loop_ref / terminal_reason,
+// not the former divergent artifact_id / parent_loop_id / reason.
 type loopContent struct {
 	State            LoopState `json:"state"`
 	LoopType         LoopType  `json:"loop_type"`
-	ArtifactID       string    `json:"artifact_id"`
-	ParentLoopID     string    `json:"parent_loop_id,omitempty"`
+	ArtifactID       string    `json:"artifact_ref"`
+	ParentLoopID     string    `json:"parent_loop_ref,omitempty"`
 	ConvenedPartners []string  `json:"convened_partners,omitempty"`
-	Reason           string    `json:"reason,omitempty"`
+	Reason           string    `json:"terminal_reason,omitempty"`
 }
 
 // LoopInfo is the query result for a single loop's current state.
@@ -248,9 +262,12 @@ func (t *Tracker) countStances(ctx context.Context, artifactID string) (agrees, 
 
 	for _, n := range refs {
 		switch n.Type {
-		case "agree":
+		case "agree", "review.agree":
+			// Both the registered nodes.Agree type ("agree") and the
+			// literal "review.agree" written by the governance bridge
+			// (see governance.onReview's naming-split note) count.
 			agrees++
-		case "dissent":
+		case "dissent", "review.dissent":
 			dissents++
 		}
 	}
@@ -341,21 +358,41 @@ func (t *Tracker) ActiveLoops(ctx context.Context, missionID string) ([]LoopInfo
 }
 
 // TransitionState writes a new loop state node to the ledger with a supersedes edge.
+// Content fields outside the tracker's own schema (e.g. nodes.Loop's
+// iteration_count / proposing_stance_role) are preserved verbatim so a
+// transition never strips data written by other components.
 func (t *Tracker) TransitionState(ctx context.Context, loopID string, newState LoopState, reason string) error {
 	resolved, err := t.ledger.Resolve(ctx, loopID)
 	if err != nil {
 		return fmt.Errorf("loops: resolve %s: %w", loopID, err)
 	}
 
-	lc, err := parseContent(resolved)
-	if err != nil {
+	if _, err := parseContent(resolved); err != nil {
 		return err
 	}
 
-	lc.State = newState
-	lc.Reason = reason
+	// Round-trip the full content map so unknown fields survive.
+	var full map[string]json.RawMessage
+	if err := json.Unmarshal(resolved.Content, &full); err != nil {
+		return fmt.Errorf("loops: unmarshal content for %s: %w", loopID, err)
+	}
+	if full == nil {
+		full = map[string]json.RawMessage{}
+	}
+	stateJSON, err := json.Marshal(newState)
+	if err != nil {
+		return fmt.Errorf("loops: marshal state: %w", err)
+	}
+	full["state"] = stateJSON
+	if reason != "" {
+		reasonJSON, err := json.Marshal(reason)
+		if err != nil {
+			return fmt.Errorf("loops: marshal reason: %w", err)
+		}
+		full["terminal_reason"] = reasonJSON
+	}
 
-	content, err := json.Marshal(lc)
+	content, err := json.Marshal(full)
 	if err != nil {
 		return fmt.Errorf("loops: marshal content: %w", err)
 	}

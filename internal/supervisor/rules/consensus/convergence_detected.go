@@ -8,6 +8,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/ledger/loops"
 	"github.com/RelayOne/r1/internal/schemaval"
 	"github.com/RelayOne/r1/internal/supervisor"
 )
@@ -44,15 +45,15 @@ func (r *ConvergenceDetected) Rationale() string {
 	return "A loop converges when all partners agree and no dissents are outstanding."
 }
 
-// convergenceContent holds the content of agree/dissent review nodes.
-type convergenceContent struct {
-	LoopID   string `json:"loop_id"`
-	Resolved bool   `json:"resolved"`
-}
-
-// Evaluate reports whether the loop referenced by evt has at least
-// one agree node and no unresolved dissent nodes. Returns false (with
-// no error) for irrelevant node types or missing loop scope.
+// Evaluate reports whether the loop referenced by evt structurally
+// converged: all convened partners have agree nodes referencing the
+// loop's current draft and no dissents are outstanding. Convergence is
+// read through loops.Tracker.IsConverged — the single loop-state query
+// mechanism (edge-walk over EdgeReferences from the loop's artifact) —
+// instead of the former mission-wide content scan with its divergent
+// {loop_id, resolved} schema (audit A066). Returns false (with no
+// error) for irrelevant node types, missing loop scope, or loop IDs
+// that do not resolve to a loop node.
 func (r *ConvergenceDetected) Evaluate(ctx context.Context, evt bus.Event, l *ledger.Ledger) (bool, error) {
 	var np nodeAddedPayload
 	if err := json.Unmarshal(evt.Payload, &np); err != nil {
@@ -75,36 +76,14 @@ func (r *ConvergenceDetected) Evaluate(ctx context.Context, evt bus.Event, l *le
 		return false, nil
 	}
 
-	// Query all review nodes in this loop's context.
-	nodes, err := l.Query(ctx, ledger.QueryFilter{MissionID: evt.Scope.MissionID})
+	converged, err := loops.NewTracker(l).IsConverged(ctx, loopID)
 	if err != nil {
-		return false, fmt.Errorf("query loop nodes: %w", err)
+		// The referenced loop node does not exist or its content is not
+		// loop-shaped — nothing to converge. Not a rule error: the event
+		// may reference a foreign or not-yet-created loop.
+		return false, nil
 	}
-
-	hasAgree := false
-	for _, n := range nodes {
-		if strings.Contains(n.Type, "dissent") {
-			// Check if dissent is resolved.
-			var cc convergenceContent
-			if err := json.Unmarshal(n.Content, &cc); err != nil {
-				continue
-			}
-			if cc.LoopID == loopID && !cc.Resolved {
-				return false, nil // outstanding dissent
-			}
-		}
-		if strings.Contains(n.Type, "agree") {
-			var cc convergenceContent
-			if err := json.Unmarshal(n.Content, &cc); err != nil {
-				continue
-			}
-			if cc.LoopID == loopID {
-				hasAgree = true
-			}
-		}
-	}
-
-	return hasAgree, nil
+	return converged, nil
 }
 
 // Action emits a consensus.loop.state.changed event transitioning the
@@ -127,7 +106,7 @@ func (r *ConvergenceDetected) Action(ctx context.Context, evt bus.Event, b *bus.
 		"reason":  "all partners agreed, no outstanding dissents",
 	})
 	return b.Publish(bus.Event{
-		Type:      "consensus.loop.state.changed",
+		Type:      loops.StateChangedEventType,
 		Scope:     evt.Scope,
 		Payload:   transitionPayload,
 		CausalRef: evt.ID,

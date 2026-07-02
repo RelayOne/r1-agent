@@ -8,6 +8,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/ledger/loops"
 	"github.com/RelayOne/r1/internal/schemaval"
 	"github.com/RelayOne/r1/internal/supervisor"
 )
@@ -69,7 +70,7 @@ func (r *DissentRequiresAddress) Action(ctx context.Context, evt bus.Event, b *b
 		"reason":  "dissent received",
 	})
 	if err := b.Publish(bus.Event{
-		Type:      "consensus.loop.state.changed",
+		Type:      loops.StateChangedEventType,
 		Scope:     evt.Scope,
 		Payload:   transitionPayload,
 		CausalRef: evt.ID,

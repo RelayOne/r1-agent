@@ -33,6 +33,7 @@ import (
 	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/ledger/loops"
 	"github.com/RelayOne/r1/internal/supervisor"
 	"github.com/RelayOne/r1/internal/supervisor/manifests"
 )
@@ -86,6 +87,14 @@ func New(ctx context.Context, stateDir, missionID string, budgetUSD float64) (*G
 		Scope: bus.Scope{MissionID: missionID},
 	}, b, l)
 	sup.RegisterRules(manifests.MissionRules()...)
+
+	// Persist consensus loop state transitions (audit A066): the
+	// consensus rules announce transitions as
+	// consensus.loop.state.changed bus events but cannot write the
+	// ledger from their Action hook; the loops tracker subscription is
+	// the component that applies them. The subscription dies with the
+	// bus on Close.
+	loops.NewTracker(l).SubscribeStateChanges(b)
 
 	if err := sup.Start(ctx); err != nil {
 		l.Close()
