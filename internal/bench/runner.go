@@ -25,6 +25,12 @@ const concernTemplateMissingMarker = "concern: no template for"
 // Runner executes golden missions against the Stoke substrate.
 type Runner struct {
 	goldenDir string
+
+	// Provider drives the spawned stance's model turns. Nil means the
+	// offline deterministic default (a harness.MockProvider with zero
+	// cost) so golden missions never touch the network; callers wanting
+	// real model turns inject a real Provider (e.g. harness.APIProvider).
+	Provider harness.Provider
 }
 
 // NewRunner creates a Runner that loads golden missions from goldenDir.
@@ -174,7 +180,7 @@ func (r *Runner) Run(ctx context.Context, mission *MissionConfig) (*RunResult, e
 	})
 
 	// Spawn a dev stance to execute the mission.
-	_, err = h.SpawnStance(ctx, harness.SpawnRequest{
+	handle, err := h.SpawnStance(ctx, harness.SpawnRequest{
 		Role:         "dev",
 		TaskDAGScope: mission.ID,
 	})
@@ -188,6 +194,22 @@ func (r *Runner) Run(ctx context.Context, mission *MissionConfig) (*RunResult, e
 			return nil, fmt.Errorf("bench: spawn stance: %w: %v", ErrFixtureBoundary, err)
 		}
 		return nil, fmt.Errorf("bench: spawn stance: %w", err)
+	}
+
+	// Drive the stance through at least one real runner turn so golden
+	// missions measure actual substrate work — worker.action events,
+	// between-turn checkpoint discipline, and token/cost accounting via
+	// cost_record ledger nodes (audit A041; previously the stance
+	// performed no work between spawn and mission.completed).
+	prov := r.Provider
+	if prov == nil {
+		prov = &harness.MockProvider{Responses: []*harness.ChatResponse{{
+			Content: "bench: golden mission acknowledged (offline substrate provider)",
+		}}}
+	}
+	stanceRunner := h.NewStanceRunner(prov, nil, harness.RunnerConfig{MaxTurns: 4})
+	if _, err := stanceRunner.Run(ctx, handle.ID, fmt.Sprintf("Execute golden mission %s: %s", mission.ID, mission.Title)); err != nil {
+		return nil, fmt.Errorf("bench: run stance: %w", err)
 	}
 
 	// Publish mission.completed event.

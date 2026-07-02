@@ -1,7 +1,9 @@
-// Package harness is the runtime layer that creates worker stances when the
-// supervisor's hooks call for spawning. It handles model selection, system
-// prompt construction, session initialization, pause/resume, tool
-// authorization, and stance lifecycle.
+// Package harness is the runtime layer that creates and executes worker
+// stances when the supervisor's hooks call for spawning. SpawnStance handles
+// model selection, system prompt construction, and session initialization;
+// StanceRunner (runner.go) drives the execution loop — Provider.Chat turns,
+// tool authorization, between-turn pause checkpoints, and token/cost
+// accounting.
 package harness
 
 import (
@@ -50,7 +52,10 @@ func New(cfg Config, l *ledger.Ledger, b *bus.Bus, cb *concern.Builder) *Harness
 	}
 }
 
-// SpawnStance creates and initializes a new worker stance.
+// SpawnStance creates and initializes a new worker stance. It prepares the
+// session (concern field, system prompt, model, authorized tools) and
+// publishes worker.spawned; execution is driven separately via
+// NewStanceRunner(...).Run on the returned handle's ID.
 func (h *Harness) SpawnStance(ctx context.Context, req SpawnRequest) (*StanceHandle, error) {
 	// 1. Validate request.
 	if req.Role == "" {
