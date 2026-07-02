@@ -24,6 +24,35 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  # Race-detection lane over the core concurrency packages (HARD1).
+  # Runs `make test-race` — the focused RACE_CORE_PKGS lane (bus, cortex,
+  # scheduler, engine, session, hub, boulder, worktree, memory) — nightly
+  # and on demand. The full-repo -race sweep already runs on every push
+  # to main via the Cloud Build `race` step (cloudbuild.yaml); this job
+  # exists so race regressions in the harness's coordination core are
+  # caught even during stretches with no push to main. All nine package
+  # trees were verified race-clean when this lane landed (2026-07-02).
+  race-core:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: core-concurrency race lane
+        # shell: bash (vs the implicit default) turns on -o pipefail so
+        # a race failure is not masked by tee's exit 0.
+        shell: bash
+        run: make test-race 2>&1 | tee race-core-summary.txt
+      - name: upload summary
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: race-core-summary
+          path: race-core-summary.txt
+
   oneshot-concurrent:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest

@@ -1,5 +1,5 @@
 .PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic smoke-coderadar test-coderadar-integration
-.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic test-oneshot-concurrent test-fts5
+.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic test-oneshot-concurrent test-fts5 test-race test-race-full
 
 # Default: run the CI gate
 all: build test vet
@@ -112,9 +112,34 @@ clean:
 	rm -rf dist/
 	rm -f coverage.out
 
-# Run tests with race detector
+# Race-detection lane over the core concurrency packages (HARD1).
+# These are the packages where goroutines, mutexes, and channels carry
+# the harness's real coordination load (event buses, cortex rounds,
+# scheduler dispatch, engine process groups, session stores, worktree
+# merge serialization, idle enforcement, memory stores). Focused so it
+# is fast enough for the nightly GitHub Actions lane
+# (.github/workflows/nightly.yml job race-core) and for local pre-push
+# runs; the full-repo sweep lives in test-race-full and the push-to-main
+# Cloud Build `race` step (cloudbuild.yaml) which runs ./... -race.
+# All packages below verified race-clean on 2026-07-02.
+RACE_CORE_PKGS := \
+	./internal/bus/... \
+	./internal/cortex/... \
+	./internal/scheduler/... \
+	./internal/engine/... \
+	./internal/session/... \
+	./internal/hub/... \
+	./internal/boulder/... \
+	./internal/worktree/... \
+	./internal/memory/...
+
 test-race:
-	go test ./... -race -count=1 -timeout=300s
+	go test $(RACE_CORE_PKGS) -race -count=1 -timeout=300s
+
+# Full-repo race sweep (formerly `test-race`). Slower; the Cloud Build
+# `race` step runs the equivalent (-mod=vendor) on every push to main.
+test-race-full:
+	go test ./... -race -count=1 -timeout=600s
 
 # Run tests with coverage
 test-cover:
