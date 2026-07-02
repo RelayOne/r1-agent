@@ -742,15 +742,18 @@ pub struct SessionLanesSubscribeResult {
 }
 
 /// `session.lanes.subscribe` — register a subscription. Forwards every
-/// `LaneEvent` the daemon emits for this session through the
-/// `tauri::ipc::Channel<LaneEvent>` the WebView passed in (`on_event`
-/// kwarg). The host-side LanesState owns the per-subscription
-/// forwarder so `session_lanes_unsubscribe` and host-side teardown
-/// (window close, daemon disconnect) can drop it deterministically.
+/// `LaneEvent` the daemon pushes for this session (lane.* stdout
+/// events routed via subprocess.rs → `LanesState::dispatch`) through
+/// the `tauri::ipc::Channel<LaneEvent>` the WebView passed in
+/// (`on_event` kwarg). The host-side LanesState owns the
+/// per-subscription forwarder so `session_lanes_unsubscribe` and
+/// host-side teardown (window close, daemon disconnect) can drop it
+/// deterministically.
 ///
-/// Wired per audit/scan-rust-stubs.md item #2: the previous body
-/// dropped the Channel handle, so no LaneEvent ever reached the
-/// WebView even though the verb returned a `subscription_id`.
+/// Wired per audit/scan-rust-stubs.md item #2 (Channel handle no
+/// longer dropped) + audit/complete-systems-2026-07-01.md A052 (the
+/// registered sink is now actually fed, and a daemon build without
+/// `session.lanes.subscribe` no longer aborts the subscription).
 #[tauri::command]
 pub async fn session_lanes_subscribe(
     params: SessionLanesSubscribeParams,
@@ -759,18 +762,32 @@ pub async fn session_lanes_subscribe(
     state: State<'_, crate::lanes::LanesState>,
 ) -> IpcResult<SessionLanesSubscribeResult> {
     // Step 1: round-trip to the daemon so it starts pushing lane
-    // events for this session over its existing event bus. The result
-    // carries the daemon-side subscription id; we use it as the
+    // events for this session over its existing event bus. When the
+    // daemon implements the verb, its subscription id becomes the
     // host-side registry key so unsubscribe routing works for both
-    // host-fast-path and daemon-side drops.
-    let val = mgr
+    // host-fast-path and daemon-side drops. Daemon builds that
+    // pre-date the verb (-32601 method_not_found / -32010
+    // not_implemented, e.g. today's `r1 desktop-rpc` dispatch) push
+    // lane.* events unsolicited over the session stdout stream, so we
+    // fall back to a host-generated id instead of failing the whole
+    // subscription (A052: the old hard failure made the frontend emit
+    // a synthetic `killed` event on every subscribe).
+    let result = match mgr
         .rpc_call(
             &params.session_id,
             "session.lanes.subscribe",
             serde_json::to_value(&params).unwrap_or(serde_json::json!({})),
         )
-        .await?;
-    let result: SessionLanesSubscribeResult = from_val(val)?;
+        .await
+    {
+        Ok(val) => from_val::<SessionLanesSubscribeResult>(val)?,
+        Err(err) if err.code == -32601 || err.code == -32010 => {
+            SessionLanesSubscribeResult {
+                subscription_id: format!("host-{}", uuid::Uuid::new_v4()),
+            }
+        }
+        Err(err) => return Err(err),
+    };
 
     // Step 2: register a host-side LaneSubscription that forwards
     // every LaneEvent emitted by the daemon's session bus to the
