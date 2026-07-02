@@ -35,3 +35,10 @@ func Kill(cmd *exec.Cmd) error {
 	}
 	return cmd.Process.Kill()
 }
+
+// KillGroup is a no-op on Windows: there is no POSIX pgid to signal, and
+// cmd.Cancel (Process.Kill) has already terminated the direct child.
+func KillGroup(pid int) error { return nil }
+
+// GroupAlive always reports false on Windows (no pgid probe available).
+func GroupAlive(pid int) bool { return false }

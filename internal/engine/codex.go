@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/RelayOne/r1/internal/costtrack"
-	"github.com/RelayOne/r1/internal/procutil"
 	"github.com/RelayOne/r1/internal/stream"
 )
 
@@ -73,7 +72,8 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 		cmd.Dir = prepared.Dir
 		cmd.Env = prepared.Env
 	}
-	procutil.ConfigureProcessGroup(cmd)
+	// Group isolation + group-wide ctx cancellation (audit A002)
+	setupGroupLifecycle(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -88,6 +88,7 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 	if err := cmd.Start(); err != nil {
 		return RunResult{}, fmt.Errorf("start codex: %w", err)
 	}
+	leaderPid := cmd.Process.Pid
 
 	// Read stderr for rate limit detection (Codex prints "429 Too Many Requests" there)
 	stderrDone := make(chan string, 1)
@@ -149,6 +150,7 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 
 	select {
 	case waitErr := <-waitDone:
+		reapGroupOnCancel(ctx, leaderPid)
 		stderrText := <-stderrDone
 		if waitErr != nil {
 			var exitErr *exec.ExitError

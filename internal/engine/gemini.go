@@ -52,8 +52,14 @@ func (r *GeminiRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	cmd := exec.CommandContext(ctx, prepared.Binary, prepared.Args...) // #nosec G204 -- CLI runner launches vetted provider binary with Stoke-generated args.
 	cmd.Dir = prepared.Dir
 	cmd.Env = prepared.Env
+	// Group isolation + group-wide ctx cancellation (audit A002); this
+	// runner previously had NO process-group handling at all.
+	setupGroupLifecycle(cmd)
 
 	out, err := cmd.CombinedOutput()
+	if cmd.Process != nil {
+		reapGroupOnCancel(ctx, cmd.Process.Pid)
+	}
 	result := RunResult{Prepared: prepared, ResultText: string(out)}
 	if err != nil {
 		result.IsError = true

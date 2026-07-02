@@ -133,8 +133,9 @@ func (r *ClaudeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		cmd.Env = prepared.Env
 	}
 
-	// Process group isolation: prevents orphaned claude/node subprocesses (#33979)
-	procutil.ConfigureProcessGroup(cmd)
+	// Process group isolation + group-wide ctx cancellation: prevents
+	// orphaned claude/node subprocesses (#33979, audit A002)
+	setupGroupLifecycle(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -145,6 +146,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	if err := cmd.Start(); err != nil {
 		return RunResult{}, fmt.Errorf("start claude: %w", err)
 	}
+	leaderPid := cmd.Process.Pid
 
 	// Parse the NDJSON stream with 3-tier timeouts
 	done := make(chan struct{})
@@ -180,6 +182,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 
 	select {
 	case waitErr := <-waitDone:
+		reapGroupOnCancel(ctx, leaderPid)
 		if waitErr != nil {
 			var exitErr *exec.ExitError
 			if errors.As(waitErr, &exitErr) {
