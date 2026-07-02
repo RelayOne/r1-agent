@@ -40,7 +40,7 @@ R1 currently has five architectural planes that matter together:
 | SaaS DB | Cloud SQL Postgres 16 | db-g1-small (prod) / db-f1-micro (staging+dev) |
 | Auth (planned) | `@relayone/auth-core` (Path A: Go port) | private package |
 
-## Repository map (259 internal packages + 11 cmd binaries + services + web + desktop)
+## Repository map (251 internal packages + 11 cmd binaries + services + web + desktop)
 
 ```
 cmd/r1/                            CLI entrypoint — 71 subcommands (see usage() in cmd/r1/main.go). Anti-truncation, lanes, missions, MCP serve, etc.
@@ -563,7 +563,7 @@ type Finding struct {
 
 ## Testing architecture
 
-- **Go**: `go test ./...` runs the full module (289 packages via `go list ./...` at last count); race-clean across the suite.
+- **Go**: `go test ./...` runs the full module (281 packages via `go list ./...` at last count); race-clean across the suite.
 - **Web** (vitest + jsdom + MSW): unit tests as sibling `<Component>.test.tsx`. Coverage threshold 80% statements / 70% branches enforced via `vitest.config.ts`. Coverage manifest test (`web/src/test/coverage-manifest.test.ts`) walks the source tree and fails if any component lacks a sibling `.test.tsx`.
 - **Web e2e** (Playwright + axe-core): `web/src/test/e2e/csp-axe.spec.ts` enforces zero CSP errors + zero serious/critical axe findings on every route across chromium + firefox + webkit. 9 `*.agent.feature.md` Gherkin-flavored flows for the spec 8 MCP harness.
 - **Storybook MCP**: every web component has a sibling `.stories.tsx` (CSF 3). Stories manifest test enforces this.

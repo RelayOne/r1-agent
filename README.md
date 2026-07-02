@@ -255,7 +255,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 | Specs 1-9 (cortex / lanes / multi-surface / agentic / anti-trunc) | **Done — merged to main** | Specs 6/7/8/9 + r1.run SaaS shipped via PRs #128 / #143 / #150 / #151. |
 | 12 Cloud Run SaaS surfaces (4 services × 3 envs) | **Live — 12/12 HTTPS-200 on /livez** | dev/staging/prod for r1-coord-api, r1-docs, r1-downloads-cdn, r1-admin. All r1.run subdomains resolve. |
 | Cloud SQL (r1-{prod,staging,dev}-pg, POSTGRES_16) | **Live** | All RUNNABLE; DSN secrets in Secret Manager + bound via `--add-cloudsql-instances`. |
-| `go build`/`vet`/`test` | **All green** | Full `go list ./...` set green (289 packages at last count); sequential test suite passes; race-detector clean on the bus. |
+| `go build`/`vet`/`test` | **All green** | Full `go list ./...` set green (281 packages at last count); sequential test suite passes; race-detector clean on the bus. |
 | Web + desktop + web-components vitest | **All green** | 295 tests pass (web 212 + components 19 + desktop 64). React 19 + jsdom 26 stack. |
 | JWT login + RelayOne MSP SSO | **Done — Path A Go reimpl** | `services/r1-coord-api/internal/auth/{jwt,sso,middleware}.go`; HS256 + RS256; OIDC code flow. |
 | Admin panel (admin.r1.run) | **Partial** | `services/r1-admin/main.go` — live hosted surface; operator JWT verification and runtime summary are real, but major business/session/user data sections are still partial. |
@@ -271,7 +271,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 | Doc | Audience | What it covers |
 |---|---|---|
 | [`docs/README.md`](docs/README.md) | Everyone | Mirror of this file. |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Engineers | Tech stack, repo map (259 internal packages), system components, data models, API surface, infrastructure, testing architecture. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Engineers | Tech stack, repo map (251 internal packages), system components, data models, API surface, infrastructure, testing architecture. |
 | [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) | Anyone | User journey, technical walkthrough, key technical decisions. |
 | [`docs/FEATURE-MAP.md`](docs/FEATURE-MAP.md) | PMs / decision-makers | Feature inventory grouped by area, status (Done / In-Progress / Scoped / Scoping / Potential). |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | DevOps | Prerequisites, env vars, build, deploy, infrastructure, monitoring, rollback. |
