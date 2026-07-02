@@ -36,6 +36,7 @@ import (
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/ledger"
 	"github.com/RelayOne/r1/internal/ledger/loops"
+	"github.com/RelayOne/r1/internal/skillmfr"
 	"github.com/RelayOne/r1/internal/supervisor"
 	"github.com/RelayOne/r1/internal/supervisor/manifests"
 )
@@ -49,6 +50,13 @@ type Governor struct {
 	bus    *bus.Bus
 	ledger *ledger.Ledger
 	sup    *supervisor.Supervisor
+
+	// mfr is the skill manufacturing pipeline (audit A071). Started in
+	// New so a live "skill." bus subscriber exists on every governed
+	// run: the supervisor's extraction trigger publishes
+	// skill.extraction.requested and the Manufacturer consumes it,
+	// writing skill ledger nodes.
+	mfr *skillmfr.Manufacturer
 
 	// costBridge routes hub model.post_call usage into cost.recorded
 	// bus events + cost_record ledger nodes (audit A055). Budget
@@ -110,12 +118,27 @@ func New(ctx context.Context, stateDir, missionID string, budgetUSD float64) (*G
 		return nil, fmt.Errorf("governance: start supervisor: %w", err)
 	}
 
+	// Skill manufacturing pipeline (audit A071): the mission manifest's
+	// extraction trigger emits skill.extraction.requested, and the
+	// Manufacturer is the component that consumes skill.* events and
+	// writes skill ledger nodes. Start it after the supervisor so the
+	// producer/consumer pair goes live together; on error, unwind the
+	// already-started resources like the paths above.
+	mfr := skillmfr.New(b, l)
+	if err := mfr.Start(ctx); err != nil {
+		_ = sup.Stop()
+		l.Close()
+		b.Close()
+		return nil, fmt.Errorf("governance: start skill manufacturer: %w", err)
+	}
+
 	return &Governor{
 		missionID:  missionID,
 		budgetUSD:  budgetUSD,
 		bus:        b,
 		ledger:     l,
 		sup:        sup,
+		mfr:        mfr,
 		costBridge: bridge.NewCostBridge(b, l, 0),
 	}, nil
 }
@@ -181,8 +204,36 @@ func (g *Governor) handle(ctx context.Context, ev *hub.Event) *hub.HookResponse 
 	case hub.EventGitPostMerge:
 		g.onDecision(ctx, ev, "merge_complete")
 		g.publishLifecycle("merge.done", ev.TaskID)
+		g.publishLoopConverged(ev.TaskID)
+	case hub.EventMissionConverged:
+		g.publishLoopConverged(ev.TaskID)
 	}
 	return nil
+}
+
+// publishLoopConverged announces loop convergence on the v2 bus at
+// mission-completion points (audit A071): the merge.done path — in the
+// per-task v1 workflow a completed merge is the moment a loop's work
+// has landed — and mission.converged for runners that emit it. The
+// skill extraction trigger (supervisor/rules/skill, Pattern "loop.")
+// matches this event and responds with skill.extraction.requested,
+// which the Manufacturer turns into a skill ledger node. Extraction is
+// idempotent per mission (skillmfr.ExtractFromMission), so repeated
+// merges do not accumulate duplicate skill nodes.
+func (g *Governor) publishLoopConverged(taskID string) {
+	payload, err := json.Marshal(map[string]string{
+		"mission_id": g.missionID,
+		"task_id":    taskID,
+	})
+	if err != nil {
+		return
+	}
+	_ = g.bus.Publish(bus.Event{
+		Type:      "loop.converged",
+		EmitterID: "governance.bridge",
+		Scope:     bus.Scope{MissionID: g.missionID, TaskID: taskID},
+		Payload:   payload,
+	})
 }
 
 // onCost accumulates the cost from a model.post_call event and publishes a
@@ -438,6 +489,11 @@ func (g *Governor) onBudgetExceeded() {
 func (g *Governor) Close() error {
 	var err error
 	g.closeOnce.Do(func() {
+		if g.mfr != nil {
+			if merr := g.mfr.Stop(); merr != nil && err == nil {
+				err = merr
+			}
+		}
 		if g.sup != nil {
 			if serr := g.sup.Stop(); serr != nil && err == nil {
 				err = serr

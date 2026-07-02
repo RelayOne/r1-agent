@@ -113,6 +113,11 @@ func (m *Manufacturer) ImportShippedLibrary(ctx context.Context, skills []SkillF
 
 // ExtractFromMission reads completed mission decisions and manufactures skills.
 // The extracted skill starts at "candidate" confidence.
+//
+// Extraction is idempotent per mission: loop.converged fires once per
+// merged task in the governance bridge (audit A071), so a mission with
+// N merges triggers N extraction requests. Only the first writes the
+// extracted skill node; later calls find it and return nil.
 func (m *Manufacturer) ExtractFromMission(ctx context.Context, missionID string) error {
 	nodes, err := m.ledger.Query(ctx, ledger.QueryFilter{
 		MissionID: missionID,
@@ -129,6 +134,22 @@ func (m *Manufacturer) ExtractFromMission(ctx context.Context, missionID string)
 		Name:       fmt.Sprintf("extracted-%s", missionID),
 		Confidence: ConfidenceCandidate,
 		Provenance: ProvenanceManufactured,
+	}
+
+	// Idempotency guard: skip when this mission's extracted skill
+	// already exists in the ledger.
+	existing, err := m.ledger.Query(ctx, ledger.QueryFilter{
+		MissionID: missionID,
+		Type:      nodeTypeSkill,
+	})
+	if err != nil {
+		return fmt.Errorf("skillmfr: query existing skills for mission %s: %w", missionID, err)
+	}
+	for _, n := range existing {
+		var prior SkillFile
+		if err := json.Unmarshal(n.Content, &prior); err == nil && prior.Name == sf.Name {
+			return nil
+		}
 	}
 
 	content, err := json.Marshal(sf)
