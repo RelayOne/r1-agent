@@ -87,11 +87,30 @@ func NewStore(cfg Config) (*Store, error) {
 func (s *Store) Remember(cat Category, content string, tags ...string) *Entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	e := s.rememberLocked(cat, content, "", "", tags)
+	return &e
+}
 
+// RememberWithContext adds a memory with task context.
+func (s *Store) RememberWithContext(cat Category, content, context, file string, tags ...string) *Entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.rememberLocked(cat, content, context, file, tags)
+	return &e
+}
+
+// rememberLocked builds and appends the complete entry in one critical
+// section; callers hold s.mu. It returns a COPY — handing out
+// &s.entries[i] aliases the backing array and races with slice growth,
+// and the old two-critical-section RememberWithContext could attach
+// Context/File to ANOTHER goroutine's entry.
+func (s *Store) rememberLocked(cat Category, content, context, file string, tags []string) Entry {
 	entry := Entry{
 		ID:         fmt.Sprintf("mem-%d", s.nextID),
 		Category:   cat,
 		Content:    content,
+		Context:    context,
+		File:       file,
 		Tags:       tags,
 		CreatedAt:  time.Now(),
 		LastUsed:   time.Now(),
@@ -101,19 +120,7 @@ func (s *Store) Remember(cat Category, content string, tags ...string) *Entry {
 	}
 	s.nextID++
 	s.entries = append(s.entries, entry)
-	return &s.entries[len(s.entries)-1]
-}
-
-// RememberWithContext adds a memory with task context.
-func (s *Store) RememberWithContext(cat Category, content, context, file string, tags ...string) *Entry {
-	s.Remember(cat, content, tags...)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Find the entry we just added (last one)
-	idx := len(s.entries) - 1
-	s.entries[idx].Context = context
-	s.entries[idx].File = file
-	return &s.entries[idx]
+	return entry
 }
 
 // Recall retrieves relevant memories for a given context.
