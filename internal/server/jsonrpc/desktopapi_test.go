@@ -112,6 +112,15 @@ func TestRPC_AllElevenVerbsRegistered(t *testing.T) {
 		"cost.get_history",
 		"descent.current_tier",
 		"descent.tier_history",
+		// Contract §2.7/§2.8 + spec desktop-cortex-augmentation §7
+		// (audit A029).
+		"session.lanes.list",
+		"session.lanes.subscribe",
+		"session.lanes.unsubscribe",
+		"session.lanes.kill",
+		"session.set_workdir",
+		"daemon.status",
+		"daemon.shutdown",
 	}
 	for _, m := range want {
 		if !d.HasMethod(m) {

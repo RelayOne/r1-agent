@@ -241,3 +241,92 @@ func TestDesktopRPC_DescentCurrentTier_NotImplemented(t *testing.T) {
 		t.Errorf("expected -32010, got %v", code)
 	}
 }
+
+// TestDesktopRPC_ContractVerbs_NeverMethodNotFound (audit A029) is the
+// drift guard demanded by the contract: every round-trip verb the Tauri
+// host sends (desktop/IPC-CONTRACT.md §2.1–§2.8 plus session.set_workdir
+// from spec desktop-cortex-augmentation §7) must dispatch to a real
+// handler path — success or a typed stokerr-tagged error — and must
+// NEVER fall through to -32601 method_not_found. Add new contract verbs
+// here so a Rust-side verb addition without a Go-side dispatch case
+// fails this test instead of failing silently at runtime.
+//
+// session.cancel is intentionally absent: its handler path calls
+// os.Exit(0) after flushing session.ended, which would kill the test
+// process.
+func TestDesktopRPC_ContractVerbs_NeverMethodNotFound(t *testing.T) {
+	verbs := []string{
+		// §2.1 session control
+		"session.start", "session.pause", "session.resume",
+		// §2.2 ledger query
+		"ledger.get_node", "ledger.list_events",
+		// §2.3 memory inspection
+		"memory.list_scopes", "memory.query",
+		// §2.4 cost
+		"cost.get_current", "cost.get_history",
+		// §2.5 descent state
+		"descent.current_tier", "descent.tier_history",
+		// §2.7 lane control
+		"session.lanes.list", "session.lanes.subscribe",
+		"session.lanes.unsubscribe", "session.lanes.kill",
+		// spec desktop-cortex-augmentation §7 workdir binding
+		"session.set_workdir",
+		// §2.8 daemon control
+		"daemon.status", "daemon.shutdown",
+		// stdin-path no-op ack (§5, tolerated on the RPC path)
+		"session.send",
+		// Tauri-only skill verbs degrade to not_implemented
+		"skill.list", "skill.get",
+	}
+	for _, verb := range verbs {
+		verb := verb
+		t.Run(verb, func(t *testing.T) {
+			resp := callRPC(t, verb, map[string]any{"session_id": "s-1"})
+			errObj, isErr := resp["error"].(map[string]any)
+			if !isErr {
+				return // success result is a valid non-method_not_found path
+			}
+			code, _ := errObj["code"].(float64)
+			if code == -32601 {
+				t.Fatalf("%s: fell through to -32601 method_not_found; "+
+					"every contract verb needs a dispatch case", verb)
+			}
+		})
+	}
+}
+
+// TestDesktopRPC_LaneAndDaemonVerbs_NotImplemented (audit A029) pins
+// the scaffold degradation for the seven newly routed verbs: the
+// NotImplemented handler must surface as -32010 with
+// data.stoke_code "not_implemented" — the shape the Rust host and the
+// panels' truthful-unavailable rendering (audit A034/A052) key on.
+func TestDesktopRPC_LaneAndDaemonVerbs_NotImplemented(t *testing.T) {
+	verbs := []string{
+		"session.lanes.list",
+		"session.lanes.subscribe",
+		"session.lanes.unsubscribe",
+		"session.lanes.kill",
+		"session.set_workdir",
+		"daemon.status",
+		"daemon.shutdown",
+	}
+	for _, verb := range verbs {
+		verb := verb
+		t.Run(verb, func(t *testing.T) {
+			resp := callRPC(t, verb, map[string]any{"session_id": "s-1"})
+			errObj, ok := resp["error"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s: expected error field; got %v", verb, resp)
+			}
+			code, _ := errObj["code"].(float64)
+			if code != -32010 {
+				t.Fatalf("%s: expected -32010 (not_implemented), got %v", verb, code)
+			}
+			data, _ := errObj["data"].(map[string]any)
+			stokeCode, _ := data["stoke_code"].(string)
+			if stokeCode != "not_implemented" {
+				t.Fatalf("%s: expected stoke_code not_implemented, got %q", verb, stokeCode)
+			}
+		})
+	}
+}

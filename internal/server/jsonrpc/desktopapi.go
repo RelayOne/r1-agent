@@ -1,11 +1,13 @@
 // jsonrpc/desktopapi.go — Phase E item 30: bind every desktopapi.Handler
 // method to its JSON-RPC verb.
 //
-// The Handler interface (`internal/desktopapi.Handler`) carries the 11
-// "long-trip" verbs from `desktop/IPC-CONTRACT.md` §2 — the ones that
-// round-trip from the Tauri Rust host to the Go subprocess. The
-// remaining 4 (`session.send`, `session.cancel`, `skill.list`,
-// `skill.get`) live on the Tauri-only surface (§5).
+// The Handler interface (`internal/desktopapi.Handler`) carries the 18
+// "long-trip" verbs from `desktop/IPC-CONTRACT.md` §2 (plus
+// `session.set_workdir` from spec desktop-cortex-augmentation §7) —
+// the ones that round-trip from the Tauri Rust host to the Go
+// subprocess. The Tauri-only verbs (`session.send`, `session.cancel`,
+// `skill.list`, `skill.get`, `app.popout_lane`,
+// `app.open_folder_picker`) live on the Rust-host surface (§5).
 //
 // `RegisterDesktopAPI` reflects each method onto the dispatcher with a
 // thin adapter that:
@@ -29,20 +31,33 @@ import (
 	"github.com/RelayOne/r1/internal/desktopapi"
 )
 
-// RegisterDesktopAPI installs all 11 IPC-CONTRACT §2 verbs on the
-// dispatcher. The verb-to-method mapping mirrors the contract doc 1:1:
+// RegisterDesktopAPI installs all IPC-CONTRACT §2 round-trip verbs on
+// the dispatcher. The verb-to-method mapping mirrors the contract doc 1:1:
 //
-//	session.start         -> Handler.SessionStart
-//	session.pause         -> Handler.SessionPause
-//	session.resume        -> Handler.SessionResume
-//	ledger.get_node       -> Handler.LedgerGetNode
-//	ledger.list_events    -> Handler.LedgerListEvents
-//	memory.list_scopes    -> Handler.MemoryListScopes
-//	memory.query          -> Handler.MemoryQuery
-//	cost.get_current      -> Handler.CostGetCurrent
-//	cost.get_history      -> Handler.CostGetHistory
-//	descent.current_tier  -> Handler.DescentCurrentTier
-//	descent.tier_history  -> Handler.DescentTierHistory
+//	session.start               -> Handler.SessionStart
+//	session.pause               -> Handler.SessionPause
+//	session.resume              -> Handler.SessionResume
+//	ledger.get_node             -> Handler.LedgerGetNode
+//	ledger.list_events          -> Handler.LedgerListEvents
+//	memory.list_scopes          -> Handler.MemoryListScopes
+//	memory.query                -> Handler.MemoryQuery
+//	cost.get_current            -> Handler.CostGetCurrent
+//	cost.get_history            -> Handler.CostGetHistory
+//	descent.current_tier        -> Handler.DescentCurrentTier
+//	descent.tier_history        -> Handler.DescentTierHistory
+//	session.lanes.list          -> Handler.SessionLanesList
+//	session.lanes.subscribe     -> Handler.SessionLanesSubscribe
+//	session.lanes.unsubscribe   -> Handler.SessionLanesUnsubscribe
+//	session.lanes.kill          -> Handler.SessionLanesKill
+//	session.set_workdir         -> Handler.SessionSetWorkdir
+//	daemon.status               -> Handler.DaemonStatus
+//	daemon.shutdown             -> Handler.DaemonShutdown
+//
+// NOTE on daemon collisions: when a daemon ALSO mounts the DaemonAPI
+// verbs (RegisterDaemonAPI), its registrations for the overlapping
+// verbs (session.lanes.list/kill, daemon.status, daemon.shutdown, …)
+// win when registered last — same rule as the session.start collision
+// documented on RegisterDaemonAPI.
 //
 // A nil dispatcher or handler panics (programmer error — wiring should
 // never silently drop verbs).
@@ -139,6 +154,59 @@ func RegisterDesktopAPI(d *Dispatcher, h desktopapi.Handler) {
 			return nil, err
 		}
 		return h.DescentTierHistory(ctx, req)
+	})
+
+	// session.lanes.* — four lane-control verbs (contract §2.7, audit
+	// A029). The channel handle from §2.7 never crosses this boundary;
+	// only serialisable params do.
+	d.Register("session.lanes.list", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var req desktopapi.SessionLanesListRequest
+		if err := decodeParams(params, &req); err != nil {
+			return nil, err
+		}
+		return h.SessionLanesList(ctx, req)
+	})
+	d.Register("session.lanes.subscribe", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var req desktopapi.SessionLanesSubscribeRequest
+		if err := decodeParams(params, &req); err != nil {
+			return nil, err
+		}
+		return h.SessionLanesSubscribe(ctx, req)
+	})
+	d.Register("session.lanes.unsubscribe", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var req desktopapi.SessionLanesUnsubscribeRequest
+		if err := decodeParams(params, &req); err != nil {
+			return nil, err
+		}
+		return h.SessionLanesUnsubscribe(ctx, req)
+	})
+	d.Register("session.lanes.kill", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var req desktopapi.SessionLanesKillRequest
+		if err := decodeParams(params, &req); err != nil {
+			return nil, err
+		}
+		return h.SessionLanesKill(ctx, req)
+	})
+
+	// session.set_workdir — spec desktop-cortex-augmentation §7.
+	d.Register("session.set_workdir", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var req desktopapi.SessionSetWorkdirRequest
+		if err := decodeParams(params, &req); err != nil {
+			return nil, err
+		}
+		return h.SessionSetWorkdir(ctx, req)
+	})
+
+	// daemon.* — two daemon-control verbs (contract §2.8).
+	d.Register("daemon.status", func(ctx context.Context, params json.RawMessage) (any, error) {
+		return h.DaemonStatus(ctx)
+	})
+	d.Register("daemon.shutdown", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var req desktopapi.DaemonShutdownRequest
+		if err := decodeParams(params, &req); err != nil {
+			return nil, err
+		}
+		return h.DaemonShutdown(ctx, req)
 	})
 }
 

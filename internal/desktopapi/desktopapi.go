@@ -148,11 +148,11 @@ type MemoryScope string
 
 // Canonical scope names. Keep in sync with `memory/` package.
 const (
-	MemoryScopeSession      MemoryScope = "Session"
-	MemoryScopeWorker       MemoryScope = "Worker"
-	MemoryScopeAllSessions  MemoryScope = "AllSessions"
-	MemoryScopeGlobal       MemoryScope = "Global"
-	MemoryScopeAlways       MemoryScope = "Always"
+	MemoryScopeSession     MemoryScope = "Session"
+	MemoryScopeWorker      MemoryScope = "Worker"
+	MemoryScopeAllSessions MemoryScope = "AllSessions"
+	MemoryScopeGlobal      MemoryScope = "Global"
+	MemoryScopeAlways      MemoryScope = "Always"
 )
 
 // AllMemoryScopes returns every known memory scope in canonical order.
@@ -295,6 +295,117 @@ type DescentTierHistoryResponse struct {
 	Attempts []DescentAttempt `json:"attempts"`
 }
 
+// -- Lane control (§2.7) -------------------------------------------------
+
+// LaneStatus enumerates the lane lifecycle states (contract §2.7).
+type LaneStatus string
+
+// Canonical lane status values. Keep in sync with the Rust host's
+// LaneSummary.status comment in desktop/src-tauri/src/ipc.rs.
+const (
+	LaneStatusPending   LaneStatus = "pending"
+	LaneStatusRunning   LaneStatus = "running"
+	LaneStatusBlocked   LaneStatus = "blocked"
+	LaneStatusDone      LaneStatus = "done"
+	LaneStatusErrored   LaneStatus = "errored"
+	LaneStatusCancelled LaneStatus = "cancelled"
+)
+
+// SessionLanesListRequest is the params payload for `session.lanes.list`.
+type SessionLanesListRequest struct {
+	SessionID string `json:"session_id"`
+}
+
+// LaneSummary is one row in the `session.lanes.list` response. Field
+// names mirror the Rust host's LaneSummary struct in
+// desktop/src-tauri/src/ipc.rs.
+type LaneSummary struct {
+	LaneID    string     `json:"lane_id"`
+	Title     string     `json:"title"`
+	Status    LaneStatus `json:"status"`
+	CreatedAt string     `json:"created_at"`
+}
+
+// SessionLanesListResponse is the result payload for `session.lanes.list`.
+type SessionLanesListResponse struct {
+	Lanes []LaneSummary `json:"lanes"`
+}
+
+// SessionLanesSubscribeRequest is the params payload for
+// `session.lanes.subscribe`. The `channel` named in contract §2.7 is a
+// tauri::ipc::Channel<LaneEvent> — a Rust-host runtime handle that the
+// host consumes before forwarding the call; only the optional
+// serialised channel id crosses the JSON-RPC boundary.
+type SessionLanesSubscribeRequest struct {
+	SessionID string `json:"session_id"`
+	ChannelID string `json:"channel_id,omitempty"`
+}
+
+// SessionLanesSubscribeResponse is the result payload for
+// `session.lanes.subscribe`.
+type SessionLanesSubscribeResponse struct {
+	SubscriptionID string `json:"subscription_id"`
+}
+
+// SessionLanesUnsubscribeRequest is the params payload for
+// `session.lanes.unsubscribe`.
+type SessionLanesUnsubscribeRequest struct {
+	SubscriptionID string `json:"subscription_id"`
+	SessionID      string `json:"session_id,omitempty"`
+}
+
+// SessionLanesUnsubscribeResponse is the result payload for
+// `session.lanes.unsubscribe`.
+type SessionLanesUnsubscribeResponse struct {
+	OK bool `json:"ok"`
+}
+
+// SessionLanesKillRequest is the params payload for `session.lanes.kill`.
+type SessionLanesKillRequest struct {
+	SessionID string `json:"session_id"`
+	LaneID    string `json:"lane_id"`
+}
+
+// SessionLanesKillResponse is the result payload for `session.lanes.kill`.
+type SessionLanesKillResponse struct {
+	KilledAt string `json:"killed_at"`
+}
+
+// -- Workdir binding (spec desktop-cortex-augmentation §7) ---------------
+
+// SessionSetWorkdirRequest is the params payload for `session.set_workdir`.
+type SessionSetWorkdirRequest struct {
+	SessionID string `json:"session_id"`
+	Workdir   string `json:"workdir"`
+}
+
+// SessionSetWorkdirResponse is the result payload for `session.set_workdir`.
+type SessionSetWorkdirResponse struct {
+	OK      bool   `json:"ok"`
+	Workdir string `json:"workdir"`
+}
+
+// -- Daemon control (§2.8) -----------------------------------------------
+
+// DaemonStatusResponse is the result payload for `daemon.status`.
+type DaemonStatusResponse struct {
+	URL     string `json:"url"`
+	Mode    string `json:"mode"` // "external" | "sidecar"
+	Version string `json:"version"`
+	UptimeS int64  `json:"uptime_s"`
+}
+
+// DaemonShutdownRequest is the params payload for `daemon.shutdown`.
+// A nil Graceful means true — the contract default.
+type DaemonShutdownRequest struct {
+	Graceful *bool `json:"graceful,omitempty"`
+}
+
+// DaemonShutdownResponse is the result payload for `daemon.shutdown`.
+type DaemonShutdownResponse struct {
+	ShutdownAt string `json:"shutdown_at"`
+}
+
 // ---------------------------------------------------------------------
 // Handler interface — one method per JSON-RPC verb (§2 of contract).
 //
@@ -311,10 +422,13 @@ type DescentTierHistoryResponse struct {
 // decodes the envelope, picks the matching method, and writes the
 // response back on stdout.
 //
-// The 11 methods below are the verbs that round-trip to the Go
-// subprocess. The 4 Tauri-only verbs (session.send, session.cancel,
-// skill.list, skill.get) live in the Rust host per §5 of the
-// contract and do not appear on this interface.
+// The 18 methods below are the verbs that round-trip to the Go
+// subprocess: the core 11 (§2.1–§2.5) plus lane control (§2.7),
+// workdir binding (spec desktop-cortex-augmentation §7), and daemon
+// control (§2.8). The Tauri-only verbs (session.send, session.cancel,
+// skill.list, skill.get, app.popout_lane, app.open_folder_picker)
+// live in the Rust host per §5 of the contract and do not appear on
+// this interface.
 type Handler interface {
 	// Session control (§2.1)
 	SessionStart(ctx context.Context, req SessionStartRequest) (SessionStartResponse, error)
@@ -336,6 +450,19 @@ type Handler interface {
 	// Descent state (§2.5)
 	DescentCurrentTier(ctx context.Context, req DescentCurrentTierRequest) ([]DescentTierRow, error)
 	DescentTierHistory(ctx context.Context, req DescentTierHistoryRequest) (DescentTierHistoryResponse, error)
+
+	// Lane control (§2.7)
+	SessionLanesList(ctx context.Context, req SessionLanesListRequest) (SessionLanesListResponse, error)
+	SessionLanesSubscribe(ctx context.Context, req SessionLanesSubscribeRequest) (SessionLanesSubscribeResponse, error)
+	SessionLanesUnsubscribe(ctx context.Context, req SessionLanesUnsubscribeRequest) (SessionLanesUnsubscribeResponse, error)
+	SessionLanesKill(ctx context.Context, req SessionLanesKillRequest) (SessionLanesKillResponse, error)
+
+	// Workdir binding (spec desktop-cortex-augmentation §7)
+	SessionSetWorkdir(ctx context.Context, req SessionSetWorkdirRequest) (SessionSetWorkdirResponse, error)
+
+	// Daemon control (§2.8)
+	DaemonStatus(ctx context.Context) (DaemonStatusResponse, error)
+	DaemonShutdown(ctx context.Context, req DaemonShutdownRequest) (DaemonShutdownResponse, error)
 }
 
 // ---------------------------------------------------------------------
@@ -405,4 +532,39 @@ func (NotImplemented) DescentCurrentTier(_ context.Context, _ DescentCurrentTier
 // DescentTierHistory returns ErrNotImplemented.
 func (NotImplemented) DescentTierHistory(_ context.Context, _ DescentTierHistoryRequest) (DescentTierHistoryResponse, error) {
 	return DescentTierHistoryResponse{}, ErrNotImplemented
+}
+
+// SessionLanesList returns ErrNotImplemented.
+func (NotImplemented) SessionLanesList(_ context.Context, _ SessionLanesListRequest) (SessionLanesListResponse, error) {
+	return SessionLanesListResponse{}, ErrNotImplemented
+}
+
+// SessionLanesSubscribe returns ErrNotImplemented.
+func (NotImplemented) SessionLanesSubscribe(_ context.Context, _ SessionLanesSubscribeRequest) (SessionLanesSubscribeResponse, error) {
+	return SessionLanesSubscribeResponse{}, ErrNotImplemented
+}
+
+// SessionLanesUnsubscribe returns ErrNotImplemented.
+func (NotImplemented) SessionLanesUnsubscribe(_ context.Context, _ SessionLanesUnsubscribeRequest) (SessionLanesUnsubscribeResponse, error) {
+	return SessionLanesUnsubscribeResponse{}, ErrNotImplemented
+}
+
+// SessionLanesKill returns ErrNotImplemented.
+func (NotImplemented) SessionLanesKill(_ context.Context, _ SessionLanesKillRequest) (SessionLanesKillResponse, error) {
+	return SessionLanesKillResponse{}, ErrNotImplemented
+}
+
+// SessionSetWorkdir returns ErrNotImplemented.
+func (NotImplemented) SessionSetWorkdir(_ context.Context, _ SessionSetWorkdirRequest) (SessionSetWorkdirResponse, error) {
+	return SessionSetWorkdirResponse{}, ErrNotImplemented
+}
+
+// DaemonStatus returns ErrNotImplemented.
+func (NotImplemented) DaemonStatus(_ context.Context) (DaemonStatusResponse, error) {
+	return DaemonStatusResponse{}, ErrNotImplemented
+}
+
+// DaemonShutdown returns ErrNotImplemented.
+func (NotImplemented) DaemonShutdown(_ context.Context, _ DaemonShutdownRequest) (DaemonShutdownResponse, error) {
+	return DaemonShutdownResponse{}, ErrNotImplemented
 }

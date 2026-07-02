@@ -254,6 +254,65 @@ func (s *desktopRPCServer) dispatch(req rpcRequest) {
 		res, err := s.handler.DescentTierHistory(ctx, p)
 		s.respond(req.ID, res, err)
 
+	// --- Lane control (§2.7) ---
+	// Routed through the Handler so implementations can land per-verb;
+	// the scaffold handler returns -32010 not_implemented, which the
+	// Rust host degrades gracefully (host-side lane dispatch since
+	// audit A052) instead of the hard -32601 failure (audit A029).
+	case "session.lanes.list":
+		var p desktopapi.SessionLanesListRequest
+		if !s.parseParams(req, &p) {
+			return
+		}
+		res, err := s.handler.SessionLanesList(ctx, p)
+		s.respond(req.ID, res, err)
+
+	case "session.lanes.subscribe":
+		var p desktopapi.SessionLanesSubscribeRequest
+		if !s.parseParams(req, &p) {
+			return
+		}
+		res, err := s.handler.SessionLanesSubscribe(ctx, p)
+		s.respond(req.ID, res, err)
+
+	case "session.lanes.unsubscribe":
+		var p desktopapi.SessionLanesUnsubscribeRequest
+		if !s.parseParams(req, &p) {
+			return
+		}
+		res, err := s.handler.SessionLanesUnsubscribe(ctx, p)
+		s.respond(req.ID, res, err)
+
+	case "session.lanes.kill":
+		var p desktopapi.SessionLanesKillRequest
+		if !s.parseParams(req, &p) {
+			return
+		}
+		res, err := s.handler.SessionLanesKill(ctx, p)
+		s.respond(req.ID, res, err)
+
+	// --- Workdir binding (spec desktop-cortex-augmentation §7) ---
+	case "session.set_workdir":
+		var p desktopapi.SessionSetWorkdirRequest
+		if !s.parseParams(req, &p) {
+			return
+		}
+		res, err := s.handler.SessionSetWorkdir(ctx, p)
+		s.respond(req.ID, res, err)
+
+	// --- Daemon control (§2.8) ---
+	case "daemon.status":
+		res, err := s.handler.DaemonStatus(ctx)
+		s.respond(req.ID, res, err)
+
+	case "daemon.shutdown":
+		var p desktopapi.DaemonShutdownRequest
+		if !s.parseParams(req, &p) {
+			return
+		}
+		res, err := s.handler.DaemonShutdown(ctx, p)
+		s.respond(req.ID, res, err)
+
 	// Tauri-only skill verbs: return not_implemented so the Rust cache
 	// layer falls back to its local logic.
 	case "skill.list", "skill.get":

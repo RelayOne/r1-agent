@@ -20,6 +20,14 @@
 //	daemon.shutdown
 //	daemon.reload_config
 //
+// RegisterDaemonAPI additionally registers the IPC-CONTRACT §2.7/§2.8
+// canonical names as aliases (audit A029): session.lanes.list,
+// session.lanes.kill and daemon.status map onto the same
+// DaemonLanesList / DaemonLanesKill / DaemonInfo methods, while
+// session.lanes.subscribe, session.lanes.unsubscribe and
+// session.set_workdir return the not_implemented sentinel (-32010)
+// until a daemon-side backing exists.
+//
 // The DaemonAPI interface below is the dependency injection surface for
 // the daemon binary: a daemon embeds an implementation, the dispatcher
 // picks up the verbs from RegisterDaemonAPI. Tests can stub the
@@ -36,6 +44,8 @@ package jsonrpc
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/RelayOne/r1/internal/desktopapi"
 )
 
 // ----------------------------------------------------------------------
@@ -379,5 +389,48 @@ func RegisterDaemonAPI(d *Dispatcher, h DaemonAPI) {
 			return nil, err
 		}
 		return h.DaemonReloadConfig(ctx, req)
+	})
+
+	// ------------------------------------------------------------------
+	// IPC-CONTRACT.md §2.7/§2.8 canonical names (audit A029).
+	//
+	// The Tauri host sends the desktop-contract verb names
+	// (`session.lanes.*`, `session.set_workdir`, `daemon.status`) while
+	// this surface historically registered only its internal names
+	// (`lanes.*`, `daemon.info`). Register the canonical names as
+	// aliases onto the same DaemonAPI methods so the host's verbs
+	// resolve on the daemon transport too (response shapes are the
+	// daemon shapes above until the WS transport switch). Verbs with no
+	// daemon backing yet — lane channel subscription is host-owned
+	// (audit A052) and per-session workdir rebinding is unimplemented —
+	// return the scaffold's not_implemented sentinel (-32010,
+	// stoke_code "not_implemented") instead of -32601 method_not_found
+	// so clients get the documented "coming soon" degradation.
+	// ------------------------------------------------------------------
+	d.Register("session.lanes.list", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var req LanesListRequest
+		if err := decodeParams(params, &req); err != nil {
+			return nil, err
+		}
+		return h.DaemonLanesList(ctx, req)
+	})
+	d.Register("session.lanes.kill", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var req LanesKillRequest
+		if err := decodeParams(params, &req); err != nil {
+			return nil, err
+		}
+		return h.DaemonLanesKill(ctx, req)
+	})
+	d.Register("daemon.status", func(ctx context.Context, params json.RawMessage) (any, error) {
+		return h.DaemonInfo(ctx)
+	})
+	d.Register("session.lanes.subscribe", func(ctx context.Context, params json.RawMessage) (any, error) {
+		return nil, desktopapi.ErrNotImplemented
+	})
+	d.Register("session.lanes.unsubscribe", func(ctx context.Context, params json.RawMessage) (any, error) {
+		return nil, desktopapi.ErrNotImplemented
+	})
+	d.Register("session.set_workdir", func(ctx context.Context, params json.RawMessage) (any, error) {
+		return nil, desktopapi.ErrNotImplemented
 	})
 }
