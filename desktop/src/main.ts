@@ -168,15 +168,13 @@ function mountAfterDiscovery(app: HTMLElement): void {
 
   // Daemon status pill — spec desktop-cortex-augmentation §5 +
   // checklist item 26. Sits in the title-bar region next to the
-  // settings trigger. mountDaemonStatus subscribes to `daemon.up` /
-  // `daemon.down` on the Tauri global event bus; in non-Tauri builds
-  // the listeners never fire and the pill stays in its default
-  // "offline (starting)" state. The four-state pill model also
-  // expects a `reconnect_status` lifecycle stream from the Rust
-  // transport.rs run-loop to drive `attempt` / `nextInMs` for the
-  // reconnecting state — that stream lands in a sister Rust PR; until
-  // then the pill flips to reconnecting/offline based purely on
-  // `daemon.down.will_retry`.
+  // settings trigger. mountDaemonStatus pulls one
+  // `app_discovery_status` snapshot at mount (closing the startup
+  // race where discovery resolves before listeners register) and
+  // subscribes to the `daemon.up` / `daemon.down` events main.rs
+  // setup_discovery emits (audit A053). In non-Tauri builds the
+  // snapshot invoke rejects, the listeners never fire, and the pill
+  // stays in its default "offline (starting)" state.
   const pillHost = document.createElement("div");
   pillHost.className = "r1-daemon-pill-host";
   toolbar.appendChild(pillHost);

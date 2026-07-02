@@ -26,7 +26,7 @@ mod popout;
 mod subprocess;
 mod transport;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use discovery_state::DiscoveryState;
 use subprocess::SubprocessManager;
@@ -119,12 +119,40 @@ fn setup_discovery(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     tauri::async_runtime::spawn(async move {
         match crate::discovery::discover_or_spawn(&app_handle).await {
             Ok(handle) => {
+                // Payload shape matches DaemonUpPayload in
+                // desktop/src/panels/daemon-status.ts. Emitted AFTER
+                // set_handle so a listener that reacts by querying
+                // `app_discovery_status` sees the connected snapshot
+                // (audit/complete-systems-2026-07-01.md A053 — nothing
+                // emitted daemon.up/daemon.down before, so the
+                // title-bar pill stayed "Offline (starting)" forever).
+                let payload = serde_json::json!({
+                    "url": handle.url.clone(),
+                    "mode": match handle.mode {
+                        crate::discovery::TransportMode::External => "external",
+                        crate::discovery::TransportMode::Sidecar => "sidecar",
+                    },
+                    "at": chrono::Utc::now().to_rfc3339(),
+                });
                 let s: tauri::State<'_, DiscoveryState> = app_handle.state();
                 s.set_handle(handle);
+                if let Err(err) = app_handle.emit("daemon.up", payload) {
+                    eprintln!("[r1-desktop] daemon.up emit failed: {err}");
+                }
             }
             Err(err) => {
                 let s: tauri::State<'_, DiscoveryState> = app_handle.state();
                 s.set_error(format!("{err}"));
+                // will_retry:false — discovery does not self-retry;
+                // the user retries via the wizard / Settings → Daemon.
+                let payload = serde_json::json!({
+                    "reason": format!("{err}"),
+                    "at": chrono::Utc::now().to_rfc3339(),
+                    "will_retry": false,
+                });
+                if let Err(emit_err) = app_handle.emit("daemon.down", payload) {
+                    eprintln!("[r1-desktop] daemon.down emit failed: {emit_err}");
+                }
             }
         }
     });

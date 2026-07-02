@@ -5,9 +5,13 @@
 //
 // Renders a four-state pill in the app's title bar that reflects the
 // transport's lifecycle. Listens for `daemon.up` / `daemon.down`
-// events on Tauri's global event bus (emitted from transport.rs's
-// run-loop). Click navigates Settings → Daemon (the consumer wires
-// the navigation callback because routing differs across panels).
+// events on Tauri's global event bus (emitted from main.rs
+// setup_discovery when the startup probe resolves) and additionally
+// pulls one `app_discovery_status` snapshot at mount to close the
+// startup race where discovery completes before the WebView registers
+// its listeners (audit/complete-systems-2026-07-01.md A053). Click
+// navigates Settings → Daemon (the consumer wires the navigation
+// callback because routing differs across panels).
 //
 // State model mirrors the spec banner palette:
 //
@@ -21,6 +25,7 @@
 // the pill is a single span.
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 
 // -------------------------------------------------------------------
 // Types
@@ -115,6 +120,39 @@ interface DaemonDownPayload {
   will_retry?: boolean;
 }
 
+/**
+ * Host-side discovery snapshot returned by the `app_discovery_status`
+ * verb (mirrors Rust `DaemonStatusSnapshot`, discovery_state.rs).
+ */
+export interface DaemonDiscoverySnapshot {
+  connected: boolean;
+  pending: boolean;
+  url: string | null;
+  mode: "external" | "sidecar" | null;
+  error: string | null;
+  sidecar_accepted: boolean;
+}
+
+/**
+ * Project a discovery snapshot onto the pill state. Returns null when
+ * the snapshot carries no signal yet (probe still pending) so the
+ * caller keeps its current state and waits for daemon.up/daemon.down.
+ * Exported for unit tests.
+ */
+export function stateFromSnapshot(
+  snap: DaemonDiscoverySnapshot,
+): DaemonState | null {
+  if (snap.connected && snap.mode) {
+    return snap.mode === "sidecar"
+      ? { kind: "sidecar", url: snap.url ?? "" }
+      : { kind: "external", url: snap.url ?? "" };
+  }
+  if (snap.error) {
+    return { kind: "offline", url: snap.url ?? "", reason: snap.error };
+  }
+  return null;
+}
+
 export async function mountDaemonStatus(
   container: HTMLElement,
   props: DaemonStatusProps = {},
@@ -188,6 +226,25 @@ export async function mountDaemonStatus(
     paint();
   });
   unlistens.push(downUnlisten);
+
+  // Startup-race closer (A053): discovery may have completed before
+  // this mount registered its listeners, in which case daemon.up /
+  // daemon.down already fired into the void. Pull the host-side
+  // snapshot once — listeners above cover every later transition.
+  // Non-Tauri builds (vitest / plain browser) reject the invoke; keep
+  // the default "offline (starting)" state in that case.
+  try {
+    const snap = await invoke<DaemonDiscoverySnapshot>("app_discovery_status");
+    if (!disposed) {
+      const fromSnap = stateFromSnapshot(snap);
+      if (fromSnap) {
+        state = fromSnap;
+        paint();
+      }
+    }
+  } catch {
+    // Host verb unavailable — non-Tauri build or very old host.
+  }
 
   return {
     set(next) {
