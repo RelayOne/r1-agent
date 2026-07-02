@@ -66,6 +66,16 @@ func RunOne(ctx context.Context, spec RunSpec) (*bench.RunResult, error) {
 	result.MissionID = spec.Mission.ID
 	result.AgentID = spec.Dispatcher.Agent().ID
 	result.WallTimeMs = trace.WallClockMs
+
+	// SOTA gap #5 (runner half): audit the captured trajectory for
+	// reward-hacking tells — reading the reference solution from git
+	// history, editing the graded tests — and surface them on the result
+	// so a gamed score is visible, not silent.
+	result.RewardHackFlags = bench.FlagStrings(bench.AuditTrajectory(
+		trace.RawLog,
+		bench.DiffTouchedFiles(trace.UnifiedDiff),
+		bench.MissionTestGlobs(spec.Mission),
+	))
 	return &result, nil
 }
 
