@@ -18,7 +18,7 @@ import (
 //
 // The R1Dispatcher had only notWiredR1Invoker, so the truthful-completion
 // benchmark — r1's headline claim — could never actually run r1; every
-// score was a placeholder. NativeInvoker is the production R1ModelInvoker:
+// score was an inert stub. NativeInvoker is the production R1ModelInvoker:
 // it drives the same native agentloop (engine.NativeRunner) the real
 // `r1 build` uses, against the mission's working tree, and maps the run
 // outcome into the Trace fields the scorer consumes.
