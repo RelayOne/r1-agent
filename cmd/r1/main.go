@@ -150,8 +150,15 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	var buildSuccess bool
 	reporter := remote.New()
 	if reporter != nil {
-		if url, err := reporter.RegisterSession(cfg.PlanPath); err == nil && url != "" {
-			fmt.Printf("  dashboard: %s\n", url)
+		if url, err := reporter.RegisterSession(cfg.PlanPath); err == nil {
+			// Prefer the server-returned share URL; fall back to the
+			// endpoint-derived one when the response omits it.
+			if url == "" {
+				url = reporter.WebURL()
+			}
+			if url != "" {
+				fmt.Printf("  dashboard: %s (session %s)\n", url, reporter.SessionID())
+			}
 		}
 		defer func() {
 			summary := "build finished"
@@ -309,6 +316,18 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	// Unified event bus: shared across all tasks in this build session.
 	eventBus := hub.New()
 	defer attachEventSubscribers(eventBus)()
+
+	// Live remote progress: bridge task lifecycle + model-cost events
+	// into SessionReporter.Update snapshots so the Ember dashboard shows
+	// per-task phase/cost between registration and completion. This
+	// defer is registered AFTER the reporter.Complete defer above, so
+	// (LIFO) Stop's final flush lands BEFORE the session is marked
+	// complete.
+	if reporter != nil {
+		remoteProgress := remote.NewHubProgress(reporter, cfg.PlanPath)
+		remoteProgress.Register(eventBus)
+		defer remoteProgress.Stop()
+	}
 
 	// S-1 TUI progress renderer. Paints a live dashboard on stderr
 	// when the operator runs on an interactive terminal. Non-TTY
