@@ -131,7 +131,7 @@ func TestNativeCortex_PreEndTurnGateBlocks(t *testing.T) {
 // real deterministic lobe constructors, starts/stops cleanly, and MidturnNote
 // returns promptly (bounded by RoundDeadline) rather than hanging.
 func TestNativeCortex_BuildDeterministicConstructs(t *testing.T) {
-	live := buildDeterministicCortex("S1", hub.New(), &fakeCortexProvider{}, "sys", nil)
+	live := buildDeterministicCortex("S1", hub.New(), &fakeCortexProvider{}, "sys", nil, nil, nil)
 	if live == nil {
 		t.Fatal("buildDeterministicCortex returned nil for a valid config")
 	}

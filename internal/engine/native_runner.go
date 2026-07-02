@@ -62,6 +62,15 @@ type NativeRunner struct {
 	// RunSpec field are nil the MCP integration is a no-op (backward
 	// compat with every existing call site).
 	MCPRegistry MCPRegistry
+
+	// MemoryStore and WisdomStore, when non-nil, are threaded into the
+	// deterministic cortex's memory-recall lobe so the native loop recalls
+	// CROSS-SESSION memory + wisdom instead of the empty in-process stores
+	// it defaults to (SOTA gap #2, native half). Callers wire the
+	// persistent .stoke/agent-memory.json store and a persistent wisdom
+	// SQLiteStore here; nil preserves the in-memory fallback.
+	MemoryStore *memory.Store
+	WisdomStore wisdom.Recorder
 }
 
 // NewNativeRunner creates a native runner using the Anthropic API directly.
@@ -494,7 +503,7 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		if eventBus == nil {
 			eventBus = hub.New()
 		}
-		if live := buildDeterministicCortex(spec.WorkerLogContext.SessionID, eventBus, p, systemPrompt, toolDefs); live != nil {
+		if live := buildDeterministicCortex(spec.WorkerLogContext.SessionID, eventBus, p, systemPrompt, toolDefs, n.MemoryStore, n.WisdomStore); live != nil {
 			if err := live.Start(ctx); err != nil {
 				slog.Warn("cortex start failed; proceeding without it", "err", err)
 				// Stop the partially-initialized cortex so any goroutines / hub
@@ -608,7 +617,7 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 // rulecheck degrade to no-ops); the pre-warm pump is suppressed
 // (PreWarmInterval: time.Hour). Returns nil (logging a warning) on any
 // construction error so the run proceeds without the cortex.
-func buildDeterministicCortex(sessionID string, eventBus *hub.Bus, p provider.Provider, systemPrompt string, toolDefs []provider.ToolDef) *cortex.Cortex {
+func buildDeterministicCortex(sessionID string, eventBus *hub.Bus, p provider.Provider, systemPrompt string, toolDefs []provider.ToolDef, persistentMem *memory.Store, persistentWis wisdom.Recorder) *cortex.Cortex {
 	// Create the Workspace FIRST so the Lobes (which capture the pointer at
 	// construction) and the Cortex that drains it via MidturnNote share ONE
 	// Workspace. Passing it through cortex.Config.Workspace is what makes the
@@ -616,12 +625,22 @@ func buildDeterministicCortex(sessionID string, eventBus *hub.Bus, p provider.Pr
 	// a shell Workspace via wrappedBackend; here the loop reads live.workspace).
 	ws := cortex.NewWorkspace(eventBus, nil)
 
-	memStore, err := memory.NewStore(memory.Config{})
-	if err != nil {
-		slog.Warn("cortex memory store failed; proceeding without cortex", "err", err)
-		return nil
+	// SOTA gap #2 (native half): prefer the caller's persistent cross-session
+	// stores so the loop recalls memory + wisdom accumulated across previous
+	// runs; fall back to fresh in-process stores when none are wired.
+	memStore := persistentMem
+	if memStore == nil {
+		var err error
+		memStore, err = memory.NewStore(memory.Config{})
+		if err != nil {
+			slog.Warn("cortex memory store failed; proceeding without cortex", "err", err)
+			return nil
+		}
 	}
-	wisStore := wisdom.NewStore()
+	var wisStore wisdom.Recorder = persistentWis
+	if wisStore == nil {
+		wisStore = wisdom.NewStore()
+	}
 
 	lobeList := []cortex.Lobe{
 		memoryrecall.NewMemoryRecallLobe(ws, memStore, wisStore, eventBus),

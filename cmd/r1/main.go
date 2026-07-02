@@ -3004,6 +3004,11 @@ func sowCmd(args []string) {
 
 		runner := engine.NewNativeRunner(nativeKey, nativeModelName)
 		runner.BaseURL = nativeBaseURLForRunner
+		// SOTA gap #2 (native half): give the native loop's cortex the
+		// persistent cross-session memory + wisdom stores so it recalls
+		// what prior runs learned, instead of empty in-process stores.
+		runner.MemoryStore = openCrossSessionMemory(absRepo)
+		runner.WisdomStore = newPersistentWisdom(absRepo)
 		if strings.HasPrefix(*nativeBaseURL, "claude-code") {
 			// Native runner = worker: CC needs tools + write
 			// permissions. Pass --native-model through (e.g.
