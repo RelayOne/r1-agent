@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 func TestRestoreFromCheckpoint_FullCycle(t *testing.T) {
@@ -155,4 +157,48 @@ func containsInner(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestPruneLeavesOriginalOnTmpFailure covers audit A016: any failure in
+// the tmp rewrite must abort WITHOUT renaming, leaving the authoritative
+// timeline intact (the old code discarded Write/Close errors and renamed
+// a possibly-truncated file over the WAL).
+func TestPruneLeavesOriginalOnTmpFailure(t *testing.T) {
+	dir := t.TempDir()
+	tl, err := NewTimeline(dir, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tl.Checkpoint("a", "", nil, 0, 0, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tl.Checkpoint("b", "", nil, 0, 0, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	tl.Close()
+
+	entriesBefore, err := ListCheckpoints(dir)
+	if err != nil || len(entriesBefore) != 2 {
+		t.Fatalf("setup: entries=%d err=%v", len(entriesBefore), err)
+	}
+
+	// Make the checkpoints dir read-only so os.Create(tmp) fails.
+	cpDir := filepath.Dir(r1dir.JoinFor(dir, "checkpoints", "timeline.jsonl"))
+	if err := os.Chmod(cpDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(cpDir, 0o755)
+
+	if err := PruneTimelineAfter(dir, entriesBefore[0].ID); err == nil {
+		t.Fatal("expected error when tmp cannot be created")
+	}
+
+	os.Chmod(cpDir, 0o755)
+	entries, err := ListCheckpoints(dir)
+	if err != nil {
+		t.Fatalf("original timeline unreadable after failed prune: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("original timeline damaged after failed prune: %d entries, want 2", len(entries))
+	}
 }
