@@ -290,8 +290,22 @@ func DefaultPolicyYAML() string {
 func (o *Orchestrator) Run(ctx context.Context) (res workflow.Result, err error) {
 	// Release the V2 governance layer (supervisor + ledger + bus) when
 	// the run finishes. No-op when governance is disabled (governor nil).
+	//
+	// The Governor is a wildcard ModeObserve subscriber on the hub bus, so
+	// its terminal task-lifecycle / declaration / cost writes to the ledger
+	// and v2 bus run on the hub's fire-and-forget observe goroutines. Drain
+	// the hub bus BEFORE closing the governor so those trailing writes are
+	// not lost to a closed bus+ledger (enhance R3). Drain is bounded at 5s so
+	// a wedged observe handler cannot hang teardown.
 	if o.governor != nil {
 		defer func() {
+			if o.cfg.EventBus != nil {
+				drainCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if derr := o.cfg.EventBus.Drain(drainCtx); derr != nil {
+					fmt.Fprintf(os.Stderr, "[governance] warning: bus drain timed out: %v\n", derr)
+				}
+				cancel()
+			}
 			if err := o.governor.Close(); err != nil {
 				fmt.Fprintf(os.Stderr, "[governance] warning: close failed: %v\n", err)
 			}

@@ -56,6 +56,13 @@ type Bus struct {
 	audit       *AuditLog
 	log         *slog.Logger
 
+	// async tracks the in-flight fire-and-forget goroutines the bus spawns:
+	// the Phase-3 ModeObserve dispatch goroutines and the EmitAsync goroutine.
+	// Drain waits on it so callers can guarantee terminal observe handlers
+	// (e.g. the governance bridge's ledger/bus writes) complete before the
+	// resources they write to are closed. (enhance R3)
+	async sync.WaitGroup
+
 	// ChainedAudit is an optional hash-chained tamper-evident audit log.
 	// When non-nil, gate decisions are automatically appended.
 	ChainedAudit *ChainedAuditLog
@@ -224,7 +231,16 @@ func (b *Bus) Emit(ctx context.Context, ev *Event) *HookResponse {
 			continue
 		}
 		s := sub // capture
+		// Track the goroutine so Drain can wait for terminal observe
+		// handlers (e.g. the governance bridge's ledger writes) to land
+		// before dependent resources close. The Add happens synchronously
+		// here — before this Emit returns and before any tracked EmitAsync
+		// goroutine that reached this point calls its Done — so the async
+		// counter never transitions to zero between the two, keeping a
+		// concurrent Drain wait correct. (enhance R3)
+		b.async.Add(1)
 		go func() {
+			defer b.async.Done()
 			if b.circuitAllows(s.ID) {
 				b.invoke(context.Background(), s, ev)
 			}
@@ -247,9 +263,41 @@ func (b *Bus) Emit(ctx context.Context, ev *Event) *HookResponse {
 // EmitAsync fires an event without waiting for any response.
 func (b *Bus) EmitAsync(ev *Event) {
 	b.ensureID(ev)
+	// Track the dispatch goroutine so Drain waits for it. Emit (called
+	// inside) does its own async.Add for any Phase-3 observe goroutines
+	// before this goroutine's Done runs, so the counter stays positive
+	// across the handoff and a concurrent Drain sees the full chain. (enhance R3)
+	b.async.Add(1)
 	go func() {
+		defer b.async.Done()
 		b.Emit(context.Background(), ev)
 	}()
+}
+
+// Drain blocks until all in-flight fire-and-forget goroutines the bus has
+// spawned (Phase-3 ModeObserve dispatch goroutines and EmitAsync goroutines)
+// have returned, or until ctx is done. It returns ctx.Err() on timeout.
+//
+// Drain lets a caller guarantee that terminal observe-mode writes — for
+// example the governance bridge's task-lifecycle / declaration / cost ledger
+// and bus records — have landed before the resources they write to (ledger,
+// v2 bus) are closed. Without it, those trailing goroutines race a closed
+// bus+ledger on teardown and their writes are silently dropped. (enhance R3)
+//
+// Callers must ensure no new events are emitted concurrently with Drain: it
+// is a teardown primitive invoked once the producer has stopped.
+func (b *Bus) Drain(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		b.async.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Gate is a convenience for emitting a gate event and checking the decision.
