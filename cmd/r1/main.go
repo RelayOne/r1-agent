@@ -1820,7 +1820,7 @@ func sowCmd(args []string) {
 	// preserved regardless of the default policy's TTLs. Stored via
 	// setRetentionPolicy (retention_policy.go) for downstream consumption
 	// by the retention enforcement hooks.
-	retentionPermanent := fs.Bool("retention-permanent", false, "Override the retention policy for this run so every surface is pinned to retain_forever. Useful for audit runs where the full memory + stream + checkpoint trail must be preserved.")
+	retentionPermanent := fs.Bool("retention-permanent", false, "Override the retention policy for this run so every surface is pinned to retain_forever. Useful for audit runs where the full memory + stream + checkpoint trail must be preserved. Applies to this process's session-end enforcement (active when STOKE_RETENTION=1); the r1-server hourly sweep runs in a separate process with its own defaults and is NOT affected by this flag.")
 	// CS-4 (work-stoke-alignment): preload the memory bus from a JSON
 	// snapshot before the main SOW loop. CloudSwarm's supervisor uses
 	// this to hand back per-task memory across sessions. Empty path =

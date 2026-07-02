@@ -19,6 +19,8 @@
 package main
 
 import (
+	"context"
+
 	"github.com/RelayOne/r1/internal/plan"
 )
 
@@ -53,6 +55,14 @@ func (cfg sowNativeConfig) emitSessionStart(session plan.Session) {
 // consumers can correlate the delta with the terminal snapshot on
 // the same stream.
 func (cfg sowNativeConfig) emitSessionEnd(session plan.Session, passed bool, reason string) {
+	// work-stoke T10 / specs/retention-policies.md item 32: run the
+	// session-close retention pass BEFORE the streamjson gate —
+	// retention is a data-lifecycle concern, not an observability
+	// one, so it must fire even when no emitter is wired. Gated on
+	// STOKE_RETENTION=1 inside the helper; errors log to stderr and
+	// never fail the session-close path. Idempotent (the ephemeral
+	// wipe is a keyed DELETE), so a repeated emitSessionEnd is safe.
+	enforceRetentionOnSessionEnd(context.Background(), session.ID, cfg.Bus)
 	if cfg.StreamJSON == nil || !cfg.StreamJSON.Enabled() {
 		return
 	}
