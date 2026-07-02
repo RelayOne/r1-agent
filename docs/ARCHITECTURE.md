@@ -424,7 +424,7 @@ Cloud Build trigger pair (`services/cloudbuild-e2e-trigger.yaml`) firing `servic
 | `r1-agent-e2e-rehearsal-main` | push to `^main$` | Post-deploy verification — confirms the just-shipped main is e2e-clean. |
 | `r1-agent-e2e-rehearsal-tag` | push to `^v.*$` tag | Release gate — red blocks tag promotion to staging / main / production rollouts. |
 
-Pipeline: `go build -mod=vendor` → `npm install + npx playwright install --with-deps chromium` → `go test -tags=e2e ./cmd/r1-server/e2e/...` with `R1_SERVER_SHARE_ENABLED=1` (Spec D — D-UI2-7 — removed the prior paired `R1_SERVER_UI_V2=1`) → publish green/red commit-status to GitHub.
+Pipeline: `go build -mod=vendor` → `npm install + npx playwright install --with-deps chromium` → `go test -tags=e2e ./cmd/r1-server/e2e/...` with `R1_SERVER_UI_V2=1 R1_SERVER_SHARE_ENABLED=1` (the server ignores `R1_SERVER_UI_V2` post-Spec-D — D-UI2-7 — but the e2e harness keeps it as its opt-in run/skip gate; `services/cloudbuild-e2e.yaml` still sets it) → publish green/red commit-status to GitHub.
 
 Manual escape hatch: `.github/workflows/e2e-rehearsal-manual.yml` lets an operator dispatch from the Actions UI without local `gcloud`. The runner authenticates to GCP via `secrets.GCP_SA_JSON` and calls `gcloud builds triggers run r1-agent-e2e-rehearsal-main --branch=$BRANCH`. Workflow summary links to the Cloud Build console for live logs.
 
