@@ -6,9 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const invokeStub = vi.fn();
 
-vi.mock("./ipc-stub", () => ({
-  invokeStub,
-}));
+vi.mock(import("./ipc-stub"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    invokeStub,
+  };
+});
 
 function makeRoot(): HTMLElement {
   const div = document.createElement("div");
@@ -69,6 +73,74 @@ describe("cost panel — host-backed current snapshot truthfulness", () => {
       { usd: 0, tokens_in: 0, tokens_out: 0, as_of: "" },
       { session_id: "session-42" },
     );
+  });
+
+  it("renders bucketed history rows from cost_get_history (A095)", async () => {
+    invokeStub.mockImplementation(async (method: string) => {
+      if (method === "cost_get_current") {
+        return { usd: 1, tokens_in: 2, tokens_out: 3, as_of: "2026-07-01T00:00:00Z" };
+      }
+      if (method === "cost_get_history") {
+        return {
+          buckets: [
+            { at: "2026-07-01T00:00:00Z", usd: 0.5, tokens: 100 },
+            { at: "2026-07-01T01:00:00Z", usd: 0.75, tokens: 250 },
+          ],
+        };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+    const { renderPanel } = await import("./panels/cost-panel");
+    const root = makeRoot();
+
+    renderPanel(root);
+    await flush();
+
+    expect(invokeStub).toHaveBeenCalledWith(
+      "cost_get_history",
+      "R1D-9",
+      { buckets: [] },
+      undefined,
+    );
+    const rows = root.querySelectorAll('[data-role="cost-history-list"] li');
+    expect(rows.length).toBe(2);
+    expect(root.textContent).toContain("$0.75");
+    expect(root.textContent).toContain("250 tok");
+  });
+
+  it("renders a truthful note when cost_get_history is unimplemented (A095)", async () => {
+    invokeStub.mockImplementation(async (method: string) => {
+      if (method === "cost_get_current") {
+        return { usd: 0, tokens_in: 0, tokens_out: 0, as_of: "" };
+      }
+      throw { code: -32010, stoke_code: "not_implemented", message: "cost.get_history" };
+    });
+    const { renderPanel } = await import("./panels/cost-panel");
+    const root = makeRoot();
+
+    renderPanel(root);
+    await flush();
+
+    const note = root.querySelector('[data-role="cost-history-unavailable"]');
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("cost.get_history is unimplemented");
+  });
+
+  it("shows an empty-history note instead of fabricating buckets (A095)", async () => {
+    invokeStub.mockImplementation(async (method: string) => {
+      if (method === "cost_get_current") {
+        return { usd: 0, tokens_in: 0, tokens_out: 0, as_of: "" };
+      }
+      return { buckets: [] };
+    });
+    const { renderPanel } = await import("./panels/cost-panel");
+    const root = makeRoot();
+
+    renderPanel(root);
+    await flush();
+
+    expect(root.textContent).toContain("No cost history yet.");
+    expect(root.querySelectorAll('[data-role="cost-history-list"] li').length).toBe(0);
   });
 });
 

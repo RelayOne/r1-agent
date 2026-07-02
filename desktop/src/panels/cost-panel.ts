@@ -11,7 +11,7 @@
 // R1D-9.1 / R1D-9.3.
 
 import { classifyIpcError, invokeStub } from "../ipc-stub";
-import type { CostSnapshot } from "../types/ipc";
+import type { CostHistoryResult, CostSnapshot } from "../types/ipc";
 
 const EMPTY_SNAPSHOT: CostSnapshot = {
   usd: 0,
@@ -19,6 +19,8 @@ const EMPTY_SNAPSHOT: CostSnapshot = {
   tokens_out: 0,
   as_of: "",
 };
+
+const EMPTY_HISTORY: CostHistoryResult = { buckets: [] };
 
 export function renderPanel(root: HTMLElement): void {
   root.classList.add("r1-panel", "r1-panel-cost");
@@ -46,10 +48,86 @@ export function renderPanel(root: HTMLElement): void {
           <dd data-role="cost-as-of">&mdash;</dd>
         </div>
       </dl>
+      <section class="r1-cost-history" data-role="cost-history">
+        <h3 class="r1-cost-history-title">History</h3>
+        <p class="r1-empty" data-role="cost-history-empty">Loading…</p>
+        <ul class="r1-cost-history-list" data-role="cost-history-list" hidden></ul>
+      </section>
     </div>
   `;
 
   void loadCost(root);
+  void loadCostHistory(root);
+}
+
+/**
+ * Fetch bucketed spend history via `cost_get_history` (audit A095 —
+ * the verb was registered host-side and typed in ipc.d.ts but had no
+ * WebView caller). Renders newest-last rows; a not_implemented
+ * rejection from an older subprocess renders a truthful note.
+ */
+async function loadCostHistory(root: HTMLElement): Promise<void> {
+  const sessionId = root.dataset.sessionId?.trim();
+  try {
+    const history = await invokeStub<CostHistoryResult>(
+      "cost_get_history",
+      "R1D-9",
+      EMPTY_HISTORY,
+      sessionId ? { session_id: sessionId } : undefined,
+    );
+    applyHistory(root, history);
+  } catch (err) {
+    renderHistoryUnavailable(root, err);
+  }
+}
+
+function applyHistory(root: HTMLElement, history: CostHistoryResult): void {
+  const empty = root.querySelector<HTMLElement>(
+    '[data-role="cost-history-empty"]',
+  );
+  const list = root.querySelector<HTMLUListElement>(
+    '[data-role="cost-history-list"]',
+  );
+  if (!empty || !list) return;
+  const buckets = Array.isArray(history?.buckets) ? history.buckets : [];
+  if (buckets.length === 0) {
+    empty.textContent = "No cost history yet.";
+    list.hidden = true;
+    return;
+  }
+  empty.hidden = true;
+  list.hidden = false;
+  list.innerHTML = buckets
+    .map(
+      (b) => `
+      <li class="r1-cost-history-row">
+        <span class="r1-cost-history-at">${escapeHtml(b.at || "—")}</span>
+        <span class="r1-cost-history-usd">${formatUsd(b.usd ?? 0)}</span>
+        <span class="r1-cost-history-tokens">${formatInt(b.tokens ?? 0)} tok</span>
+      </li>`,
+    )
+    .join("");
+}
+
+function renderHistoryUnavailable(root: HTMLElement, err: unknown): void {
+  const empty = root.querySelector<HTMLElement>(
+    '[data-role="cost-history-empty"]',
+  );
+  if (!empty) return;
+  const failure = classifyIpcError(err);
+  empty.dataset.role = "cost-history-unavailable";
+  empty.textContent = failure.notImplemented
+    ? "Cost history is not available yet — the host verb cost.get_history is unimplemented."
+    : `Couldn't load cost history: ${failure.message}`;
+}
+
+function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 async function loadCost(root: HTMLElement): Promise<void> {

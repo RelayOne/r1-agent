@@ -609,26 +609,76 @@ pub async fn daemon_accept_sidecar(state: State<'_, DiscoveryState>) -> IpcResul
     Ok(state.accept_sidecar())
 }
 
+/// Project a host-side discovery snapshot onto the pill's reconnect
+/// frame (audit A095 — frames are derived from real state, never
+/// hardcoded): live handle → Connected; probe in flight →
+/// Reconnecting (attempt 0, no scheduled retry — discovery probes
+/// once); probe failed → Offline with the real error; nothing
+/// attempted yet → Offline("daemon discovery not started").
+fn reconnect_status_from_snapshot(
+    snap: &DaemonStatusSnapshot,
+) -> crate::transport::ReconnectStatus {
+    use crate::transport::ReconnectStatus as RS;
+    if snap.connected {
+        RS::Connected
+    } else if snap.pending {
+        RS::Reconnecting {
+            attempt: 0,
+            next_in_ms: 0,
+        }
+    } else if let Some(err) = &snap.error {
+        RS::Offline {
+            reason: err.clone(),
+        }
+    } else {
+        RS::Offline {
+            reason: "daemon discovery not started".to_string(),
+        }
+    }
+}
+
 /// `transport_reconnect_status` — open a `tauri::ipc::Channel<ReconnectStatus>`
-/// the title-bar pill subscribes to. Currently emits a single
-/// `Connected` frame and idles; the real run-loop driver
-/// (`TransportHandle::run_with`) plugs into this channel once the
-/// daemon WS path is wired (audit/scan-rust-stubs.md item #5 / #10).
+/// the title-bar pill subscribes to (mountDaemonStatus in
+/// desktop/src/panels/daemon-status.ts). Sends the current
+/// DiscoveryState-derived frame immediately, then streams a frame on
+/// every state transition (500 ms watcher) until the WebView drops
+/// its end of the channel.
 ///
-/// Backed by `transport::ReconnectStatus`; the Channel handle is
-/// owned by the WebView side via the `subscribe<T>(channel)` Tauri 2
-/// pattern.
+/// The per-session SubprocessManager remains the live transport; when
+/// the shared daemon-WS run-loop lands it feeds this same channel
+/// shape (transport::ReconnectStatus) with real attempt/backoff
+/// numbers.
 #[tauri::command]
 pub async fn transport_reconnect_status(
     on_status: tauri::ipc::Channel<crate::transport::ReconnectStatus>,
+    state: State<'_, DiscoveryState>,
+    app: AppHandle,
 ) -> IpcResult<()> {
-    // Send the current best-effort status. Until the run-loop is wired
-    // to a real socket, we emit `Connected` because the per-session
-    // SubprocessManager is the live transport — no reconnect storms
-    // possible until that path migrates to the shared WS daemon.
+    let current = reconnect_status_from_snapshot(&state.snapshot());
     on_status
-        .send(crate::transport::ReconnectStatus::Connected)
+        .send(current.clone())
         .map_err(|e| IpcError::internal(format!("status channel send: {e}")))?;
+
+    // Watcher: poll the snapshot and forward transitions. Exits as
+    // soon as a send fails (WebView navigated away / window closed).
+    tauri::async_runtime::spawn(async move {
+        use tauri::Manager;
+        let mut last = current;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let snap = {
+                let s: State<'_, DiscoveryState> = app.state();
+                s.snapshot()
+            };
+            let next = reconnect_status_from_snapshot(&snap);
+            if next != last {
+                if on_status.send(next.clone()).is_err() {
+                    return;
+                }
+                last = next;
+            }
+        }
+    });
     Ok(())
 }
 
@@ -672,8 +722,8 @@ pub fn register_handlers() -> tauri::Builder<tauri::Wry> {
             daemon_config_exists,
             daemon_reconnect,
             daemon_accept_sidecar,
-            // Wired per audit/scan-rust-stubs.md item #5 — title-bar
-            // pill subscribes to a typed status Channel.
+            // Title-bar pill status Channel; frames derived from
+            // DiscoveryState (audit A095).
             transport_reconnect_status,
         ])
 }
@@ -1160,6 +1210,72 @@ mod tests {
             serde_json::from_str(&json).expect("LedgerListEventsResult round-trips");
         assert_eq!(back.events.len(), 1);
         assert_eq!(back.next_cursor.as_deref(), Some("cursor-1"));
+    }
+
+    #[test]
+    fn reconnect_status_projection_covers_all_snapshot_shapes() {
+        use crate::transport::ReconnectStatus as RS;
+        let base = DaemonStatusSnapshot {
+            connected: false,
+            pending: false,
+            url: None,
+            mode: None,
+            error: None,
+            sidecar_accepted: false,
+        };
+
+        // Nothing attempted yet.
+        assert_eq!(
+            reconnect_status_from_snapshot(&base),
+            RS::Offline {
+                reason: "daemon discovery not started".into()
+            }
+        );
+
+        // Probe in flight.
+        let pending = DaemonStatusSnapshot {
+            pending: true,
+            ..base
+        };
+        assert_eq!(
+            reconnect_status_from_snapshot(&pending),
+            RS::Reconnecting {
+                attempt: 0,
+                next_in_ms: 0
+            }
+        );
+
+        // Probe failed: the REAL error string is surfaced.
+        let failed = DaemonStatusSnapshot {
+            error: Some("daemon refused connection".into()),
+            ..reconnect_snapshot_base()
+        };
+        assert_eq!(
+            reconnect_status_from_snapshot(&failed),
+            RS::Offline {
+                reason: "daemon refused connection".into()
+            }
+        );
+
+        // Connected wins over stale error text.
+        let connected = DaemonStatusSnapshot {
+            connected: true,
+            url: Some("ws://127.0.0.1:7777".into()),
+            mode: Some("external".into()),
+            ..reconnect_snapshot_base()
+        };
+        assert_eq!(reconnect_status_from_snapshot(&connected), RS::Connected);
+    }
+
+    fn reconnect_snapshot_base() -> DaemonStatusSnapshot {
+        DaemonStatusSnapshot {
+            connected: false,
+            pending: false,
+            url: None,
+            mode: None,
+            error: None,
+            sidecar_accepted: false,
+        }
     }
 
     #[test]

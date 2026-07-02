@@ -25,7 +25,7 @@
 // the pill is a single span.
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 // -------------------------------------------------------------------
 // Types
@@ -134,6 +134,20 @@ export interface DaemonDiscoverySnapshot {
 }
 
 /**
+ * One frame off the `transport_reconnect_status` Channel. Mirrors the
+ * Rust `transport::ReconnectStatus` serde shape (tag = "state").
+ * Frames are derived host-side from the live DiscoveryState — the
+ * attempt / next_in_ms values are real, not the hardcoded 0/250 this
+ * pill used before (audit A095).
+ */
+export interface ReconnectStatusFrame {
+  state: "connected" | "reconnecting" | "offline";
+  attempt?: number;
+  next_in_ms?: number;
+  reason?: string;
+}
+
+/**
  * Project a discovery snapshot onto the pill state. Returns null when
  * the snapshot carries no signal yet (probe still pending) so the
  * caller keeps its current state and waits for daemon.up/daemon.down.
@@ -205,11 +219,10 @@ export async function mountDaemonStatus(
     if (disposed) return;
     const payload = ev.payload;
     if (payload.will_retry) {
-      // Promote to reconnecting for the duration; the run-loop emits
-      // the lifecycle ticks via its own channel (transport.rs
-      // LifecycleEvent), but daemon.down is the moment we know the
-      // socket dropped. attempt / next_in_ms get filled by the
-      // lifecycle stream listener once that lands.
+      // Promote to reconnecting immediately — daemon.down is the
+      // moment we know the connection dropped. attempt / next_in_ms
+      // are refined by the transport_reconnect_status Channel frames
+      // (A095) as they arrive.
       state = {
         kind: "reconnecting",
         url: state.kind === "offline" ? "" : urlOf(state),
@@ -227,23 +240,71 @@ export async function mountDaemonStatus(
   });
   unlistens.push(downUnlisten);
 
+  async function refreshFromSnapshot(): Promise<void> {
+    try {
+      const snap = await invoke<DaemonDiscoverySnapshot>(
+        "app_discovery_status",
+      );
+      if (!disposed) {
+        const fromSnap = stateFromSnapshot(snap);
+        if (fromSnap) {
+          state = fromSnap;
+          paint();
+        }
+      }
+    } catch {
+      // Host verb unavailable — non-Tauri build or very old host.
+    }
+  }
+
   // Startup-race closer (A053): discovery may have completed before
   // this mount registered its listeners, in which case daemon.up /
   // daemon.down already fired into the void. Pull the host-side
   // snapshot once — listeners above cover every later transition.
   // Non-Tauri builds (vitest / plain browser) reject the invoke; keep
   // the default "offline (starting)" state in that case.
-  try {
-    const snap = await invoke<DaemonDiscoverySnapshot>("app_discovery_status");
-    if (!disposed) {
-      const fromSnap = stateFromSnapshot(snap);
-      if (fromSnap) {
-        state = fromSnap;
+  await refreshFromSnapshot();
+
+  // Reconnect status stream (A095): subscribe to the host's
+  // transport_reconnect_status Channel. Frames are derived from the
+  // live DiscoveryState, so attempt / next_in_ms are real values
+  // (today: probe-in-flight or terminal states; live backoff numbers
+  // arrive with the daemon-WS run-loop). Connected frames carry no
+  // url/mode, so we refresh from the snapshot instead of guessing.
+  function applyReconnectFrame(frame: ReconnectStatusFrame): void {
+    if (disposed) return;
+    switch (frame.state) {
+      case "connected":
+        if (state.kind !== "external" && state.kind !== "sidecar") {
+          void refreshFromSnapshot();
+        }
+        return;
+      case "reconnecting":
+        state = {
+          kind: "reconnecting",
+          url: urlOf(state),
+          attempt: frame.attempt ?? 0,
+          nextInMs: frame.next_in_ms ?? 0,
+        };
         paint();
-      }
+        return;
+      case "offline":
+        state = {
+          kind: "offline",
+          url: urlOf(state),
+          reason: frame.reason ?? "unknown",
+        };
+        paint();
+        return;
     }
+  }
+
+  try {
+    const statusChannel = new Channel<ReconnectStatusFrame>();
+    statusChannel.onmessage = applyReconnectFrame;
+    await invoke("transport_reconnect_status", { on_status: statusChannel });
   } catch {
-    // Host verb unavailable — non-Tauri build or very old host.
+    // Verb unavailable — non-Tauri build; snapshot + events suffice.
   }
 
   return {

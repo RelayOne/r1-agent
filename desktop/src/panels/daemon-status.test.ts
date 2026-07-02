@@ -26,6 +26,9 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
+  Channel: class MockChannel {
+    onmessage: ((v: unknown) => void) | undefined;
+  },
 }));
 
 import {
@@ -134,6 +137,97 @@ describe("daemon-status pill — discovery snapshot + events (A053)", () => {
       kind: "offline",
       url: "ws://127.0.0.1:7777",
       reason: "sidecar exited",
+    });
+    handle.dispose();
+  });
+});
+
+describe("daemon-status pill — reconnect status channel (A095)", () => {
+  beforeEach(() => {
+    listeners.clear();
+    invokeMock.mockReset();
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("subscribes to transport_reconnect_status and renders derived frames", async () => {
+    let channel: { onmessage?: (v: unknown) => void } | null = null;
+    invokeMock.mockImplementation(
+      async (cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "app_discovery_status") return snapshot({ pending: true });
+        if (cmd === "transport_reconnect_status") {
+          channel = (args?.on_status ?? null) as never;
+          return null;
+        }
+        throw new Error(`unexpected invoke: ${cmd}`);
+      },
+    );
+    const host = makeHost();
+    const handle = await mountDaemonStatus(host);
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      "transport_reconnect_status",
+      expect.objectContaining({ on_status: expect.anything() }),
+    );
+    expect(channel).not.toBeNull();
+
+    channel!.onmessage?.({
+      state: "reconnecting",
+      attempt: 3,
+      next_in_ms: 2000,
+    });
+    expect(handle.current()).toEqual({
+      kind: "reconnecting",
+      url: "",
+      attempt: 3,
+      nextInMs: 2000,
+    });
+    expect(host.textContent).toContain("Reconnecting");
+
+    channel!.onmessage?.({ state: "offline", reason: "probe refused" });
+    expect(handle.current()).toEqual({
+      kind: "offline",
+      url: "",
+      reason: "probe refused",
+    });
+    handle.dispose();
+  });
+
+  it("connected frames trigger a snapshot refresh for url/mode", async () => {
+    let channel: { onmessage?: (v: unknown) => void } | null = null;
+    let snapshotCalls = 0;
+    invokeMock.mockImplementation(
+      async (cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "app_discovery_status") {
+          snapshotCalls += 1;
+          // First call (mount): still pending. Later calls: connected.
+          return snapshotCalls === 1
+            ? snapshot({ pending: true })
+            : snapshot({
+                connected: true,
+                mode: "external",
+                url: "ws://127.0.0.1:7777",
+              });
+        }
+        if (cmd === "transport_reconnect_status") {
+          channel = (args?.on_status ?? null) as never;
+          return null;
+        }
+        throw new Error(`unexpected invoke: ${cmd}`);
+      },
+    );
+    const host = makeHost();
+    const handle = await mountDaemonStatus(host);
+    expect(handle.current().kind).toBe("offline"); // pending at mount
+
+    channel!.onmessage?.({ state: "connected" });
+    await vi.waitFor(() => {
+      expect(handle.current()).toEqual({
+        kind: "external",
+        url: "ws://127.0.0.1:7777",
+      });
     });
     handle.dispose();
   });

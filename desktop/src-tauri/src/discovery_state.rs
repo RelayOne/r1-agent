@@ -131,7 +131,7 @@ impl DiscoveryState {
     /// session subprocess path. Uses the transport module's
     /// canonical URL builder so the encoding is identical to the one
     /// the runtime path emits.
-    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: invoked by the future transport run-loop
+    #[allow(dead_code)] // deferred daemon-WS migration helper; unit-tested, no production caller yet (A095)
     pub fn connect_url(&self, last_event_id: Option<&str>) -> Option<String> {
         let g = self.inner.lock().expect("DiscoveryState poisoned");
         g.handle
@@ -142,7 +142,7 @@ impl DiscoveryState {
     /// Default reconnect backoff policy. Pulled from the transport
     /// module so the daemon-discovery path uses the same schedule the
     /// per-session forwarder uses (250 ms → 16 s cap).
-    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: read by the future transport run-loop
+    #[allow(dead_code)] // deferred daemon-WS migration helper; unit-tested, no production caller yet (A095)
     pub fn backoff_policy() -> BackoffPolicy {
         BackoffPolicy::r1_default()
     }
