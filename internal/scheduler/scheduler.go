@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -507,6 +508,13 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 		// Prune failed branches to free memory after speculation completes.
 		explorer.Prune()
 
+		// Carry learnings from the explorations forward (the specexec
+		// package promise "merge insights from failed approaches into
+		// retry prompts"): the winner's real run sees what the other
+		// approaches tripped over, and the all-failed error surfaces
+		// the same learnings to the workflow retry loop.
+		insights := specexec.ExtractInsights(result)
+
 		// PHASE 2: Execute the winning strategy through the real pipeline.
 		if result.Winner != nil {
 			// Find the winning strategy's prompt
@@ -527,16 +535,19 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 			// Preserve original PlanOnly contract — specexec must not
 			// escalate a plan-only task into full execution.
 			realTask.PlanOnly = task.PlanOnly
+			if len(insights) > 0 {
+				realTask.Description += "\n\nLearnings from other explored approaches:\n- " +
+					strings.Join(insights, "\n- ")
+			}
 			return base(ctx, realTask)
 		}
 
-		// All strategies failed — return error
+		// All strategies failed — return error carrying the collected
+		// insights so the workflow retry loop can learn from them.
 		bestErr := fmt.Errorf("all %d speculative strategies failed", len(result.Outcomes))
-		for _, o := range result.Outcomes {
-			if o.Error != "" {
-				bestErr = fmt.Errorf("all %d strategies failed; last: %s", len(result.Outcomes), o.Error)
-				break
-			}
+		if len(insights) > 0 {
+			bestErr = fmt.Errorf("all %d speculative strategies failed; insights: %s",
+				len(result.Outcomes), strings.Join(insights, "; "))
 		}
 		return TaskResult{
 			TaskID:     task.ID,

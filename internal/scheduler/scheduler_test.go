@@ -314,6 +314,76 @@ func TestWithSpecExecPrefersHigherQualityPlan(t *testing.T) {
 	}
 }
 
+func TestWithSpecExecMergesInsightsIntoWinnerPrompt(t *testing.T) {
+	// Audit A111: learnings from failed explorations must reach the
+	// winning strategy's real run instead of being discarded.
+	var chosen atomic.Value
+
+	base := func(ctx context.Context, task plan.Task) TaskResult {
+		if task.PlanOnly {
+			if strings.Contains(task.Description, "approach BAD") {
+				return TaskResult{TaskID: task.ID, Success: false, Error: fmt.Errorf("nil pointer in fooHandler")}
+			}
+			time.Sleep(20 * time.Millisecond) // let the failing strategy land first
+			return TaskResult{TaskID: task.ID, Success: true}
+		}
+		chosen.Store(task.Description)
+		return TaskResult{TaskID: task.ID, Success: true}
+	}
+
+	wrapped := WithSpecExec(base, SpecExecConfig{
+		Approaches:  []string{"approach BAD", "approach GOOD"},
+		MaxParallel: 2,
+		Timeout:     5 * time.Second,
+	})
+
+	result := wrapped(context.Background(), plan.Task{ID: "T1", Description: "refactor auth module"})
+	if !result.Success {
+		t.Fatalf("expected success, got failure: %v", result.Error)
+	}
+
+	got, _ := chosen.Load().(string)
+	if got == "" {
+		t.Fatal("phase 2 never executed a winning strategy")
+	}
+	if !strings.Contains(got, "Learnings from other explored approaches") {
+		t.Errorf("winner prompt missing insights header:\n%s", got)
+	}
+	if !strings.Contains(got, "nil pointer in fooHandler") {
+		t.Errorf("winner prompt missing the failed strategy's learning:\n%s", got)
+	}
+}
+
+func TestWithSpecExecAllFailedErrorCarriesInsights(t *testing.T) {
+	// Audit A111: when every strategy fails, the returned error must
+	// surface the collected insights so the workflow retry loop can
+	// learn from them.
+	base := func(ctx context.Context, task plan.Task) TaskResult {
+		return TaskResult{TaskID: task.ID, Success: false, Error: fmt.Errorf("compile error in %s", task.ID)}
+	}
+
+	wrapped := WithSpecExec(base, SpecExecConfig{
+		Approaches:  []string{"approach A", "approach B"},
+		MaxParallel: 2,
+		Timeout:     5 * time.Second,
+	})
+
+	result := wrapped(context.Background(), plan.Task{ID: "T1", Description: "refactor auth module"})
+	if result.Success {
+		t.Fatal("expected failure when all strategies fail")
+	}
+	if result.Error == nil {
+		t.Fatal("expected error when all strategies fail")
+	}
+	msg := result.Error.Error()
+	if !strings.Contains(msg, "insights:") {
+		t.Errorf("all-failed error missing insights: %q", msg)
+	}
+	if !strings.Contains(msg, "compile error") {
+		t.Errorf("all-failed error missing failure learning: %q", msg)
+	}
+}
+
 func TestWithSpecExecSkipsNonSpeculative(t *testing.T) {
 	var calls atomic.Int32
 
