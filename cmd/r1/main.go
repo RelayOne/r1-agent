@@ -1014,6 +1014,16 @@ func initCmd(args []string) {
 		fmt.Fprintf(os.Stderr, "wizard error: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Install the ledger append-only guard as a pre-commit hook so the
+	// content-addressed ledger cannot be silently rewritten by a later
+	// commit. Best-effort: projects without a .git directory get a
+	// warning, not a failed init.
+	if err := wizard.InstallLedgerGuardHook(projectDir); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: ledger guard hook not installed: %v\n", err)
+	} else {
+		fmt.Println("  Ledger guard pre-commit hook: installed")
+	}
 }
 
 // --- mcp-serve: start MCP codebase tool server ---
