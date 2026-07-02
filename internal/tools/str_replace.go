@@ -3,6 +3,8 @@ package tools
 import (
 	"fmt"
 	"strings"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // ReplaceResult is the outcome of a str_replace attempt.
@@ -50,6 +52,17 @@ func StrReplace(content, oldStr, newStr string, replaceAll bool) (*ReplaceResult
 
 	// Method 2: whitespace-normalized match
 	if r := whitespaceNormalizedReplace(content, oldStr, newStr); r != nil {
+		return r, nil
+	}
+
+	// Method 2.5: Unicode-normalized match. LLMs (and copy-paste from
+	// rendered docs/terminals) routinely emit smart quotes, em/en-dashes,
+	// and non-breaking spaces where the file has ASCII, or an NFD vs NFC
+	// form of the same grapheme — an exact match then fails on bytes that
+	// are visually identical. Fold both sides to NFC + ASCII punctuation
+	// and retry, layered after whitespace and before the lossier ellipsis/
+	// fuzzy tiers. Mirrors Codex apply_patch / OpenCode normalization.
+	if r := unicodeNormalizedReplace(content, oldStr, newStr); r != nil {
 		return r, nil
 	}
 
@@ -101,6 +114,69 @@ func whitespaceNormalizedReplace(content, oldStr, newStr string) *ReplaceResult 
 		Replacements: 1,
 		Method:       "whitespace",
 		Confidence:   0.85,
+	}
+}
+
+// foldUnicode returns an NFC-normalized copy of s with the punctuation
+// characters that most often differ between LLM output and on-disk source
+// folded to their ASCII equivalents: curly single/double quotes, en/em
+// dashes, and the non-breaking space. It is deliberately conservative —
+// only these high-frequency confusables are folded, so genuinely distinct
+// Unicode content is not silently collapsed.
+func foldUnicode(s string) string {
+	s = norm.NFC.String(s)
+	repl := strings.NewReplacer(
+		"‘", "'", // left single quote
+		"’", "'", // right single quote / apostrophe
+		"“", "\"", // left double quote
+		"”", "\"", // right double quote
+		"–", "-", // en dash
+		"—", "-", // em dash
+		"−", "-", // minus sign
+		" ", " ", // non-breaking space
+	)
+	return repl.Replace(s)
+}
+
+// unicodeNormalizedReplace matches oldStr against content after folding
+// both to NFC + ASCII punctuation, then splices newStr in place of the
+// ORIGINAL matched block so the file keeps its real bytes everywhere
+// except the intended edit. It uses the same line-block location strategy
+// as whitespaceNormalizedReplace — anchor on the first line, extract the
+// matching line span, verify the fold — which is robust to NFC changing
+// rune/byte counts (byte arithmetic across a fold is not). Returns nil
+// when folding changes nothing (the exact tier already handled it) or no
+// unambiguous block matches.
+func unicodeNormalizedReplace(content, oldStr, newStr string) *ReplaceResult {
+	foldedOld := foldUnicode(oldStr)
+	foldedContent := foldUnicode(content)
+	if foldedOld == oldStr && foldedContent == content {
+		return nil // fold is a no-op; Method 1 already ran
+	}
+	if !strings.Contains(foldedContent, foldedOld) {
+		return nil
+	}
+	// Anchor on the first non-empty line of oldStr, folded, so we locate
+	// the block in the ORIGINAL content and replace original bytes.
+	oldLines := len(strings.Split(oldStr, "\n"))
+	contentLines := strings.Split(content, "\n")
+	var matched string
+	found := 0
+	for i := 0; i+oldLines <= len(contentLines); i++ {
+		block := strings.Join(contentLines[i:i+oldLines], "\n")
+		if foldUnicode(block) == foldedOld {
+			matched = block
+			found++
+		}
+	}
+	if found != 1 {
+		return nil // no match, or ambiguous — defer to more-context path
+	}
+	return &ReplaceResult{
+		NewContent:   strings.Replace(content, matched, newStr, 1),
+		Replacements: 1,
+		Method:       "unicode",
+		Confidence:   0.9,
 	}
 }
 
@@ -174,7 +250,11 @@ func lineBlockSimilarity(a, b []string) float64 {
 }
 
 func normalizedEqual(a, b string) bool {
-	return strings.Join(strings.Fields(a), " ") == strings.Join(strings.Fields(b), " ")
+	// Whitespace- and Unicode-normalize both sides so the fuzzy tier also
+	// treats smart-quote/dash/NFC confusables as equal (SOTA gap #10).
+	na := strings.Join(strings.Fields(foldUnicode(a)), " ")
+	nb := strings.Join(strings.Fields(foldUnicode(b)), " ")
+	return na == nb
 }
 
 func firstNonEmptyLine(s string) string {
