@@ -353,8 +353,35 @@ func runServeLoop(opts serveOptions) {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "r1 serve listening on %s\n", opts.Addr)
-	fmt.Fprintf(os.Stderr, "dashboard: http://%s/\n", opts.Addr)
+	// Phase C (specs/r1d-server.md items 14-16, audit A031): bind the
+	// per-user unix control socket unless --no-unix. It serves the
+	// SAME mux as the TCP listener; auth on this transport is the
+	// kernel peer-cred check (peerCredListener in serve_ipc.go)
+	// instead of the bearer token. A bind failure is non-fatal when
+	// TCP remains available, but fatal under --no-tcp — the daemon
+	// would otherwise serve nothing.
+	unixLn, ipcErr := bindUnixControl(opts.NoUnix)
+	if ipcErr != nil {
+		if opts.NoTCP {
+			fatal("serve: --no-tcp requires the unix control socket, which failed to bind: %v", ipcErr)
+		}
+		fmt.Fprintf(os.Stderr, "warn: unix control socket not bound: %v\n", ipcErr)
+	}
+	sockPath := ""
+	if unixLn != nil {
+		sockPath = unixLn.Path
+		defer unixLn.Close()
+	}
+
+	if opts.NoTCP {
+		fmt.Fprintf(os.Stderr, "r1 serve listening on unix socket only (--no-tcp)\n")
+	} else {
+		fmt.Fprintf(os.Stderr, "r1 serve listening on %s\n", opts.Addr)
+		fmt.Fprintf(os.Stderr, "dashboard: http://%s/\n", opts.Addr)
+	}
+	if sockPath != "" {
+		fmt.Fprintf(os.Stderr, "control socket: %s\n", sockPath)
+	}
 
 	// Write the discovery file so external clients (`r1 ctl`, the
 	// desktop app, headless test harnesses) can find this daemon.
@@ -362,7 +389,9 @@ func runServeLoop(opts serveOptions) {
 	// (tmp + rename). Failure here is non-fatal — the dashboard +
 	// JSON-RPC endpoints still work for clients that already know the
 	// port; it just means `r1 ctl` won't be able to auto-discover.
-	if discPath, derr := daemondisco.WriteDiscovery(os.Getpid(), "", port, opts.Token, version); derr != nil {
+	// The socket path activates r1 ctl's unixSocketAlive/dialUnix
+	// branch (ctl_daemon_cmd.go pickClientAndURL).
+	if discPath, derr := daemondisco.WriteDiscovery(os.Getpid(), sockPath, port, opts.Token, version); derr != nil {
 		fmt.Fprintf(os.Stderr, "warn: discovery file not written: %v\n", derr)
 	} else {
 		fmt.Fprintf(os.Stderr, "discovery file: %s\n", discPath)
@@ -371,8 +400,14 @@ func runServeLoop(opts serveOptions) {
 	sigCtx, sigCancel := signalContext(context.Background())
 	defer sigCancel()
 
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.ListenAndServe() }()
+	errCh := make(chan error, 2)
+	if !opts.NoTCP {
+		go func() { errCh <- srv.ListenAndServe() }()
+	}
+	if unixLn != nil {
+		unixSrv := newUnixControlServer(srv.Handler(), opts.Token)
+		go func() { errCh <- unixSrv.Serve(&peerCredListener{Listener: unixLn}) }()
+	}
 
 	select {
 	case <-sigCtx.Done():

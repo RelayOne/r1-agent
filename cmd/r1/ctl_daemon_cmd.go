@@ -130,11 +130,12 @@ DISCOVERY:
 // ---- transport ------------------------------------------------------
 
 // ctlTransport encapsulates the resolved daemon endpoint + bearer.
-// Today: loopback HTTP + Bearer. Future: unix-domain HTTP w/ peer-cred.
+// Two transports: unix-domain HTTP w/ peer-cred (preferred when the
+// daemon's control socket is alive) and loopback HTTP + Bearer.
 type ctlTransport struct {
 	BaseURL string // http://127.0.0.1:<port>
 	Token   string
-	Sock    string // unix socket path (informational; not used yet)
+	Sock    string // unix control socket path written by `r1 serve` (see pickClientAndURL)
 }
 
 // resolveTransport reads ~/.r1/daemon.json and returns the dial info.
