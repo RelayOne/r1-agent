@@ -99,11 +99,51 @@ func NewStore(rootDir string) (*Store, error) {
 	return s, nil
 }
 
-// WriteNode persists a node using the two-tier layout. The chain tier is
-// always written. The content tier is written whenever Content is
-// non-empty. If a node with the same ID already exists on the chain tier,
-// WriteNode is a no-op (content-addressed dedup) — this keeps retries and
-// Batch re-plays idempotent.
+// atomicWriteFile writes data to path via a same-directory tmp file +
+// fsync + rename, so a crash mid-write can never leave a truncated or
+// half-written record. Chain-file presence is WriteNode's dedup commit
+// point, so its write in particular must be all-or-nothing (audit A021).
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, ".ledger-tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Chmod(tmp, perm); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// WriteNode persists a node using the two-tier layout. The content tier
+// is written FIRST, then the chain record: chain-file presence is the
+// dedup commit point (see below), so committing it last closes the
+// crash window where a chain record existed without its content — a
+// state indistinguishable from crypto-shredding that made every retry a
+// silent no-op and the content unrecoverable (audit A021). If a node
+// with the same ID already exists on the chain tier, WriteNode is a
+// no-op (content-addressed dedup) — this keeps retries and Batch
+// re-plays idempotent.
 func (s *Store) WriteNode(n Node) error {
 	if n.ID == "" {
 		return errors.New("ledger: WriteNode: node ID required")
@@ -130,20 +170,28 @@ func (s *Store) WriteNode(n Node) error {
 	if err != nil {
 		return fmt.Errorf("marshal chain record: %w", err)
 	}
-	if err := os.WriteFile(chainPath, chainData, 0o600); err != nil {
-		return fmt.Errorf("write chain record: %w", err)
-	}
 
+	// Content tier FIRST (see doc comment): if the process dies here,
+	// no chain record exists, so a retry rewrites everything.
+	var contentPath string
 	if len(n.Content) > 0 {
-		contentPath := filepath.Join(s.contentDir, n.ID+".json")
+		contentPath = filepath.Join(s.contentDir, n.ID+".json")
 		cr := contentRecord{Salt: n.Salt, Content: n.Content}
 		contentData, err := json.MarshalIndent(cr, "", "  ")
 		if err != nil {
 			return fmt.Errorf("marshal content record: %w", err)
 		}
-		if err := os.WriteFile(contentPath, contentData, 0o600); err != nil {
+		if err := atomicWriteFile(contentPath, contentData, 0o600); err != nil {
 			return fmt.Errorf("write content record: %w", err)
 		}
+	}
+
+	// Chain record LAST — this is the commit point.
+	if err := atomicWriteFile(chainPath, chainData, 0o600); err != nil {
+		if contentPath != "" {
+			os.Remove(contentPath) // don't leave an orphan content blob
+		}
+		return fmt.Errorf("write chain record: %w", err)
 	}
 
 	// CS-3 stdout-event hook — no content in the payload, just the
@@ -180,7 +228,7 @@ func (s *Store) WriteContentBlob(nodeID string, envelope []byte) error {
 		return nil
 	}
 	path := filepath.Join(s.contentDir, nodeID+".json")
-	return os.WriteFile(path, envelope, 0o600)
+	return atomicWriteFile(path, envelope, 0o600)
 }
 
 // ReadNode loads a node by merging its chain tier + (optional) content
@@ -245,7 +293,7 @@ func (s *Store) WriteEdge(e Edge) error {
 	if err != nil {
 		return fmt.Errorf("marshal edge: %w", err)
 	}
-	return os.WriteFile(path, data, 0o600)
+	return atomicWriteFile(path, data, 0o600)
 }
 
 // ListNodes reads every chain record and reconstitutes the full Node (with
