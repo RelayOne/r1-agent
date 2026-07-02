@@ -102,7 +102,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **atomicfs.Transaction.Commit rollback leaves newly-created files on disk, violating the multi-file atomicity contract**
 - Evidence: Package doc (transaction.go:9): "Multi-file atomicity: all changes apply or none do". But rollback (transaction.go:251-257) only restores backups of files that pre-existed (`for _, b := range backups { os.WriteFile(b.path, b.data, 0644) }`) and removes leftover temp files; files whose rename already succeeded and had no original (opKindCreate, or opKindWrite to a new path) are never deleted. Failure scenario: tx.Create("a.txt"); tx.Create("b/c.txt"); rename of the second fails (permission/EXDEV/dir-appeared) → Commit returns error but a.txt remains on disk. Secondary: Phase-3 backup silently s…
 - Fix: In internal/atomicfs/transaction.go Commit(): (1) Phase 4 — track successfully renamed staged entries (e.g. `var renamed []staged`); in rollback(), iterate `renamed` and for ops with origExists==false call os.Remove(s.op.Path) (backups already cover origExists==true); keep cleanup() for un-renamed temps. (2) Phase 3 — if op.origExists and os.ReadFile(op.Path) fails, abort Commit with an error (after cleanup()) instead of silently skipping, since rollback would otherwise be unable to restore that file. (3) Collect rollback os.WriteFile/os.Remove errors and append them to the returned Commit err…
-- STATUS: PENDING
+- STATUS: FIXED (commit: c2c1c0c4)
 
 ### A015 [bug/S] internal/bus/bus.go:887
 **bus.restoreDelayed mutates b.delayed without the mutex while its own timers fire concurrently; past-due events can be lost**
@@ -138,7 +138,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Ledger.Batch claims 'all operations succeed or none do' but has no rollback — failed batches persist partial graphs**
 - Evidence: Doc comment ledger.go:510-511: "Batch atomically writes multiple nodes and edges. All operations succeed or none do." But Phase 2 (ledger.go:583-593) writes+indexes every node immediately, and Phase 3 (ledger.go:596-615) only then validates edge endpoints: `if _, err := l.store.ReadNode(it.edge.From); err != nil { return fmt.Errorf("ledger: batch edge from %q not found...") }`. A batch [AddNode A, AddEdge A→missing] returns an error yet node A is permanently persisted in both the store and the SQLite index; no compensation/rollback exists. Same for a mid-batch WriteNode/InsertNode failure (dis…
 - Fix: Do NOT implement rollback-by-deletion — the store is append-only by design and WriteNode explicitly cannot distinguish "previously redacted" from "never written" (store.go:113-115), so deleting chain/content files conflicts with the design. Instead: (1) Move the edge-endpoint existence checks from Phase 3 (ledger.go:598-607) into Phase 1: Phase 1 already computes each new node's final ID (line 561), so build the newNodeIDs set during Phase 1 and validate every BatchAddEdge From/To against newNodeIDs plus l.store.ReadNode BEFORE any write. All validation failures then leave the ledger untouched…
-- STATUS: PENDING
+- STATUS: FIXED (commit: e60faf50)
 
 ### A021 [bug/M] internal/ledger/store.go:133
 **Ledger WriteNode: non-atomic two-tier write + chain-presence dedup permanently loses node content on crash**
@@ -312,7 +312,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **TestE2EWorkflowWisdomAccumulates asserts nothing — name claims accumulation, body discards the result**
 - Evidence: Lines 227-233: `_, _ = wf.Run(context.Background())` (error ignored), then `learnings := ws.Learnings()` followed by the comment "Even if no wisdom gotcha was recorded (depends on path), the test verifies the workflow doesn't panic with wisdom wired in." and `_ = learnings`. Zero t.Error/t.Fatal in the function. The wisdom-recording behavior the test is named for can silently break and this test stays green.
 - Fix: Two-part fix (the finder's suggested assertion would fail today, so a test-only change is insufficient if the name is kept): (1) In internal/workflow/workflow.go, in the review-rejection branch (~lines 1505-1509), record a wisdom gotcha before returning when e.Wisdom != nil, e.g. e.Wisdom.Record(e.Task, wisdom.Learning{Category: wisdom.Gotcha, Description: fmt.Sprintf("cross-model review rejected: %s severity, %d findings", verdict.Severity, len(verdict.Findings))}) — consistent with the existing failure->gotcha recording at workflow.go:1286-1296. (2) In TestE2EWorkflowWisdomAccumulates, asser…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 82c71ab7)
 
 ### A050 [dormant/S] cmd/r1-server/graph_e2e_test.go:11
 **Graph 3k-FPS e2e test (spec T11) is unreachable by every lane — its own header claims the rehearsal lane runs it**
@@ -518,7 +518,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **research Orchestrator: subagent write failures are swallowed while the Lead deliberately prefers disk — findings silently vanish from synthesis**
 - Evidence: `_ = writeSubagentDir(o.RunRoot, i, obj, f, clock())` (orchestrator.go:363) with the comment "Errors here are non-fatal — the run still produces an in-memory Report." But when a LeadFn is set, the code REPLACES the in-memory findings with what it re-reads from disk: `if loaded, err := readFindingsFromDisk(o.RunRoot, subObjs); err == nil { rf = loaded }` (orchestrator.go:385-388), and readFindingsFromDisk never returns an error and yields an EMPTY Findings entry for any missing/unwritten file (orchestrator.go:725-750). So a disk-full or permission failure in writeSubagentDir silently feeds the …
 - Fix: In the fan-out closure (orchestrator.go:362-364), capture the error into a pre-allocated persistErr := make([]error, len(subObjs)) slice: persistErr[i] = writeSubagentDir(o.RunRoot, i, obj, f, clock()); on non-nil, emit o.emit("subagent.persist_failed", map[string]any{"index": i, "error": err.Error()}). In Stage 3 (after line 388), for each index where persistErr[i] != nil, substitute rf[i] = findings[i] so the Lead falls back to the in-memory Findings for exactly the subagents whose disk state is untrustworthy, preserving the filesystem-as-communication contract for the rest. Also correct the…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 8667959f)
 
 ### A084 [bug/S] internal/session/fork.go:61
 **session.ForkSession ignores marshal/write errors for the fork state copy — fork reports success but its state is silently absent**
@@ -560,13 +560,13 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **TestAnalyticsSubscriber_DropsUnmappedEvent cannot fail — final check is t.Logf, no drop assertion**
 - Evidence: Lines 152-158: after polling, the only terminal check is `if got != before { t.Logf("analytics.no_match delta = %d (acceptable)", got-before) }` — a log, not an assertion, and the else branch does nothing. The test never asserts the mock PostHog recorder received zero events (the actual "drops" contract). Every code path passes; only an infra panic could fail it.
 - Fix: In TestAnalyticsSubscriber_DropsUnmappedEvent: after emitting EventModelPreCall, (1) poll briefly then call `_ = client.Shutdown(context.Background())` to force the SDK flush, and assert `rec.count.Load() == 0` (`t.Errorf` if the mock PostHog server received anything — the actual drop contract); (2) replace the Logf branch with deterministic zero-delta assertions: `analytics.no_match` delta == 0 AND `analytics.captured` delta == 0 (registration is explicit-events per analytics_subscriber.go:100-110, so handle() is never invoked for unmapped types; the captured==0 check additionally fails if re…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 82c71ab7)
 
 ### A091 [test-gap/S] internal/research/store_test.go:389
 **TestConcurrentSearchAndAdd ignores all errors and asserts nothing; its only value (-race) never runs in automation**
 - Evidence: Body ends with comment "// Just verify no panics or deadlocks" — Add/Search return values are discarded in the goroutines (lines 381, 385) and there is no post-wait assertion (e.g. Count == 30). Combined with the fact that no lane runs -race (Makefile:96 test-race is never invoked), the test cannot detect a data race, a lost write, or an error in any automated run.
 - Fix: In TestConcurrentSearchAndAdd (internal/research/store_test.go:368-390): mirror the TestConcurrentAdds pattern — create errs := make(chan error, 20); in the Add goroutines send any Add error, in the Search goroutines send any Search error; after wg.Wait() close(errs), range-Errorf each error, then assert count, _ := s.Count(); count == 20 (10 seeded + 10 concurrent adds). Also check the seed Add errors at line 372 with t.Fatalf. Separately (companion ci-gap, also in-repo): wire `make test-race` into an automated lane, e.g. add a race job to .github/workflows/nightly.yml, so the concurrency hal…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 82c71ab7)
 
 ### A092 [test-gap/S] internal/scan/selfscan_test.go:115
 **Self-scan dogfood test contradicts its own exclusion policy: whole-rule and whole-directory mutes**
@@ -578,7 +578,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **TestSelectSkillsMatchesKeywords always skips, and even its post-skip body asserts nothing**
 - Evidence: `reg := skill.NewRegistry()` with no dirs makes `reg.Add(...)` fail, hitting `t.Skip("cannot add skills without directory")` on every run — verified skipped in a live full-suite run. Even if Add succeeded, lines 561-563 are `skills := SelectSkills(info, reg)` / "We may or may not match depending on registry Add succeeding." / `_ = skills` — no assertion exists. The keyword-matching behavior of SelectSkills is untested despite the test name.
 - Fix: In /home/eric/repos/r1-agent/internal/skillselect/detect_test.go TestSelectSkillsMatchesKeywords: construct the registry as `reg := skill.NewRegistry(t.TempDir())` (mirroring TestSelectSkillsWithRegistry at line 566), change the Add error branch from t.Skip to t.Fatalf, then replace lines 560-563 with real assertions: `skills := SelectSkills(&StackInfo{Languages: []string{"go"}}, reg)` must be non-empty and contain a skill named "go-testing". This also gives the package its only coverage of SelectSkills over Add-registered (in-memory) skills, complementing the existing Load()-path test. Altern…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 82c71ab7)
 
 ### A094 [dormant/S] cmd/r1/serve_integration_chdirleak_test.go:166
 **Chdir-leak sentinel test is dormant (tag never invoked) and tests a byte-copy of the SUT, not the production code**
