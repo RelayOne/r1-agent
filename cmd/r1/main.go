@@ -516,6 +516,15 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		attemptNum := len(priorAttempts) + 1
 
 		if err != nil {
+			// R5: a cancelled run (Ctrl-C / timeout) is not a task failure.
+			// Skip the failure Attempt record and markTask StatusFailed so
+			// attempt numbering, fingerprint escalation, and wisdom are not
+			// corrupted for work that never ran; the task stays StatusPending
+			// for resume.
+			if errors.Is(err, context.Canceled) {
+				ui.TaskComplete(task.ID, false, elapsed, result.TotalCostUSD, 1)
+				return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD}
+			}
 			ui.TaskComplete(task.ID, false, elapsed, result.TotalCostUSD, 1)
 			attempt := session.Attempt{
 				TaskID:   task.ID,
@@ -1591,6 +1600,13 @@ func buildCmd(args []string) {
 				priorAttempts, _ := store.LoadAttempts(task.ID)
 				attemptNum := len(priorAttempts) + 1
 				if err != nil {
+					// R5: a cancelled run is not a task failure — leave the
+					// task StatusPending for resume instead of recording a
+					// phantom failure Attempt and marking it StatusFailed.
+					if errors.Is(err, context.Canceled) {
+						tui.SendTaskComplete(program, task.ID, false, result.TotalCostUSD, elapsed, attemptNum, err.Error(), ts.ClaimedVsVerified())
+						return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD}
+					}
 					tui.SendTaskComplete(program, task.ID, false, result.TotalCostUSD, elapsed, attemptNum, err.Error(), ts.ClaimedVsVerified())
 					store.SaveAttempt(session.Attempt{TaskID: task.ID, Number: attemptNum, Success: false, Error: err.Error(), CostUSD: result.TotalCostUSD})
 					markTask(p, task.ID, plan.StatusFailed)

@@ -185,6 +185,27 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 			break
 		}
 
+		// R5: once the context is cancelled (Ctrl-C / timeout), stop
+		// dispatching queued tasks. Previously the dispatch section below
+		// never checked ctx.Err(), so every still-ready task was launched
+		// into a dead context, failed with "context canceled", and got
+		// written up as a real task failure — corrupting attempt numbering,
+		// failure-fingerprint escalation, and wisdom, and leaving resume
+		// with phantom failed tasks. Fall through to the in-flight drain and
+		// return results for genuinely-dispatched tasks only; undispatched
+		// tasks stay untouched (StatusPending) for resume.
+		if ctx.Err() != nil {
+			for active > 0 {
+				r := <-results
+				wg.Done()
+				active--
+				allResults = append(allResults, r)
+				recordResult(r)
+			}
+			wg.Wait()
+			return allResults, ctx.Err()
+		}
+
 		// Dispatch all ready tasks (collect candidates, then launch outside lock).
 		s.stateMu.Lock()
 		var toDispatch []plan.Task

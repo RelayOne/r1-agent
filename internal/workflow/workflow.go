@@ -701,6 +701,15 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			}
 
 			if runErr != nil {
+				// R5: if the PARENT context was cancelled (Ctrl-C / timeout),
+				// this run was killed, not failed on its merits. Propagate
+				// context.Canceled (not a task failure) so the caller skips
+				// failure bookkeeping and leaves the task pending for resume.
+				// Boulder's execCtx-only cancellation (parent still live) is
+				// left to fall through as a genuine failure.
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return result, fmt.Errorf("execute phase (attempt %d) cancelled: %w", attempt, ctxErr)
+				}
 				_ = e.advanceState(taskstate.Failed, fmt.Sprintf("execute phase attempt %d failed: %s", attempt, runErr))
 				return result, fmt.Errorf("execute phase (attempt %d): %w", attempt, runErr)
 			}
@@ -1325,7 +1334,10 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 
 		// Record failure as a wisdom gotcha for subsequent tasks, with fingerprint
 		// so cross-task dedup can detect if task B hits the same pattern as task A.
-		if e.Wisdom != nil {
+		// R5: skip when execCtx was cancelled — a cancellation-induced
+		// "signal: killed"/"context canceled" analysis is not a real learning
+		// and would otherwise be injected into unrelated retry prompts.
+		if e.Wisdom != nil && execCtx.Err() == nil {
 			desc := analysis.Summary
 			if analysis.RootCause != "" {
 				desc = analysis.RootCause
