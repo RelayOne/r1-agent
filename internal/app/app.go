@@ -199,6 +199,16 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 			cfg.EventBus.Register(hub.FileProtectionGate(policy.Files.Protected))
 		}
 
+		// Register the honesty enforcement suite per the policy's
+		// honesty: block (see honesty_boot.go). The LLM-backed checkers
+		// only activate when a judge provider can be built (same
+		// key-selection logic as the convergence override judge).
+		judgeModel := policy.Honesty.JudgeModel
+		if judgeModel == "" {
+			judgeModel = cfg.NativeModel
+		}
+		registerHonestySubscribers(cfg.EventBus, policy.Honesty, buildJudgeProvider(cfg), judgeModel)
+
 		// Discover and register plugin hooks as hub script subscribers.
 		pluginReg := plugins.NewRegistry(r1dir.JoinFor(cfg.RepoRoot, "plugins"))
 		if err := pluginReg.Discover(); err != nil {
