@@ -944,6 +944,15 @@ func (r *Registry) handleBash(ctx context.Context, input json.RawMessage) (strin
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
+	// SOTA gap #7: harness-enforced destructive-command floor. Runs before
+	// exec regardless of whether a policy client is wired, so single-user
+	// installs are protected from catastrophic shell actions even without a
+	// policy file. Blocks only unambiguous filesystem/disk destruction, so
+	// it never trips on real build/test commands.
+	if err := bashBreakerCheck(args.Command); err != nil {
+		return "", err
+	}
+
 	timeout := DefaultBashTimeout
 	if args.Timeout > 0 {
 		timeout = time.Duration(args.Timeout) * time.Millisecond
