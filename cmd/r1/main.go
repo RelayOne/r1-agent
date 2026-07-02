@@ -951,6 +951,12 @@ func main() {
 		// (TASK-31 of cortex-concerns) is wired; future cortex subcommands
 		// extend cortexCmd's dispatch in cortex_memory_audit.go.
 		cortexCmd(os.Args[2:])
+	case "memory":
+		// Memory subcommand family (ops_memory.go): `list` / `add` over
+		// the scoped memory bus, plus `consolidate` (A101) which runs the
+		// STOKE-010 episodic→semantic consolidation pass over the tiered
+		// memory Router.
+		os.Exit(runMemoryCmd(os.Args[2:], os.Stdout, os.Stderr))
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	case "help", "--help", "-h":

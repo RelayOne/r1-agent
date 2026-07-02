@@ -86,15 +86,15 @@ var DefaultGates = map[TrustTier]PromotionGate{
 // Insight is a consolidated item: a pattern or fact promoted
 // from Episodic into Semantic or Procedural storage.
 type Insight struct {
-	ID            string
-	Tier          TrustTier
-	Version       int
-	Content       string
-	Tags          []string
-	Samples       int
-	Successes     int
-	CreatedAt     time.Time
-	PromotedAt    time.Time
+	ID              string
+	Tier            TrustTier
+	Version         int
+	Content         string
+	Tags            []string
+	Samples         int
+	Successes       int
+	CreatedAt       time.Time
+	PromotedAt      time.Time
 	PreviousVersion *Insight // linked list for rollback
 }
 
@@ -218,10 +218,46 @@ var DefaultThreshold = MisevolutionThreshold{
 	MaxHallucinationRise: 0.10,
 }
 
+// ErrMisevolved is returned by PromoteChecked when a promotion is
+// reverted because it degraded safety metrics past the threshold. The
+// Insight returned alongside it is the rolled-back (pre-promotion)
+// version, so callers can persist the reversion directly.
+var ErrMisevolved = errors.New("consolidation: promotion reverted — misevolution detected")
+
+// PromoteChecked advances an insight one tier and then enforces the
+// contract Misevolved documents ("callers ... MUST initiate a
+// rollback"). It is the wired caller of that contract: after a
+// successful Promote, it compares the post-promotion safety metrics
+// (current) against baseline; if Misevolved fires, the promotion is
+// immediately rolled back to its pre-promotion version and ErrMisevolved
+// is returned with that reverted insight. A clean promotion returns the
+// promoted insight and a nil error; gate failures surface unchanged
+// (ErrPromotionGateUnmet / ErrAlreadyTopTier). This is the safety
+// half of the STOKE-010 promotion ladder — without a caller honoring
+// the rollback contract, a Junior/Senior promotion that regresses
+// safety would stick.
+func PromoteChecked(in Insight, baseline, current SafetyMetric, thr MisevolutionThreshold) (Insight, error) {
+	promoted, err := Promote(in)
+	if err != nil {
+		return in, err
+	}
+	if Misevolved(baseline, current, thr) {
+		reverted, rbErr := Rollback(promoted)
+		if rbErr != nil {
+			// Promotion linked a PreviousVersion, so Rollback cannot
+			// fail here; guard defensively regardless.
+			return promoted, fmt.Errorf("%w: rollback failed: %v", ErrMisevolved, rbErr)
+		}
+		return reverted, ErrMisevolved
+	}
+	return promoted, nil
+}
+
 // Misevolved reports whether current has degraded past the
 // threshold relative to baseline. Callers that detect
 // misevolution MUST initiate a rollback of the most recent
-// promotion(s) before continuing.
+// promotion(s) before continuing — PromoteChecked is the wired
+// caller that does so.
 func Misevolved(baseline, current SafetyMetric, thr MisevolutionThreshold) bool {
 	if baseline.SafetyRefusalRate-current.SafetyRefusalRate >= thr.MaxSafetyRefusalDrop {
 		return true
@@ -245,22 +281,22 @@ type ExtractFunc func(ctx context.Context, items []memory.Item) ([]Insight, erro
 // insights; callers use it to drive observability or trigger
 // downstream actions (e.g. re-indexing).
 type BackgroundJob struct {
-	router    *memory.Router
-	extract   ExtractFunc
-	interval  time.Duration
-	mu        sync.Mutex
-	running   bool
-	cancel    context.CancelFunc
-	subsMu    sync.Mutex
-	subs      []chan RunReport
+	router   *memory.Router
+	extract  ExtractFunc
+	interval time.Duration
+	mu       sync.Mutex
+	running  bool
+	cancel   context.CancelFunc
+	subsMu   sync.Mutex
+	subs     []chan RunReport
 }
 
 // RunReport is what Subscribe's channel emits per run.
 type RunReport struct {
-	At             time.Time
+	At              time.Time
 	EpisodicScanned int
-	InsightsAdded  int
-	Errors         []error
+	InsightsAdded   int
+	Errors          []error
 }
 
 // NewBackgroundJob constructs a job. Interval=0 means "on

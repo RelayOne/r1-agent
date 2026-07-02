@@ -56,8 +56,9 @@ import (
 const memoryUsage = `usage: r1 memory <verb> [flags]
 
 verbs:
-  list    list memories stored in the memory bus
-  add     append a memory to the bus
+  list         list memories stored in the memory bus
+  add          append a memory to the bus
+  consolidate  run the STOKE-010 episodic→semantic consolidation pass
 
 See 'r1 memory <verb> -h' for per-verb flags.
 `
@@ -76,6 +77,8 @@ func runMemoryCmd(args []string, stdout, stderr io.Writer) int {
 		return runMemoryListCmd(rest, stdout, stderr)
 	case "add":
 		return runMemoryAddCmd(rest, stdout, stderr)
+	case "consolidate":
+		return runMemoryConsolidateCmd(rest, stdout, stderr)
 	case "-h", "--help", "help":
 		_, _ = io.WriteString(stdout, memoryUsage)
 		return 0
