@@ -43,6 +43,7 @@ import {
   mountSettingsTrigger,
 } from "./panels/settings";
 import { mountDaemonStatus } from "./panels/daemon-status";
+import { reconcileAutostart } from "./lib/autostart";
 import { mountOnboarding } from "./onboarding/onboarding";
 import {
   mountDiscoveryWizard,
@@ -92,6 +93,21 @@ function mount(): void {
     console.error("[r1-desktop] #app mount point missing from index.html");
     return;
   }
+
+  // Launch-time auto-start reconciliation (audit A054): fixes OS-side
+  // drift against the persisted preference, making autostart.ts's
+  // "called once at app start" contract true. Fire-and-forget —
+  // non-Tauri builds reject inside the plugin bridge and land in the
+  // catch below.
+  void reconcileAutostart()
+    .then((res) => {
+      if (!res.ok) {
+        console.warn("[r1-desktop] autostart reconcile failed:", res.error);
+      }
+    })
+    .catch((err) => {
+      console.warn("[r1-desktop] autostart reconcile unavailable:", err);
+    });
 
   // Discovery wizard takes precedence over the generic onboarding
   // wizard on first launch when `~/.r1/daemon.json` is absent — spec

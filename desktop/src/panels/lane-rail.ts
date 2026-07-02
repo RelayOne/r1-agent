@@ -33,6 +33,11 @@ import {
 } from "@r1/web-components";
 
 import { subscribeLanes, type LaneUnsubscribe } from "../lib/laneSubscription";
+import {
+  getLaneDensity,
+  isLaneDensity,
+  LANE_DENSITY_EVENT,
+} from "../lib/lanePrefs";
 
 // ---------------------------------------------------------------------------
 // Public handle
@@ -232,9 +237,27 @@ export function mountLaneRail(container: HTMLElement): LaneRailHandle {
   function dispose(): void {
     if (disposed) return;
     disposed = true;
+    window.removeEventListener(LANE_DENSITY_EVENT, onDensityChanged);
     void teardown();
     root.unmount();
   }
+
+  // Density preference (Settings → Lanes, audit A054): apply the
+  // persisted choice at mount and follow live changes broadcast by
+  // lanePrefs.setLaneDensity. getLaneDensity resolves null in
+  // non-Tauri builds so the "normal" default stands.
+  const onDensityChanged = (ev: Event): void => {
+    const detail = (ev as CustomEvent<unknown>).detail;
+    if (disposed || !isLaneDensity(detail) || detail === state.density) return;
+    state = { ...state, density: detail };
+    render();
+  };
+  window.addEventListener(LANE_DENSITY_EVENT, onDensityChanged);
+  void getLaneDensity().then((density) => {
+    if (disposed || !density || density === state.density) return;
+    state = { ...state, density };
+    render();
+  });
 
   // First render: detached state.
   render();

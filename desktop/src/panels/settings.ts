@@ -17,12 +17,24 @@
 //   - Advanced    : empty-state copy; lands in R1D-7.4 / R1D-7.5
 //
 // The daemon subsection is live because the host exposes `daemon_status`
-// and `daemon_install_command`. Provider tests, vault persistence,
-// governance saves, auto-start toggles, and lane-density saves are not
-// wired in this desktop build, so the UI renders truthful unavailable
+// and `daemon_install_command`. Auto-start and lane density are live
+// through tauri-plugin-autostart / tauri-plugin-store (audit A054).
+// Provider tests, vault persistence, and governance saves are not wired
+// in this desktop build, so those sections render truthful unavailable
 // states instead of invoking missing handlers.
 
 import { invokeStub } from "../ipc-stub";
+import {
+  getAutostart,
+  setAutostart,
+  type AutostartResult,
+} from "../lib/autostart";
+import {
+  getLaneDensity,
+  isLaneDensity,
+  setLaneDensity,
+  type LaneDensity,
+} from "../lib/lanePrefs";
 import type {
   PolicyTier,
   ProviderRow,
@@ -60,8 +72,6 @@ interface GovernanceState {
   crypto_shred: boolean;
 }
 
-type LaneDensity = "verbose" | "normal" | "summary";
-
 interface DaemonInfoState {
   url: string;
   mode: "external" | "sidecar" | "unknown";
@@ -69,13 +79,26 @@ interface DaemonInfoState {
   uptimeS: number;
 }
 
-interface AutostartState {
-  enabled: boolean;
-  loaded: boolean; // true once isEnabled() resolved on first visit
+interface AutostartUiState {
+  /** Persisted desired state (prefs.json), once loaded. */
+  desired: boolean;
+  /** Live OS-side hook state; null = could not be probed. */
+  actual: boolean | null;
+  /** True once getAutostart() resolved for this panel visit. */
+  loaded: boolean;
+  /** Probe/persist infrastructure unreachable (non-Tauri build). */
+  unavailable: string | null;
+  /** Last toggle error surfaced from AutostartResult.error. */
+  error: string | null;
+  /** True while a probe or toggle is in flight. */
+  busy: boolean;
 }
 
 interface LanesPrefsState {
   density: LaneDensity;
+  loaded: boolean;
+  busy: boolean;
+  error: string | null;
 }
 
 interface SettingsState {
@@ -84,7 +107,7 @@ interface SettingsState {
   vault: VaultEntry[];
   governance: GovernanceState;
   daemon: DaemonInfoState;
-  autostart: AutostartState;
+  autostart: AutostartUiState;
   lanes: LanesPrefsState;
 }
 
@@ -191,8 +214,15 @@ function newState(): SettingsState {
       version: "",
       uptimeS: 0,
     },
-    autostart: { enabled: false, loaded: false },
-    lanes: { density: "normal" },
+    autostart: {
+      desired: false,
+      actual: null,
+      loaded: false,
+      unavailable: null,
+      error: null,
+      busy: false,
+    },
+    lanes: { density: "normal", loaded: false, busy: false, error: null },
   };
 }
 
@@ -747,40 +777,207 @@ function formatUptime(seconds: number): string {
 
 function renderAutostart(body: HTMLElement, s: SettingsState): void {
   const a = s.autostart;
-  body.innerHTML = `
+  if (a.unavailable) {
+    // Truthful fallback: the plugin bridge rejected (non-Tauri build
+    // or missing ACL grant) — say so instead of faking a toggle.
+    body.innerHTML = `
     <header class="r1-settings-section-header">
       <h3>Auto-start</h3>
       <p class="r1-settings-section-hint">
-        Auto-start probing and toggles require host handlers that are not present in this build.
+        Start R1 Desktop automatically at login.
       </p>
     </header>
     <div class="r1-settings-unavailable" data-role="autostart-unavailable">
       <p class="r1-empty">
-        Auto-start remains unchanged by this desktop build. Current in-memory state: ${a.loaded ? (a.enabled ? "enabled" : "disabled") : "unknown"}.
+        Auto-start remains unchanged: the autostart/store plugin bridge is
+        not reachable in this environment (${escapeHtml(a.unavailable)}).
       </p>
     </div>
   `;
+    return;
+  }
+  const actualLabel = !a.loaded
+    ? "probing…"
+    : a.actual === null
+      ? "could not be probed"
+      : a.actual
+        ? "registered"
+        : "not registered";
+  const drift = a.loaded && a.actual !== null && a.actual !== a.desired;
+  body.innerHTML = `
+    <header class="r1-settings-section-header">
+      <h3>Auto-start</h3>
+      <p class="r1-settings-section-hint">
+        Start R1 Desktop automatically at login. The preference persists to
+        prefs.json (tauri-plugin-store) and the OS-side hook is reconciled
+        at every app start.
+      </p>
+    </header>
+    <div class="r1-settings-form" data-role="autostart-form">
+      <label class="r1-settings-field">
+        <input
+          type="checkbox"
+          data-role="autostart-toggle"
+          ${a.desired ? "checked" : ""}
+          ${a.loaded && !a.busy ? "" : "disabled"}
+        />
+        <span>Start at login</span>
+      </label>
+      <p class="r1-settings-field" data-role="autostart-actual">
+        OS-side login hook: ${escapeHtml(actualLabel)}${
+          drift
+            ? " — drifted from the saved preference; launch-time reconciliation re-syncs it"
+            : ""
+        }
+      </p>
+      <span
+        class="r1-settings-save-status${a.error ? " is-fail" : ""}"
+        data-role="autostart-status"
+        aria-live="polite"
+      >${a.error ? escapeHtml(a.error) : ""}</span>
+    </div>
+  `;
+  const toggle = body.querySelector<HTMLInputElement>(
+    '[data-role="autostart-toggle"]',
+  );
+  toggle?.addEventListener("change", () => {
+    void applyAutostartToggle(toggle.checked);
+  });
+  if (!a.loaded && !a.busy) void loadAutostartState();
+}
+
+/** First-visit probe: desired (prefs.json) + actual (OS hook). */
+async function loadAutostartState(): Promise<void> {
+  state.autostart = { ...state.autostart, busy: true };
+  try {
+    const probe = await getAutostart();
+    state.autostart = {
+      desired: probe.desired,
+      actual: probe.actual,
+      loaded: true,
+      unavailable: null,
+      error: null,
+      busy: false,
+    };
+  } catch (err) {
+    state.autostart = {
+      ...state.autostart,
+      busy: false,
+      loaded: false,
+      unavailable: err instanceof Error ? err.message : String(err),
+    };
+  }
+  if (state.active === "autostart") activateSection("autostart");
+}
+
+async function applyAutostartToggle(value: boolean): Promise<void> {
+  state.autostart = { ...state.autostart, busy: true, error: null };
+  if (state.active === "autostart") activateSection("autostart");
+  let res: AutostartResult;
+  try {
+    res = await setAutostart(value);
+  } catch (err) {
+    state.autostart = {
+      ...state.autostart,
+      busy: false,
+      unavailable: err instanceof Error ? err.message : String(err),
+    };
+    if (state.active === "autostart") activateSection("autostart");
+    return;
+  }
+  state.autostart = {
+    desired: res.state.desired,
+    actual: res.state.actual,
+    loaded: true,
+    unavailable: null,
+    error: res.ok ? null : (res.error ?? "Auto-start toggle failed."),
+    busy: false,
+  };
+  if (state.active === "autostart") activateSection("autostart");
 }
 
 // ---------------------------------------------------------------------
 // Lanes density (spec §8 + item 27)
 // ---------------------------------------------------------------------
 
+const LANE_DENSITY_OPTIONS: Array<[LaneDensity, string, string]> = [
+  ["verbose", "Verbose", "Full delta detail per lane card"],
+  ["normal", "Normal", "Status plus last-event preview"],
+  ["summary", "Summary", "Status line only"],
+];
+
 function renderLanes(body: HTMLElement, s: SettingsState): void {
-  const density = s.lanes.density;
+  const l = s.lanes;
   body.innerHTML = `
     <header class="r1-settings-section-header">
       <h3>Lanes</h3>
       <p class="r1-settings-section-hint">
-        Lane-density persistence requires a host preferences handler that is not present in this build.
+        Lane-card detail level. Persisted to prefs.json
+        (tauri-plugin-store); open lane rails re-render immediately.
       </p>
     </header>
-    <div class="r1-settings-unavailable" data-role="lanes-unavailable">
-      <p class="r1-empty">
-        Lane density is currently read-only. In-memory default: ${escapeHtml(density)}.
-      </p>
-    </div>
+    <fieldset class="r1-settings-form" data-role="lanes-density">
+      <legend class="r1-settings-field-label">Density</legend>
+      ${LANE_DENSITY_OPTIONS.map(
+        ([id, label, hint]) => `
+        <label class="r1-settings-field">
+          <input
+            type="radio"
+            name="r1-lane-density"
+            value="${id}"
+            data-role="lanes-density-input"
+            ${l.density === id ? "checked" : ""}
+            ${l.busy ? "disabled" : ""}
+          />
+          <span>${label}</span>
+          <small>${hint}</small>
+        </label>`,
+      ).join("")}
+    </fieldset>
+    <span
+      class="r1-settings-save-status${l.error ? " is-fail" : ""}"
+      data-role="lanes-status"
+      aria-live="polite"
+    >${l.error ? escapeHtml(l.error) : ""}</span>
   `;
+  body
+    .querySelectorAll<HTMLInputElement>('[data-role="lanes-density-input"]')
+    .forEach((input) => {
+      input.addEventListener("change", () => {
+        if (input.checked && isLaneDensity(input.value)) {
+          void applyLaneDensity(input.value);
+        }
+      });
+    });
+  if (!l.loaded && !l.busy) void loadLaneDensityState();
+}
+
+/** First-visit read of the persisted density (null = keep default). */
+async function loadLaneDensityState(): Promise<void> {
+  state.lanes = { ...state.lanes, busy: true };
+  const stored = await getLaneDensity();
+  state.lanes = {
+    density: stored ?? state.lanes.density,
+    loaded: true,
+    busy: false,
+    error: null,
+  };
+  if (state.active === "lanes") activateSection("lanes");
+}
+
+async function applyLaneDensity(density: LaneDensity): Promise<void> {
+  const previous = state.lanes.density;
+  state.lanes = { ...state.lanes, busy: true, error: null };
+  const ok = await setLaneDensity(density);
+  state.lanes = {
+    density: ok ? density : previous,
+    loaded: true,
+    busy: false,
+    error: ok
+      ? null
+      : "Couldn't persist lane density — the host preferences store is unavailable in this environment.",
+  };
+  if (state.active === "lanes") activateSection("lanes");
 }
 
 // ---------------------------------------------------------------------
