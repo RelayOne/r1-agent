@@ -700,11 +700,14 @@ func TestAllLobes_SurviveDaemonRestart(t *testing.T) {
 // (no Note from the disabled Lobe; the others continue to fire).
 //
 // The fixture honors EnableFlags by skipping the constructor for any
-// Lobe whose flag is false. This mirrors the production wiring contract:
-// cmd/r1's cortex bootstrap reads config.CortexConfig.Lobes.<name>.Enabled
-// and conditionally appends the Lobe to cortex.Config.Lobes — disabled
-// Lobes never enter the Cortex's runner list, so their Run is never
-// invoked.
+// Lobe whose flag is false. This mirrors the production wiring in
+// cmd/r1/mcp_serve_runtime.go buildCortexBackend (audit A057), which
+// reads config.CortexConfig.LobeEnabled(<id>, true) and conditionally
+// appends the Lobe to cortex.Config.Lobes — disabled Lobes never enter
+// the Cortex's runner list, so their Run is never invoked. NOTE: the
+// native-loop construction site (internal/engine
+// buildDeterministicCortex) does not yet consult the policy; per-lobe
+// gating there is deferred per specs/cortex-activation.md ITEM 7.
 func TestAllLobes_HonorEnableFlags(t *testing.T) {
 	t.Parallel()
 

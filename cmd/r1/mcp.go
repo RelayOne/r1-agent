@@ -109,6 +109,7 @@ func runMCPServe(args []string, stdout, stderr io.Writer) int {
 	noThrottle := fs.Bool("no-throttle", false, "skip C3 per-tool throttle wiring; every tool call is admitted (dev / debugging only)")
 	sessionID := fs.String("session-id", "", "session id surfaced via cortex.SessionID; defaults to a generated UUID printed to stderr")
 	lobeMode := fs.String("lobes", "deterministic", "Lobe registration mode: none | deterministic | all (today 'all' falls back to deterministic until ANTHROPIC_API_KEY plumbing lands)")
+	policyPath := fs.String("policy", "", "path to stoke.policy.yaml (default: auto-detect); its cortex: block gates individual Lobes")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -130,12 +131,29 @@ func runMCPServe(args []string, stdout, stderr io.Writer) int {
 	if sid == "" {
 		sid = fmt.Sprintf("r1-mcp-%d", os.Getpid())
 	}
+	// Load the policy's cortex: block so buildCortexBackend can honor
+	// per-Lobe enable flags (audit A057). An absent policy file yields
+	// the zero CortexConfig, whose tri-state flags all resolve to
+	// default-on. A present-but-unparseable policy is an operator error
+	// and fails loudly rather than silently ignoring the opt-out.
+	var cortexCfg config.CortexConfig
+	if !*noCortex {
+		// LINT-ALLOW chdir-cli-entry: invoked from r1 mcp serve entry; cwd is the policy-discovery anchor, captured once and passed to AutoLoadPolicy.
+		cwd, _ := os.Getwd()
+		p, perr := config.AutoLoadPolicy(cwd, *policyPath)
+		if perr != nil {
+			fmt.Fprintf(stderr, "r1 mcp serve: load policy: %v\n", perr)
+			return 1
+		}
+		cortexCfg = p.Cortex
+	}
 	opts := mcpServeOptions{
 		NoCortex:   *noCortex,
 		NoThrottle: *noThrottle,
 		SessionID:  sid,
 		AuthKey:    envFunc("R1_MCP_KEY"),
 		LobeMode:   *lobeMode,
+		Cortex:     cortexCfg,
 	}
 	if err := startMCPServer(opts, stderr); err != nil {
 		fmt.Fprintf(stderr, "r1 mcp serve: %v\n", err)
@@ -199,7 +217,7 @@ USAGE:
   r1 mcp list-tools   [--server NAME] [--json] [--policy PATH] [--timeout DUR]
   r1 mcp test <server>            [--policy PATH] [--timeout DUR]
   r1 mcp call <server> <tool> [--args-json JSON] [--policy PATH] [--timeout DUR]
-  r1 mcp serve [--print-tools [--markdown]]
+  r1 mcp serve [--print-tools [--markdown]] [--policy PATH] [--lobes MODE]
 
 Reads stoke.policy.yaml's mcp_servers block. Exit codes:
   0 success   1 usage/config   2 transport/connect   3 tool call

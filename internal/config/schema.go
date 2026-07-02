@@ -14,6 +14,15 @@ import (
 // `enabled: false`; the MemoryCurator additionally accepts a category
 // allow-list and a privacy switch.
 //
+// Wiring status (audit A057): the per-Lobe enable flags are honored by
+// the `r1 mcp serve` cortex construction (cmd/r1/mcp_serve_runtime.go
+// buildCortexBackend). The native-loop construction site
+// (internal/engine buildDeterministicCortex) still registers the full
+// deterministic set gated only by --cortex/--no-cortex — per-lobe
+// policy gating there is pending activation (specs/cortex-activation.md
+// ITEM 7 deferral). The MemoryCurator privacy switches gate nothing yet
+// because no production path constructs the memorycurator Lobe.
+//
 // CortexConfig is hooked into the top-level Policy struct as
 // Policy.Cortex. The Policy YAML loader uses a custom line scanner that
 // does not understand arbitrary nested maps, so the `cortex:` block is
@@ -35,12 +44,29 @@ type LobeFlags struct {
 	RuleCheck     LobeFlag          `yaml:"rule_check" json:"rule_check"`
 	PlanUpdate    LobeFlag          `yaml:"plan_update" json:"plan_update"`
 	ClarifyingQ   LobeFlag          `yaml:"clarifying_q" json:"clarifying_q"`
+	AntiTrunc     LobeFlag          `yaml:"anti_trunc" json:"anti_trunc"`
 	MemoryCurator MemoryCuratorFlag `yaml:"memory_curator" json:"memory_curator"`
 }
 
 // LobeFlag is the minimal binary on/off switch most Lobes use.
+//
+// Enabled is a *bool so consumers can distinguish "operator explicitly
+// set enabled: true/false" from "flag absent". An absent flag (nil)
+// resolves to the caller-supplied default via IsEnabled — required to
+// preserve the default-on contract for the deterministic Lobes when a
+// deployment has no `cortex:` block at all (audit A057: a plain bool
+// would zero-value to false and silently disable every Lobe).
 type LobeFlag struct {
-	Enabled bool `yaml:"enabled" json:"enabled"`
+	Enabled *bool `yaml:"enabled" json:"enabled,omitempty"`
+}
+
+// IsEnabled resolves the tri-state flag: nil/absent → defaultOn,
+// explicit true → true, explicit false → false.
+func (f LobeFlag) IsEnabled(defaultOn bool) bool {
+	if f.Enabled == nil {
+		return defaultOn
+	}
+	return *f.Enabled
 }
 
 // MemoryCuratorFlag is the richer config block for MemoryCuratorLobe.
@@ -57,9 +83,43 @@ type LobeFlag struct {
 // zero value is false because Go zero-values can't express
 // privacy-preserving defaults — callers should set it explicitly.
 type MemoryCuratorFlag struct {
-	Enabled              bool     `yaml:"enabled" json:"enabled"`
+	Enabled              *bool    `yaml:"enabled" json:"enabled,omitempty"`
 	AutoCurateCategories []string `yaml:"auto_curate_categories" json:"auto_curate_categories"`
 	SkipPrivateMessages  bool     `yaml:"skip_private_messages" json:"skip_private_messages"`
+}
+
+// IsEnabled resolves the curator's tri-state enable flag: nil/absent →
+// defaultOn, explicit value → that value.
+func (f MemoryCuratorFlag) IsEnabled(defaultOn bool) bool {
+	if f.Enabled == nil {
+		return defaultOn
+	}
+	return *f.Enabled
+}
+
+// LobeEnabled resolves the enable flag for a Lobe by its runtime ID,
+// accepting the production Lobe.ID() spellings (e.g. "memory-recall"),
+// the YAML key spellings (e.g. "memory_recall"), and the package-name
+// spellings (e.g. "memoryrecall"). Unknown IDs resolve to defaultOn so
+// a new Lobe is never silently disabled by an older config.
+func (c CortexConfig) LobeEnabled(lobeID string, defaultOn bool) bool {
+	switch lobeID {
+	case "memory-recall", "memory_recall", "memoryrecall":
+		return c.Lobes.MemoryRecall.IsEnabled(defaultOn)
+	case "wal-keeper", "wal_keeper", "walkeeper":
+		return c.Lobes.WALKeeper.IsEnabled(defaultOn)
+	case "rule-check", "rule_check", "rulecheck":
+		return c.Lobes.RuleCheck.IsEnabled(defaultOn)
+	case "anti-trunc", "anti_trunc", "antitrunc":
+		return c.Lobes.AntiTrunc.IsEnabled(defaultOn)
+	case "plan-update", "plan_update", "planupdate":
+		return c.Lobes.PlanUpdate.IsEnabled(defaultOn)
+	case "clarifying-q", "clarifying_q", "clarifyq":
+		return c.Lobes.ClarifyingQ.IsEnabled(defaultOn)
+	case "memory-curator", "memory_curator", "memorycurator":
+		return c.Lobes.MemoryCurator.IsEnabled(defaultOn)
+	}
+	return defaultOn
 }
 
 // CortexConfigSchema is the top-level container used by
