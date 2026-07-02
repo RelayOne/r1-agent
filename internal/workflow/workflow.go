@@ -36,7 +36,6 @@ import (
 	"github.com/RelayOne/r1/internal/microcompact"
 	"github.com/RelayOne/r1/internal/model"
 	"github.com/RelayOne/r1/internal/patchapply"
-	"github.com/RelayOne/r1/internal/promptcache"
 	"github.com/RelayOne/r1/internal/promptguard"
 	stokeprompts "github.com/RelayOne/r1/internal/prompts"
 	"github.com/RelayOne/r1/internal/r1dir"
@@ -2111,19 +2110,9 @@ func executePromptWithContext(e Engine) string {
 	// Repository map is injected below via ctxpack (not here) to avoid
 	// duplication and to respect context window constraints.
 
-	// Optimize prompt for cache alignment: separate static instructions from
-	// dynamic task content so API-level prefix caching works effectively.
-	opt := promptcache.New()
-	opt.AddSection(promptcache.Section{
-		Label: "system", Content: stokeprompts.ScopeSystemPrompt(), Static: true, Priority: 0,
-	})
-	opt.AddSection(promptcache.Section{
-		Label: "task", Content: prompt, Static: false, Priority: 10,
-	})
-	optimized := opt.Build(prompt)
-
-	// Estimate token usage for budget tracking and context window management.
-	promptTokens := tokenest.Estimate(optimized.System+optimized.User, tokenest.ContentMixed)
+	// Estimate token usage for the (dynamic) base prompt so ctxpack can
+	// bin-pack the ranked repomap around it within the window budget.
+	promptTokens := tokenest.Estimate(prompt, tokenest.ContentMixed)
 
 	// Pack context items into the available window using adaptive bin-packing.
 	var contextItems []ctxpack.Item
@@ -2161,8 +2150,30 @@ func executePromptWithContext(e Engine) string {
 		}
 	}
 
-	// Track prompt fingerprint for cache stability monitoring.
-	stokeprompts.TrackPromptVersion(optimized.System)
+	// P2: render the packed context items into the returned prompt. ctxpack
+	// decides what fits the window, but PackResult.Included was previously
+	// computed and thrown away — so the ranked repomap (CLAUDE.md design
+	// decision 24, "ranked repomap injected into execute prompts") never
+	// actually reached the executor on the workflow path. Append every
+	// included item that is not the base prompt itself, in packed
+	// (relevance) order, so the map rides along inside the budget ctxpack
+	// already reserved for it.
+	if len(packed.Included) > 0 {
+		var sb strings.Builder
+		sb.WriteString(prompt)
+		for _, item := range packed.Included {
+			if item.ID == "prompt" || item.Content == "" {
+				continue
+			}
+			sb.WriteString("\n\n")
+			sb.WriteString(item.Content)
+		}
+		prompt = sb.String()
+	}
+
+	// Track prompt fingerprint for cache stability monitoring. The static
+	// scope-enforcement instructions are the cacheable prefix.
+	stokeprompts.TrackPromptVersion(stokeprompts.ScopeSystemPrompt())
 	if packed.Utilization > 0.9 {
 		log := logging.Component("workflow")
 		log.Warn("context window nearly full", "utilization", fmt.Sprintf("%.0f%%", packed.Utilization*100), "tokens", packed.TotalTokens)
