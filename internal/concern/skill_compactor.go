@@ -1,7 +1,13 @@
 package concern
 
-// skill_compactor.go — production caller for skilltracker's
-// EvictByCompactor surface. Spec: skill-aware-compactor.md.
+// skill_compactor.go — intended production caller for skilltracker's
+// EvictByCompactor surface. NOT yet wired: no production code
+// constructs NewSkillCompactor or calls EvictForBudget today, and the
+// tracker it snapshots is itself only populated by the test-only
+// hub/builtin.SkillInjector-with-Tracker path. See the BLOCKED-PARTIAL
+// note in internal/skilltracker/tracker.go (issue #157, compactor
+// caller) for the wiring status. (Audit A098: this header previously
+// claimed production-caller status.)
 //
 // The existing internal/microcompact package compacts label-keyed
 // text Sections — it doesn't know individual skills. SkillCompactor
@@ -10,11 +16,15 @@ package concern
 // under budget pressure (default policy: LRU by LoadedAt), and
 // fires the matching SkillUnloaded ledger nodes.
 //
-// Wiring is one-way: future callers (a skill-aware section shrinker
-// or an explicit budget guard) call SkillCompactor.EvictForBudget
-// when they need to free tokens by dropping skills. This package
-// exports the type + a small policy interface; it does NOT mutate
-// any prompt content itself.
+// Wiring is one-way: the future caller (a skill-aware section
+// shrinker or an explicit budget guard, per issue #157) calls
+// SkillCompactor.EvictForBudget when it needs to free tokens by
+// dropping skills. Do NOT wire EvictForBudget alone into
+// internal/context or microcompact before the tracker's load side
+// (SkillInjector with Tracker) is registered in production — it would
+// evict from an always-empty table. This package exports the type + a
+// small policy interface; it does NOT mutate any prompt content
+// itself.
 
 import (
 	"context"
