@@ -52,6 +52,22 @@ func TestLicenseVerifyRejectsShortKey(t *testing.T) {
 	}
 }
 
+// TestLicenseVerifyEmptyBodyFallsThrough covers audit A079: the EOF
+// guard used errors.Is(err, fmt.Errorf("EOF")), which can never match,
+// so an empty body 400'd instead of the intended 200 {valid:false}.
+func TestLicenseVerifyEmptyBodyFallsThrough(t *testing.T) {
+	rr := httptest.NewRecorder()
+	handleLicenseVerify(rr, httptest.NewRequest(http.MethodPost, "/v1/license/verify", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200 (empty body is the documented EOF fall-through)", rr.Code)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp["valid"] != false {
+		t.Fatalf("expected valid=false for empty body, got %+v", resp)
+	}
+}
+
 func TestTelemetryOptInIncrementsSeq(t *testing.T) {
 	tc := &trackingClients{} // empty: all 3 vendor clients are nil-safe via Enabled() checks
 	h := handleTelemetryOptIn(tc)
