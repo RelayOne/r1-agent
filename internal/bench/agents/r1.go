@@ -161,3 +161,16 @@ func init() {
 	RegisterDispatcher("r1", &R1Dispatcher{})
 	RegisterDispatcher("r1-antitrunc", &R1Dispatcher{EnforceAntiTrunc: true})
 }
+
+// SetR1ModelInvoker installs the production model invoker on the
+// registered "r1" and "r1-antitrunc" dispatchers so `r1-bench --agent r1`
+// runs r1's real native agentloop instead of the notWiredR1Invoker stub
+// (SOTA gap #1). The runner binary calls this at startup; leaving it
+// uncalled preserves the stubbed behavior for dry runs and tests.
+func SetR1ModelInvoker(inv R1ModelInvoker) {
+	for _, id := range []string{"r1", "r1-antitrunc"} {
+		if d, ok := Lookup(id).(*R1Dispatcher); ok && d != nil {
+			d.ModelInvoker = inv
+		}
+	}
+}
