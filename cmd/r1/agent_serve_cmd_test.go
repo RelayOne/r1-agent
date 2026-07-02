@@ -9,7 +9,29 @@ package main
 import (
 	"testing"
 	"time"
+
+	"github.com/RelayOne/r1/internal/executor"
 )
+
+// TestBuildExecutorRegistry_ResearchHasFetcher covers audit A007: the
+// registry advertised "research" as a capability but constructed the
+// executor with a nil Fetcher, so every submitted research task failed
+// at runtime ("research executor: no Fetcher configured"). CI never saw
+// it because tests always inject StubFetcher.
+func TestBuildExecutorRegistry_ResearchHasFetcher(t *testing.T) {
+	reg := buildExecutorRegistry()
+	ex, ok := reg[executor.TaskResearch]
+	if !ok {
+		t.Fatal("research executor not registered")
+	}
+	re, ok := ex.(*executor.ResearchExecutor)
+	if !ok {
+		t.Fatalf("research executor has unexpected type %T", ex)
+	}
+	if re.Fetcher == nil {
+		t.Fatal("research executor registered with nil Fetcher — every research task would fail at Execute")
+	}
+}
 
 // TestAgentServe_TrustPlaneRegisterFlag_ParsedOK asserts the boolean
 // flag is exposed on the agent-serve flag set and flows through into

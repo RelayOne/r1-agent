@@ -83,6 +83,12 @@ type Registry struct {
 	dirs           []string    // search directories in priority order
 	builtinsLoaded bool        // true after LoadBuiltins() has been called
 	skillIndex     *SkillIndex // multi-axis semantic index, rebuilt on Load/LoadBuiltins
+
+	// Policy-driven injection knobs (config.SkillsConfig wiring — see
+	// ConfigureInjection). alwaysOn names are force-included ahead of
+	// budgeting; excluded names are filtered from every injection tier.
+	alwaysOn []string
+	excluded map[string]struct{}
 }
 
 // NewRegistry creates a skill registry that searches the given directories.
@@ -422,6 +428,28 @@ func (r *Registry) InjectPromptBudgeted(prompt string, stackMatches []string, to
 	return r.injectPromptBudgetedImpl(prompt, "", stackMatches, tokenBudget)
 }
 
+// ConfigureInjection sets the policy-driven always-on and excluded skill
+// name lists honored by InjectPromptBudgeted / InjectPromptBudgetedForDir.
+// alwaysOn skills are force-included (full content, ahead of all other
+// tiers) while budget remains; excluded skills are filtered from every
+// tier. Wires config.SkillsConfig.AlwaysOn / .Excluded (audit A059).
+// Passing nil for either list clears it.
+func (r *Registry) ConfigureInjection(alwaysOn, excluded []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.alwaysOn = append([]string(nil), alwaysOn...)
+	if len(excluded) == 0 {
+		r.excluded = nil
+		return
+	}
+	r.excluded = make(map[string]struct{}, len(excluded))
+	for _, name := range excluded {
+		if name = strings.TrimSpace(name); name != "" {
+			r.excluded[name] = struct{}{}
+		}
+	}
+}
+
 func (r *Registry) injectPromptBudgetedImpl(prompt, workDir string, stackMatches []string, tokenBudget int) (string, []SkillSelection) {
 	if tokenBudget <= 0 {
 		tokenBudget = 3000
@@ -437,6 +465,12 @@ func (r *Registry) injectPromptBudgetedImpl(prompt, workDir string, stackMatches
 	// Helper to add a skill if it fits in budget
 	add := func(s *Skill, tier InjectionTier, reason string) {
 		if seen[s.Name] {
+			return
+		}
+		// Policy exclusion (config.SkillsConfig.Excluded via
+		// ConfigureInjection): never inject an excluded skill,
+		// regardless of tier.
+		if _, off := r.excluded[s.Name]; off {
 			return
 		}
 		// T-R1P-019: skip if skill has path patterns and workDir doesn't match any
@@ -463,7 +497,15 @@ func (r *Registry) injectPromptBudgetedImpl(prompt, workDir string, stackMatches
 		selected = append(selected, SkillSelection{Skill: s, Tier: tier, Reason: reason})
 	}
 
-	// Tier 1: always-on
+	// Tier 1: always-on. Policy-named skills (ConfigureInjection /
+	// config.SkillsConfig.AlwaysOn) are added first so they get budget
+	// priority, then the built-in heuristic (agent-discipline or an
+	// "always" keyword).
+	for _, name := range r.alwaysOn {
+		if s := r.skills[name]; s != nil {
+			add(s, TierFull, "policy-always-on")
+		}
+	}
 	for _, s := range r.skills {
 		if s.Name == "agent-discipline" || hasKeyword(s.Keywords, "always") {
 			add(s, TierFull, "always-on")

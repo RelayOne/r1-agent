@@ -5,9 +5,13 @@
 //
 // Renders a four-state pill in the app's title bar that reflects the
 // transport's lifecycle. Listens for `daemon.up` / `daemon.down`
-// events on Tauri's global event bus (emitted from transport.rs's
-// run-loop). Click navigates Settings → Daemon (the consumer wires
-// the navigation callback because routing differs across panels).
+// events on Tauri's global event bus (emitted from main.rs
+// setup_discovery when the startup probe resolves) and additionally
+// pulls one `app_discovery_status` snapshot at mount to close the
+// startup race where discovery completes before the WebView registers
+// its listeners (audit/complete-systems-2026-07-01.md A053). Click
+// navigates Settings → Daemon (the consumer wires the navigation
+// callback because routing differs across panels).
 //
 // State model mirrors the spec banner palette:
 //
@@ -21,6 +25,7 @@
 // the pill is a single span.
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 // -------------------------------------------------------------------
 // Types
@@ -115,6 +120,53 @@ interface DaemonDownPayload {
   will_retry?: boolean;
 }
 
+/**
+ * Host-side discovery snapshot returned by the `app_discovery_status`
+ * verb (mirrors Rust `DaemonStatusSnapshot`, discovery_state.rs).
+ */
+export interface DaemonDiscoverySnapshot {
+  connected: boolean;
+  pending: boolean;
+  url: string | null;
+  mode: "external" | "sidecar" | null;
+  error: string | null;
+  sidecar_accepted: boolean;
+}
+
+/**
+ * One frame off the `transport_reconnect_status` Channel. Mirrors the
+ * Rust `transport::ReconnectStatus` serde shape (tag = "state").
+ * Frames are derived host-side from the live DiscoveryState — the
+ * attempt / next_in_ms values are real, not the hardcoded 0/250 this
+ * pill used before (audit A095).
+ */
+export interface ReconnectStatusFrame {
+  state: "connected" | "reconnecting" | "offline";
+  attempt?: number;
+  next_in_ms?: number;
+  reason?: string;
+}
+
+/**
+ * Project a discovery snapshot onto the pill state. Returns null when
+ * the snapshot carries no signal yet (probe still pending) so the
+ * caller keeps its current state and waits for daemon.up/daemon.down.
+ * Exported for unit tests.
+ */
+export function stateFromSnapshot(
+  snap: DaemonDiscoverySnapshot,
+): DaemonState | null {
+  if (snap.connected && snap.mode) {
+    return snap.mode === "sidecar"
+      ? { kind: "sidecar", url: snap.url ?? "" }
+      : { kind: "external", url: snap.url ?? "" };
+  }
+  if (snap.error) {
+    return { kind: "offline", url: snap.url ?? "", reason: snap.error };
+  }
+  return null;
+}
+
 export async function mountDaemonStatus(
   container: HTMLElement,
   props: DaemonStatusProps = {},
@@ -167,11 +219,10 @@ export async function mountDaemonStatus(
     if (disposed) return;
     const payload = ev.payload;
     if (payload.will_retry) {
-      // Promote to reconnecting for the duration; the run-loop emits
-      // the lifecycle ticks via its own channel (transport.rs
-      // LifecycleEvent), but daemon.down is the moment we know the
-      // socket dropped. attempt / next_in_ms get filled by the
-      // lifecycle stream listener once that lands.
+      // Promote to reconnecting immediately — daemon.down is the
+      // moment we know the connection dropped. attempt / next_in_ms
+      // are refined by the transport_reconnect_status Channel frames
+      // (A095) as they arrive.
       state = {
         kind: "reconnecting",
         url: state.kind === "offline" ? "" : urlOf(state),
@@ -188,6 +239,73 @@ export async function mountDaemonStatus(
     paint();
   });
   unlistens.push(downUnlisten);
+
+  async function refreshFromSnapshot(): Promise<void> {
+    try {
+      const snap = await invoke<DaemonDiscoverySnapshot>(
+        "app_discovery_status",
+      );
+      if (!disposed) {
+        const fromSnap = stateFromSnapshot(snap);
+        if (fromSnap) {
+          state = fromSnap;
+          paint();
+        }
+      }
+    } catch {
+      // Host verb unavailable — non-Tauri build or very old host.
+    }
+  }
+
+  // Startup-race closer (A053): discovery may have completed before
+  // this mount registered its listeners, in which case daemon.up /
+  // daemon.down already fired into the void. Pull the host-side
+  // snapshot once — listeners above cover every later transition.
+  // Non-Tauri builds (vitest / plain browser) reject the invoke; keep
+  // the default "offline (starting)" state in that case.
+  await refreshFromSnapshot();
+
+  // Reconnect status stream (A095): subscribe to the host's
+  // transport_reconnect_status Channel. Frames are derived from the
+  // live DiscoveryState, so attempt / next_in_ms are real values
+  // (today: probe-in-flight or terminal states; live backoff numbers
+  // arrive with the daemon-WS run-loop). Connected frames carry no
+  // url/mode, so we refresh from the snapshot instead of guessing.
+  function applyReconnectFrame(frame: ReconnectStatusFrame): void {
+    if (disposed) return;
+    switch (frame.state) {
+      case "connected":
+        if (state.kind !== "external" && state.kind !== "sidecar") {
+          void refreshFromSnapshot();
+        }
+        return;
+      case "reconnecting":
+        state = {
+          kind: "reconnecting",
+          url: urlOf(state),
+          attempt: frame.attempt ?? 0,
+          nextInMs: frame.next_in_ms ?? 0,
+        };
+        paint();
+        return;
+      case "offline":
+        state = {
+          kind: "offline",
+          url: urlOf(state),
+          reason: frame.reason ?? "unknown",
+        };
+        paint();
+        return;
+    }
+  }
+
+  try {
+    const statusChannel = new Channel<ReconnectStatusFrame>();
+    statusChannel.onmessage = applyReconnectFrame;
+    await invoke("transport_reconnect_status", { on_status: statusChannel });
+  } catch {
+    // Verb unavailable — non-Tauri build; snapshot + events suffice.
+  }
 
   return {
     set(next) {

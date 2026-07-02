@@ -579,7 +579,7 @@ The following are deliberately **not** addressed by this spec. Each is a follow-
 30. [ ] Map JSON-RPC methods to `internal/desktopapi.Handler` for the existing desktop verbs (ledger.*, memory.*, cost.*, descent.*).
 31. [ ] Implement `session.start / pause / resume / cancel / send / subscribe / unsubscribe`, `lanes.list / kill`, `cortex.notes`, `daemon.info / shutdown / reload_config`.
 32. [ ] Subscribe semantics: per-subscription monotonic `seq`; server pushes `$/event` notifications with `{sub, seq, type, data}`. On `since_seq`, replay from journal **before** live deltas (do not interleave).
-33. [ ] SSE bridge `/v1/sessions/:id/sse` — read-only, supports `Last-Event-ID` header, supports `?token=<t>` query param. Set `X-Accel-Buffering: no` for nginx-fronted setups.
+33. [x] SSE bridge `/v1/sessions/:id/sse` — read-only, supports `Last-Event-ID` header, supports `?token=<t>` query param. Set `X-Accel-Buffering: no` for nginx-fronted setups. Mounted at `GET /v1/sessions/{id}/sse` in cmd/r1/serve_cmd.go with journal replay + live fanout (audit A069).
 
 ### Phase F — Mounting agent-serve + queue-engine routes
 

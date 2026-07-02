@@ -199,7 +199,13 @@ func (s *Store) SaveAttempt(a Attempt) error {
 	defer s.mu.Unlock()
 	path := filepath.Join("history", a.TaskID+".json")
 	var attempts []Attempt
-	s.readJSON(path, &attempts)
+	if err := s.readJSON(path, &attempts); err != nil && !os.IsNotExist(err) {
+		// An unreadable or corrupt history file must abort, not be
+		// silently replaced with a 1-element history — that resets
+		// attempt numbering (NextAttemptNumber = len+1) and erases the
+		// failure record the retry-escalation logic depends on.
+		return fmt.Errorf("session: attempt history %s unreadable, refusing to overwrite: %w", path, err)
+	}
 	attempts = append(attempts, a)
 
 	// Extract learned pattern if the task succeeded after previous failures

@@ -184,9 +184,8 @@ func SpecificityOf(it Item) int {
 //     caller gets a valid 16-char scope_id rather than "".
 //
 // The 16-char prefix length matches the spec's `scope_id
-// TEXT` default width and the contentid/ package's
-// prefix convention for content-addressed IDs elsewhere
-// in stoke.
+// TEXT` default width; it is a local scope_id convention
+// (sha256 hex prefix), not tied to any shared ID scheme.
 func RepoHash() string {
 	return RepoHashAt(context.Background(), "")
 }

@@ -10,9 +10,11 @@
 // fall back with a single-shot deprecation WARN during the 90-day
 // window (ending 2026-07-23).
 //
-// The resolver `LoadStudioConfig` overlays env-var values onto a base
-// struct (typically zero-valued or decoded from JSON/YAML), so operators
-// can set any of these via env without editing config files:
+// The resolver `LoadStudioConfig` (audit A039) decodes the JSON
+// studio_config file at `<r1dir>/studio.json` when present (missing
+// file → DefaultStudioConfig) and overlays env-var values via
+// ApplyEnv, so operators can set any of these via env without editing
+// config files:
 //
 //	R1_ACTIUM_STUDIO_ENABLED        → StudioConfig.Enabled
 //	R1_ACTIUM_STUDIO_TRANSPORT      → StudioConfig.Transport
@@ -28,8 +30,11 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/RelayOne/r1/internal/r1dir"
 	"github.com/RelayOne/r1/internal/r1env"
 )
 
@@ -83,8 +88,8 @@ type StudioHTTPConfig struct {
 type StudioStdioMCPConfig struct {
 	// Command is the argv to spawn the Studio MCP server, e.g.
 	// []string{"npx", "actium-studio-mcp"}. Empty disables the
-	// transport (LoadStudioConfig surfaces that as ErrStudioDisabled
-	// when Transport == "stdio-mcp").
+	// transport (Validate rejects an enabled config with
+	// Transport == "stdio-mcp" and no command).
 	Command []string `json:"command" yaml:"command"`
 
 	// Env is extra env vars forwarded to the subprocess. Merged over
@@ -135,9 +140,9 @@ func DefaultStudioConfig() StudioConfig {
 //	R1_ACTIUM_STUDIO_SCOPES     → HTTP.ScopesHeader
 //	R1_ACTIUM_STUDIO_TOKEN_ENV  → HTTP.TokenEnv
 //
-// The token itself is never read here — LoadStudioConfig does not
-// touch secret material. The HTTP transport reads `os.Getenv(TokenEnv)`
-// per-call.
+// The token itself is never read here — neither ApplyEnv nor
+// LoadStudioConfig touches secret material. The HTTP transport reads
+// `os.Getenv(TokenEnv)` per-call.
 func (c *StudioConfig) ApplyEnv() *StudioConfig {
 	if v := r1env.Get("R1_ACTIUM_STUDIO_ENABLED", "STOKE_ACTIUM_STUDIO_ENABLED"); v != "" {
 		c.Enabled = parseStudioBool(v, c.Enabled)
@@ -201,10 +206,45 @@ func (c StudioConfig) ResolvedScopes() string {
 	return DefaultStudioScopes
 }
 
+// StudioConfigFileName is the on-disk studio_config file resolved by
+// LoadStudioConfig under the repo's r1 dir (`.r1/` or legacy `.stoke/`).
+const StudioConfigFileName = "studio.json"
+
+// LoadStudioConfig is the top-level resolver for the studio_config
+// section (audit A039 — this function was promised by comments for a
+// full release cycle without existing). It decodes
+// `<r1dir>/studio.json` under repoRoot when present (a missing file is
+// not an error — the pack is opt-in), overlays R1_ACTIUM_STUDIO_* /
+// STOKE_ACTIUM_STUDIO_* env vars via ApplyEnv, and validates the
+// result. An empty repoRoot skips file resolution entirely and yields
+// defaults + env — the zero-config path for binaries started outside
+// a repo.
+func LoadStudioConfig(repoRoot string) (StudioConfig, error) {
+	var raw []byte
+	if repoRoot != "" {
+		path := filepath.Join(r1dir.JoinFor(repoRoot), StudioConfigFileName)
+		data, err := os.ReadFile(path) // #nosec G304 -- operator-owned config path derived from the repo root.
+		switch {
+		case err == nil:
+			raw = data
+		case !os.IsNotExist(err):
+			return StudioConfig{}, fmt.Errorf("read %s: %w", path, err)
+		}
+	}
+	cfg, err := UnmarshalStudioConfig(raw)
+	if err != nil {
+		return StudioConfig{}, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return StudioConfig{}, err
+	}
+	return cfg, nil
+}
+
 // UnmarshalStudioConfig decodes a JSON-encoded studio_config block and
-// applies ApplyEnv afterward. Exposed as a helper so the top-level
-// config loader (claude_settings.go etc.) can defer to a single entry
-// point when it adds the new section.
+// applies ApplyEnv afterward. LoadStudioConfig defers here; other
+// config loaders (claude_settings.go etc.) can too when they add the
+// section.
 func UnmarshalStudioConfig(raw []byte) (StudioConfig, error) {
 	c := DefaultStudioConfig()
 	if len(raw) > 0 {

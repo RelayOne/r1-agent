@@ -1,8 +1,10 @@
 package memory
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -282,4 +284,34 @@ func findStr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestRememberWithContextConcurrent covers audit A022: the old
+// implementation released the lock between append and the Context/File
+// writeback, attaching context to another goroutine's entry under
+// concurrency (and returning &s.entries[i], an alias into the slice).
+func TestRememberWithContextConcurrent(t *testing.T) {
+	s, _ := NewStore(Config{})
+	const n = 50
+	var wg sync.WaitGroup
+	results := make([]*Entry, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ctx := fmt.Sprintf("ctx-%d", i)
+			results[i] = s.RememberWithContext(CatGotcha, fmt.Sprintf("content-%d", i), ctx, "f.go")
+		}(i)
+	}
+	wg.Wait()
+	for i, e := range results {
+		if e == nil {
+			t.Fatalf("nil entry at %d", i)
+		}
+		wantCtx := fmt.Sprintf("ctx-%d", i)
+		wantContent := fmt.Sprintf("content-%d", i)
+		if e.Context != wantCtx || e.Content != wantContent {
+			t.Errorf("entry %d: content=%q context=%q — context attached to wrong entry", i, e.Content, e.Context)
+		}
+	}
 }

@@ -180,26 +180,6 @@ func TestMatchSkillsNil(t *testing.T) {
 	}
 }
 
-func TestRepoProfileToStackInfo(t *testing.T) {
-	p := &RepoProfile{
-		Languages:      []string{"go"},
-		Frameworks:     []string{"gin"},
-		Databases:      []string{"postgres"},
-		CloudProviders: []string{"gcp"},
-		InfraTools:     []string{"docker"},
-	}
-	si := p.ToStackInfo()
-	if !si.HasLanguage("go") {
-		t.Error("expected go")
-	}
-	if !si.HasFramework("gin") {
-		t.Error("expected gin")
-	}
-	if !si.HasDatabase("postgres") {
-		t.Error("expected postgres")
-	}
-}
-
 func TestRepoProfileTags(t *testing.T) {
 	p := &RepoProfile{
 		Languages: []string{"Go", "TypeScript"},

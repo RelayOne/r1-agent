@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/hashline"
 )
 
 // Hunk represents a single diff hunk.
@@ -197,7 +196,19 @@ func applyPatch(patch *Patch, root string, reverse, dryRun bool) *ApplyResult {
 	result := &ApplyResult{}
 
 	for _, fp := range patch.Files {
-		if fp.IsNew && !reverse {
+		if reverse {
+			// Normalize ONCE, then run the forward logic unchanged:
+			// reverse-of-create becomes a delete of NewPath and
+			// reverse-of-delete recreates OldPath from the flipped
+			// hunks (OpDelete->OpAdd). The old code only special-cased
+			// !reverse, so undoing any patch that added or deleted
+			// files silently failed against "/dev/null" (audit A082).
+			fp.OldPath, fp.NewPath = fp.NewPath, fp.OldPath
+			fp.IsNew, fp.IsDelete = fp.IsDelete, fp.IsNew
+			fp.Hunks = reverseHunks(fp.Hunks)
+		}
+
+		if fp.IsNew {
 			path := fp.NewPath
 			fullPath := filepath.Join(root, path)
 			if err := applyNewFile(fp, fullPath, dryRun); err != nil {
@@ -209,7 +220,7 @@ func applyPatch(patch *Patch, root string, reverse, dryRun bool) *ApplyResult {
 			continue
 		}
 
-		if fp.IsDelete && !reverse {
+		if fp.IsDelete {
 			path := fp.OldPath
 			fullPath := filepath.Join(root, path)
 			if !dryRun {
@@ -224,9 +235,6 @@ func applyPatch(patch *Patch, root string, reverse, dryRun bool) *ApplyResult {
 		}
 
 		path := fp.NewPath
-		if reverse {
-			path = fp.OldPath
-		}
 		fullPath := filepath.Join(root, path)
 
 		content, err := os.ReadFile(fullPath)
@@ -236,33 +244,16 @@ func applyPatch(patch *Patch, root string, reverse, dryRun bool) *ApplyResult {
 			continue
 		}
 
-		// Use hashline to verify context lines haven't been modified concurrently.
-		// Tag each line with a content hash; if a hunk's context lines don't match
-		// the current tags, the file was changed since the diff was generated.
-		if tf, tagErr := hashline.TagFile(fullPath); tagErr == nil {
-			for _, h := range fp.Hunks {
-				for i, l := range h.Lines {
-					if l.Op != OpContext && l.Op != OpDelete {
-						continue
-					}
-					lineNum := h.OldStart + i
-					if tag, ok := tf.GetTag(lineNum); ok {
-						if tag != hashline.ComputeTag(l.Text) {
-							result.Errors = append(result.Errors,
-								fmt.Sprintf("%s: hashline mismatch at line %d (concurrent edit detected)", path, lineNum))
-						}
-					}
-				}
-			}
-		}
+		// Concurrent-edit protection is findMatch's exact context/delete
+		// matching at the apply position (inside applyHunks). The old
+		// hashline pre-check here was advisory-only (it appended to
+		// Errors but never skipped the write) AND computed wrong line
+		// numbers (indexed over '+' lines that consume no old-file
+		// lines), producing spurious mismatch noise — audit A023.
 
 		lines := strings.Split(string(content), "\n")
-		hunks := fp.Hunks
-		if reverse {
-			hunks = reverseHunks(hunks)
-		}
 
-		newLines, err := applyHunks(lines, hunks)
+		newLines, err := applyHunks(lines, fp.Hunks)
 		if err != nil {
 			result.Failed = append(result.Failed, path)
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", path, err))

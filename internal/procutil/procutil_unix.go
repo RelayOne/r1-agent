@@ -46,3 +46,23 @@ func Kill(cmd *exec.Cmd) error {
 	}
 	return syscall.Kill(-pgid, syscall.SIGKILL)
 }
+
+// KillGroup sends SIGKILL to the process group led by pid. Unlike Kill it
+// does not need a Getpgid lookup, so it still works after the leader has
+// been reaped by Wait: with Setpgid the leader's pid IS the pgid, and the
+// group survives its leader.
+func KillGroup(pid int) error {
+	if pid <= 0 {
+		return nil
+	}
+	return syscall.Kill(-pid, syscall.SIGKILL)
+}
+
+// GroupAlive reports whether any process remains in the group led by pid
+// (signal 0 probe). Used by tests and post-cancel escalation checks.
+func GroupAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	return syscall.Kill(-pid, 0) == nil
+}

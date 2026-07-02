@@ -17,6 +17,19 @@ traffic.
 - `internal/ledger/nodes/beacon.go`: append-only ledger nodes for claim,
   device, session, token, command, and federation events.
 
+## What was removed
+
+The attestation/trust runtime cluster (`internal/beacon/runtime`,
+`internal/beacon/review`, `internal/beacon/trust`,
+`internal/beacon/trust/kinds`, `internal/beacon/transport`) was deleted
+in July 2026 (audit finding A036,
+`audit/complete-systems-2026-07-01.md`): it was never constructed by
+any binary, its hand-rolled WebSocket transport duplicated
+`internal/server/ws.go`, and session-control approvals ship via the
+`sessionctl` approval path instead. Only the pairing/token halves
+listed above are the shipped Beacon protocol. See `docs/TRUST-LAYER.md`
+for the design intent the removed trust engine encoded.
+
 ## Pairing flow
 
 1. The beacon creates a short-lived challenge containing its identity,

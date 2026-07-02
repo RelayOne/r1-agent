@@ -4,7 +4,7 @@
 //
 //	GET /healthz       — liveness probe; returns {"ok":true,"service":"r1-coord-api","env":"<env>","version":"<sha>"}
 //	GET /v1/version    — version metadata
-//	POST /v1/license/verify  — license-key shape stub; returns {valid:true} for any non-empty key
+//	POST /v1/license/verify  — license-key shape stub; valid iff key length >= 8 (shape check only, no key store)
 //	POST /v1/telemetry/opt-in  — accepts an opt-in record; returns {accepted:true,seq:<int>}
 //
 // Deployment:
@@ -174,7 +174,10 @@ func handleLicenseVerify(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Key string `json:"key"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, fmt.Errorf("EOF")) {
+	// io.EOF (empty body) falls through to a 200 {valid:false}, matching
+	// the telemetry handler below. errors.Is against fmt.Errorf("EOF")
+	// could never match — a freshly allocated error is its own identity.
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid JSON body"})
 		return
 	}
@@ -182,7 +185,8 @@ func handleLicenseVerify(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":     true,
 		"valid":  valid,
-		"reason": map[bool]string{true: "well-formed key", false: "key shorter than 8 chars"}[valid],
+		"mode":   "shape-check",
+		"reason": map[bool]string{true: "shape check only (stub, no key store): key >= 8 chars", false: "key shorter than 8 chars"}[valid],
 	})
 }
 

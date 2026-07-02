@@ -1,5 +1,12 @@
 // bitbucket.go — REST client for BitBucket Cloud (C5).
 //
+// Shipped consumer (audit A056): `r1 cicd trigger|status|logs
+// --provider bitbucket` (cmd/r1/cicd_cmd.go) drives TriggerPipeline /
+// TriggerCustomPipeline / GetPipelineStatus / WaitForCompletion /
+// ListPipelineSteps / GetStepLog from BITBUCKET_API_TOKEN
+// (+BITBUCKET_USERNAME for basic auth). The reviewer pipeline
+// (reviewer.go) remains library-only — no CLI verb invokes it yet.
+//
 // Public surface (mirrors the GitLab adapter one-for-one so the parity-audit
 // test (T23) sees the same shape across all three adapters):
 //

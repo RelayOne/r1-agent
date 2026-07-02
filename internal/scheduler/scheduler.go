@@ -3,12 +3,12 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/RelayOne/r1/internal/agentmsg"
 	"github.com/RelayOne/r1/internal/branch"
-	"github.com/RelayOne/r1/internal/dispatch"
 	"github.com/RelayOne/r1/internal/plan"
 	"github.com/RelayOne/r1/internal/specexec"
 )
@@ -25,6 +25,13 @@ type TaskResult struct {
 	TestsPassed int
 	TestsFailed int
 	DiffLines   int
+
+	// PlanOutput carries the plan text when the task ran in plan-only
+	// mode (plan.Task.PlanOnly). Executors surface it from the
+	// workflow's Result.PlanOutput; WithSpecExec feeds it into
+	// specexec.Outcome.PlanText so the plan-aware scorer can rank
+	// speculative strategies by plan quality instead of raw speed.
+	PlanOutput string
 }
 
 // ExecuteFunc is the callback the scheduler invokes to run one task.
@@ -71,10 +78,6 @@ type Scheduler struct {
 	// MessageBus enables inter-agent communication during parallel task execution.
 	// When set, tasks can broadcast status updates and conflict alerts.
 	MessageBus *agentmsg.Bus
-
-	// DispatchQueue provides reliable message delivery with retry for task events.
-	// When set, task completion/failure events are dispatched through the queue.
-	DispatchQueue *dispatch.Queue
 }
 
 // priority returns the resolved PriorityFunc for this Scheduler, always
@@ -154,18 +157,6 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 				"cost_usd": r.CostUSD,
 			})
 		}
-
-		// Dispatch task result event through the reliable delivery queue.
-		if s.DispatchQueue != nil {
-			priority := dispatch.PriorityNormal
-			if !r.Success {
-				priority = dispatch.PriorityHigh
-			}
-			s.DispatchQueue.Enqueue("task.result", "orchestrator", priority, map[string]any{
-				"task_id": r.TaskID,
-				"success": r.Success,
-			}, fmt.Sprintf("result-%s", r.TaskID))
-		}
 	}
 
 	// drainResults collects all immediately-available results without blocking.
@@ -192,6 +183,27 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 		s.stateMu.Unlock()
 		if allDone {
 			break
+		}
+
+		// R5: once the context is cancelled (Ctrl-C / timeout), stop
+		// dispatching queued tasks. Previously the dispatch section below
+		// never checked ctx.Err(), so every still-ready task was launched
+		// into a dead context, failed with "context canceled", and got
+		// written up as a real task failure — corrupting attempt numbering,
+		// failure-fingerprint escalation, and wisdom, and leaving resume
+		// with phantom failed tasks. Fall through to the in-flight drain and
+		// return results for genuinely-dispatched tasks only; undispatched
+		// tasks stay untouched (StatusPending) for resume.
+		if ctx.Err() != nil {
+			for active > 0 {
+				r := <-results
+				wg.Done()
+				active--
+				allResults = append(allResults, r)
+				recordResult(r)
+			}
+			wg.Wait()
+			return allResults, ctx.Err()
 		}
 
 		// Dispatch all ready tasks (collect candidates, then launch outside lock).
@@ -274,6 +286,18 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 				allResults = append(allResults, r)
 				recordResult(r)
 			case <-ctx.Done():
+				// Workers only exit by delivering into results; wg.Done
+				// happens on the receive side. Drain every in-flight
+				// result (bounded: execFn honors ctx and returns once
+				// its process group is torn down) or wg.Wait blocks
+				// forever and the whole r1 process hangs on Ctrl-C.
+				for active > 0 {
+					r := <-results
+					wg.Done()
+					active--
+					allResults = append(allResults, r)
+					recordResult(r)
+				}
 				wg.Wait()
 				return allResults, ctx.Err()
 			}
@@ -391,7 +415,11 @@ type SpecExecConfig struct {
 // WithSpecExec wraps an ExecuteFunc to use speculative parallel execution
 // for tasks that match the predicate. For each speculative task, it runs
 // parallel PLAN-ONLY explorations with different strategy prompts, scores
-// the plans, and then executes the winning strategy through the real pipeline.
+// the plans by deterministic structural quality plus speed
+// (specexec.PlanScorer over TaskResult.PlanOutput — plan-only outcomes
+// carry no test/diff signal, so DefaultScorer would reduce winner
+// selection to wall-clock latency), and then executes the winning
+// strategy through the real pipeline.
 //
 // SAFETY: Speculative strategies are plan-only (no execute, no verify, no merge).
 // Only the winning strategy runs through the full pipeline with side effects.
@@ -428,13 +456,20 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 			strategyBranches[s.ID] = b.ID
 		}
 
+		// Plan-only outcomes have TestsPassed=TestsFailed=DiffLines=0,
+		// so DefaultScorer would award every successful strategy the
+		// same flat fallbacks and the winner would degenerate to
+		// "fastest plan" (its old 0.9 threshold was also unreachable —
+		// plan-only scores capped at ~0.6, audit A024). PlanScorer
+		// ranks by plan structure instead, and PlanStopThreshold is
+		// reachable exactly when a plan shows full structural quality.
 		spec := specexec.Spec{
 			Strategies:    strategies,
 			MaxParallel:   cfg.MaxParallel,
 			Timeout:       cfg.Timeout,
 			EarlyStop:     true,
-			StopThreshold: 0.9,
-			Scorer:        specexec.DefaultScorer,
+			StopThreshold: specexec.PlanStopThreshold,
+			Scorer:        specexec.PlanScorer,
 		}
 
 		// PHASE 1: Run plan-only explorations in parallel.
@@ -458,6 +493,7 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 				TestsPassed: result.TestsPassed,
 				TestsFailed: result.TestsFailed,
 				DiffLines:   result.DiffLines,
+				PlanText:    result.PlanOutput,
 			}
 			if result.Error != nil {
 				outcome.Error = result.Error.Error()
@@ -475,6 +511,13 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 		result := specexec.Run(ctx, spec, executor)
 		// Prune failed branches to free memory after speculation completes.
 		explorer.Prune()
+
+		// Carry learnings from the explorations forward (the specexec
+		// package promise "merge insights from failed approaches into
+		// retry prompts"): the winner's real run sees what the other
+		// approaches tripped over, and the all-failed error surfaces
+		// the same learnings to the workflow retry loop.
+		insights := specexec.ExtractInsights(result)
 
 		// PHASE 2: Execute the winning strategy through the real pipeline.
 		if result.Winner != nil {
@@ -496,16 +539,19 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 			// Preserve original PlanOnly contract — specexec must not
 			// escalate a plan-only task into full execution.
 			realTask.PlanOnly = task.PlanOnly
+			if len(insights) > 0 {
+				realTask.Description += "\n\nLearnings from other explored approaches:\n- " +
+					strings.Join(insights, "\n- ")
+			}
 			return base(ctx, realTask)
 		}
 
-		// All strategies failed — return error
+		// All strategies failed — return error carrying the collected
+		// insights so the workflow retry loop can learn from them.
 		bestErr := fmt.Errorf("all %d speculative strategies failed", len(result.Outcomes))
-		for _, o := range result.Outcomes {
-			if o.Error != "" {
-				bestErr = fmt.Errorf("all %d strategies failed; last: %s", len(result.Outcomes), o.Error)
-				break
-			}
+		if len(insights) > 0 {
+			bestErr = fmt.Errorf("all %d speculative strategies failed; insights: %s",
+				len(result.Outcomes), strings.Join(insights, "; "))
 		}
 		return TaskResult{
 			TaskID:     task.ID,

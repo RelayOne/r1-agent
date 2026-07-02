@@ -21,6 +21,7 @@ package cortex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -550,28 +551,48 @@ func drain(respCh <-chan StreamEvent) {
 }
 
 // chatMessagesToAgentloop converts provider.ChatMessage (raw JSON
-// content) to agentloop.Message (typed content blocks). On parse
-// failure we fall back to a single text block with the raw payload —
-// the caller's history may already contain malformed content (e.g.
-// from a prior failed turn) and we don't want this helper to panic.
+// content) to agentloop.Message (typed content blocks). Decoding is
+// tiered per message: (1) unmarshal into []agentloop.ContentBlock —
+// the standard wire shape; (2) unmarshal into a bare string and wrap
+// it in a single text block; (3) fall back to a text block carrying
+// the raw payload verbatim — the caller's history may already contain
+// malformed content (e.g. from a prior failed turn) and we don't want
+// this helper to panic or, worse, silently drop content. (Audit A062:
+// the previous implementation discarded every payload, so replaying
+// the returned committed history would 400 on empty content blocks,
+// violating the file-header invariant that the returned history is
+// API-valid.)
 func chatMessagesToAgentloop(in []provider.ChatMessage) []agentloop.Message {
 	if len(in) == 0 {
 		return nil
 	}
 	out := make([]agentloop.Message, 0, len(in))
 	for _, m := range in {
-		am := agentloop.Message{Role: m.Role}
-		// The provider.ChatMessage.Content is json.RawMessage; we
-		// don't attempt to fully unmarshal here because
-		// agentloop.ContentBlock fields are a superset of what may
-		// appear on the wire. Instead, treat the raw bytes as
-		// opaque history content. The synthetic user message we
-		// append on interrupt uses agentloop.ContentBlock directly,
-		// so the returned slice is valid for the next turn.
-		_ = m.Content
-		out = append(out, am)
+		out = append(out, agentloop.Message{
+			Role:    m.Role,
+			Content: decodeChatContent(m.Content),
+		})
 	}
 	return out
+}
+
+// decodeChatContent applies the three-tier decode described on
+// chatMessagesToAgentloop to a single raw content payload. Empty
+// payloads return nil so a role-only ChatMessage stays role-only
+// rather than gaining a spurious empty text block.
+func decodeChatContent(raw json.RawMessage) []agentloop.ContentBlock {
+	if len(raw) == 0 {
+		return nil
+	}
+	var blocks []agentloop.ContentBlock
+	if err := json.Unmarshal(raw, &blocks); err == nil {
+		return blocks
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return []agentloop.ContentBlock{{Type: blockTypeText, Text: s}}
+	}
+	return []agentloop.ContentBlock{{Type: blockTypeText, Text: string(raw)}}
 }
 
 // runProviderStream calls p.ChatStream synchronously, translating
@@ -710,11 +731,15 @@ func runProviderStream(
 		closeResp()
 		finishDone(res.err)
 	case <-ctx.Done():
-		// Cancel watcher already fired closeResp + finishDone. We
-		// still wait briefly for resultCh so the chat goroutine
-		// drains; but if ChatStream is hung on a network call we
-		// don't block forever — return immediately and let the chat
-		// goroutine leak until the SDK closes the underlying request.
+		// The cancel watcher's ctx.Done branch races this one; closing
+		// cancelObserved can preempt it, so we must NOT assume the
+		// watcher already ran closeResp/finishDone. Both are sync.Once
+		// guarded, so calling them here as well is safe and guarantees
+		// respCh closes and doneCh receives — otherwise the caller's
+		// drain(respCh)/<-doneCh in the interrupt path would deadlock.
+		// The chat goroutine leaks until the SDK closes the request.
 		close(cancelObserved)
+		closeResp()
+		finishDone(ctx.Err())
 	}
 }

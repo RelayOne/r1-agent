@@ -271,26 +271,33 @@ func (w *Workspace) UnresolvedCritical() []Note {
 	return out
 }
 
-// Drain returns every Note whose Round >= sinceRound and advances the
-// internal drainedUpTo cursor to sinceRound+1 (clamped non-decreasing).
-// MidturnCheckFn (TASK-9) calls Drain to format the supervisor injection
-// block: each turn drains everything emitted in the round just past so
-// the next prompt sees fresh Notes exactly once.
+// Drain returns every Note not yet returned by a previous Drain and
+// advances the internal cursor past them. drainedUpTo is a NOTE-INDEX
+// cursor (count of notes consumed), not a round number: round-based
+// filtering silently lost late Notes — a slow lobe finishing after
+// round N's drain published a Note stamped Round=N that a
+// Round >= N+1 filter never surfaced, contradicting the documented
+// "late Notes will surface on a future round's Drain" contract
+// (audit A019). Replay already set drainedUpTo = len(notes)
+// (persist.go), which matches these index semantics exactly.
+//
+// The sinceRound argument no longer filters; it is retained so the
+// (notes, cursor) call shape and its single production caller
+// (MidturnNote) stay stable.
 //
 // Drain takes the write lock because it mutates drainedUpTo. The returned
 // slice is freshly allocated; callers may mutate it freely.
 func (w *Workspace) Drain(sinceRound uint64) ([]Note, uint64) {
+	_ = sinceRound // see doc comment: cursor is index-based now
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	out := make([]Note, 0)
-	for _, n := range w.notes {
-		if n.Round >= sinceRound {
-			out = append(out, n)
-		}
+	start := int(w.drainedUpTo)
+	if start > len(w.notes) {
+		start = len(w.notes)
 	}
-	if next := sinceRound + 1; next > w.drainedUpTo {
-		w.drainedUpTo = next
-	}
+	out := make([]Note, len(w.notes)-start)
+	copy(out, w.notes[start:])
+	w.drainedUpTo = uint64(len(w.notes))
 	return out, w.drainedUpTo
 }
 

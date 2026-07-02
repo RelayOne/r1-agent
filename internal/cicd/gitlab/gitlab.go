@@ -5,6 +5,11 @@
 // surface to actually trigger pipelines, poll status, and fetch job logs
 // against gitlab.com (or a self-hosted GitLab instance).
 //
+// Shipped consumer (audit A056): `r1 cicd trigger|status|logs
+// --provider gitlab` (cmd/r1/cicd_cmd.go) drives TriggerPipeline /
+// GetPipelineStatus / WaitForCompletion / GetJobLog from GITLAB_TOKEN
+// / CI_JOB_TOKEN.
+//
 // Public surface:
 //
 //	c := gitlab.New(gitlab.Config{Token: os.Getenv("GITLAB_TOKEN")})

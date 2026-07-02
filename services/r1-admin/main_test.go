@@ -347,8 +347,11 @@ func TestRequireOperatorBypassesPublicPaths(t *testing.T) {
 	if rr.Code != http.StatusFound {
 		t.Errorf("/ prod no-auth: code=%d want 302", rr.Code)
 	}
-	if !strings.Contains(rr.Header().Get("Location"), "/v1/auth/sso/start") {
-		t.Errorf("redirect target: %q", rr.Header().Get("Location"))
+	// Must be ABSOLUTE to coord-api: admin serves no /v1/auth/sso/*
+	// routes, so a relative Location looped forever (audit A026).
+	loc := rr.Header().Get("Location")
+	if !strings.HasPrefix(loc, coordAPI) || !strings.HasSuffix(loc, "/v1/auth/sso/start") {
+		t.Errorf("redirect target: %q, want %s/v1/auth/sso/start", loc, coordAPI)
 	}
 }
 

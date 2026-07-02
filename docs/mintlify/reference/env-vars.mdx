@@ -95,11 +95,29 @@ Canonical `R1_A2A_*` with `STOKE_A2A_*` fallback:
 | `R1_RESEARCH_ALLOWLIST` / `STOKE_RESEARCH_ALLOWLIST` | Comma-separated domain suffix list |
 | `R1_RESEARCH_REQUIRE_TLS` / `STOKE_RESEARCH_REQUIRE_TLS` | `1` for strict https-only mode |
 
+## Web search
+
+The `web_search` tool needs one of these; with neither set it reports
+"no search provider configured. Set TAVILY_API_KEY or WEBSEARCH_COMMAND."
+
+| Variable | Purpose |
+|---|---|
+| `TAVILY_API_KEY` | Enables the Tavily cloud REST search provider |
+| `WEBSEARCH_COMMAND` | Shell-wrapped search command template. Must contain the literal `{{query}}` placeholder (replaced with the escaped query at call time) and print a JSON array of `{url,title,excerpt}` objects on stdout. 30-second timeout per call. |
+
+## Browser
+
+| Variable | Purpose |
+|---|---|
+| `R1_BROWSER_PROVIDER` | Provider override for `r1 browse`: `local` (default), `browserless`, or `inhouse` |
+| `R1_ONE_SHOT` | Any non-empty value marks a one-shot invocation; `r1 browse` then refuses remote browser providers (exit code 4) because one-shot is reserved for stateless, low-latency verbs |
+
 ## Encryption at rest
 
 | Variable | Purpose |
 |---|---|
 | `STOKE_DB_ENCRYPTION` | `1` enables SQLCipher (chacha20) on `server.db` and `wisdom.db` |
+| `R1_KEYRING_BACKEND` | `file` skips the OS keyring entirely and forces the `FileBackend` fallback; any 99designs backend name (e.g. `keychain`) forces that specific backend |
 
 When `STOKE_DB_ENCRYPTION=1`, R1 derives a 32-byte master key via
 the OS keyring with a `FileBackend` fallback. See
@@ -119,8 +137,30 @@ the OS keyring with a `FileBackend` fallback. See
 
 | Variable | Purpose |
 |---|---|
-| `STOKE_RETENTION` | `1` enables the default retention profile when no operator config exists |
+| `STOKE_RETENTION` | **Not read by any code yet.** `specs/retention-policies.md` reserves `1` as the opt-in gate for the default retention profile, but r1-server currently starts its hourly retention sweep unconditionally with `retention.Defaults()` (stream files pruned after 90 days, checkpoint files after 30 days) — setting or unsetting this variable has no effect today |
 | `STOKE_CANARY_DO_NOT_EMIT` | Canary honeypot marker — not a credential; never set, never log |
+
+## NDJSON streaming (rename migration)
+
+| Variable | Purpose |
+|---|---|
+| `R1_NDJSON_LEGACY_DROP` | `1` forces canonical-only `r1.*` NDJSON event subtypes, ending the D-032 `stoke.*` dual-emit window early. See the [rename notice](/mintlify/rename/stoke-to-r1). |
+
+## Daemon job executors (`r1 daemon`)
+
+| Variable | Purpose |
+|---|---|
+| `STOKE_CLAUDE_BIN` | Binary for the `claude-code` executor (default `claude`) |
+| `STOKE_BASH_SHELL` | Shell for the `bash` executor (default `/bin/bash`) |
+| `STOKE_CODEXJOB_BIN` | Binary for the `codex` executor |
+| `STOKE_CODEXJOB_JOBS_DIR` | Jobs directory for the `codex` executor (the `--codex-jobs-dir` flag wins when both are set) |
+| `STOKE_CODEXJOB_EFFORT` | Default reasoning effort for the `codex` executor |
+
+## Daemon IPC
+
+| Variable | Purpose |
+|---|---|
+| `R1_EXPECTED_UID` | <Warning>Tests only — never set in production.</Warning> Overrides the UID the Unix-socket peer-credential check expects; unset, the check requires the connecting peer to match `os.Getuid()` |
 
 ## Upstream provider keys
 

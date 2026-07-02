@@ -199,3 +199,31 @@ func TestMultiFileAtomicCommit(t *testing.T) {
 		}
 	}
 }
+
+// TestCommitRollbackRemovesCreatedFiles covers audit A014: when a later
+// rename in the apply phase fails, files already renamed into place that
+// had NO original must be removed on rollback — otherwise "all changes
+// apply or none do" is violated for every path that succeeded first.
+func TestCommitRollbackRemovesCreatedFiles(t *testing.T) {
+	dir := t.TempDir()
+	tx := NewTransaction(dir)
+	if err := tx.Create("a.txt", []byte("A")); err != nil {
+		t.Fatal(err)
+	}
+	// Second create targets a path whose parent is a regular FILE, so
+	// MkdirAll ... actually staging would fail; instead force the RENAME
+	// to fail: target path is a non-empty directory.
+	if err := os.MkdirAll(filepath.Join(dir, "blocked", "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Create("blocked", []byte("B")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tx.Commit(); err == nil {
+		t.Fatal("expected Commit to fail (rename onto non-empty dir)")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.txt")); !os.IsNotExist(err) {
+		t.Fatalf("a.txt survived a failed transaction (err=%v) — atomicity violated", err)
+	}
+}

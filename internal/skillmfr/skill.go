@@ -1,9 +1,12 @@
 // Package skillmfr handles the full lifecycle of skills in Stoke.
 //
-// It is a long-running process subscribed to bus events that writes
-// skill-related ledger nodes. Four workflows:
+// The Manufacturer is a long-running bus subscriber that writes
+// skill-related ledger nodes. In production it is constructed and
+// started by internal/governance.New (audit A071): one Manufacturer
+// per governed run, consuming the skill.* events published by the
+// supervisor's extraction trigger. Four workflows:
 //
-//  1. Shipped library import — reads embedded skill files, writes to ledger
+//  1. Shipped library import — writes caller-supplied skill files to ledger
 //  2. Manufacturing from completed missions — extracts patterns from decision logs
 //  3. External skill import — validates and writes imported skills
 //  4. Skill lifecycle management — handles confidence promotions/demotions

@@ -15,6 +15,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -151,7 +154,62 @@ func New(rootDir string) (*Ledger, error) {
 		store:   s,
 		index:   idx,
 	}
+	// Open-time consistency probe + self-heal. A crash or an InsertNode failure
+	// between store.WriteNode and index.InsertNode leaves a durably-written node
+	// invisible to every query forever (RebuildIndex has no other trigger). If
+	// the index's node count disagrees with the number of chain records on disk,
+	// rebuild the index from the store (the source of truth) so no node stays
+	// invisible and so AddNode's ParentHash derivation can't fork the Merkle
+	// chain off a missing predecessor (STOKE-002).
+	if err := l.healIndexIfStale(); err != nil {
+		return nil, fmt.Errorf("ledger index heal: %w", err)
+	}
 	return l, nil
+}
+
+// healIndexIfStale compares the index's node count against the on-disk chain
+// record count and rebuilds the index when they disagree. Cheap: one COUNT(*)
+// plus one directory listing. Runs once at open.
+func (l *Ledger) healIndexIfStale() error {
+	indexCount, err := l.index.CountNodes()
+	if err != nil {
+		return fmt.Errorf("count index nodes: %w", err)
+	}
+	chainCount, err := l.countChainNodes()
+	if err != nil {
+		return fmt.Errorf("count chain nodes: %w", err)
+	}
+	if indexCount == chainCount {
+		return nil
+	}
+	log.Printf("ledger: index/store drift detected (index=%d chain=%d); rebuilding index from store", indexCount, chainCount)
+	if err := l.RebuildIndex(); err != nil {
+		return fmt.Errorf("rebuild index: %w", err)
+	}
+	return nil
+}
+
+// countChainNodes counts the chain-tier records ({rootDir}/chain/*.json), which
+// are the durable source of truth for how many nodes exist. Mirrors the file
+// selection ListNodes uses. Kept in this package (not Store) to respect the
+// ledger's file layout without widening the Store API.
+func (l *Ledger) countChainNodes() (int, error) {
+	chainDir := filepath.Join(l.rootDir, "chain")
+	entries, err := os.ReadDir(chainDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("read chain dir: %w", err)
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		n++
+	}
+	return n, nil
 }
 
 // Close releases the ledger's resources (e.g. the SQLite index).
@@ -292,8 +350,17 @@ func (l *Ledger) AddNode(_ context.Context, node Node) (NodeID, error) {
 	if err := l.store.WriteNode(node); err != nil {
 		return "", fmt.Errorf("ledger: write node: %w", err)
 	}
+	// The node is now durable in the store. If indexing fails (transient
+	// SQLITE_BUSY, a wedged handle), retry once, then rebuild the index from the
+	// store before giving up -- otherwise this node is durably written but
+	// invisible to every query, and a later AddNode would fork the Merkle chain
+	// off a missing predecessor. Rebuild reindexes this node from the store.
 	if err := l.index.InsertNode(node); err != nil {
-		return "", fmt.Errorf("ledger: index node: %w", err)
+		if retryErr := l.index.InsertNode(node); retryErr != nil {
+			if rbErr := l.rebuildIndexUnlocked(); rbErr != nil {
+				return "", fmt.Errorf("ledger: index node (retry then rebuild failed): insert=%w rebuild=%v", err, rbErr)
+			}
+		}
 	}
 	return node.ID, nil
 }
@@ -370,8 +437,14 @@ func (l *Ledger) AddEdge(_ context.Context, edge Edge) error {
 	if err := l.store.WriteEdge(edge); err != nil {
 		return fmt.Errorf("ledger: write edge: %w", err)
 	}
+	// Edge is durable in the store; mirror AddNode's retry-then-rebuild so a
+	// transient index failure can't leave the edge invisible to Walk/EdgesFrom.
 	if err := l.index.InsertEdge(edge); err != nil {
-		return fmt.Errorf("ledger: index edge: %w", err)
+		if retryErr := l.index.InsertEdge(edge); retryErr != nil {
+			if rbErr := l.rebuildIndexUnlocked(); rbErr != nil {
+				return fmt.Errorf("ledger: index edge (retry then rebuild failed): insert=%w rebuild=%v", err, rbErr)
+			}
+		}
 	}
 	return nil
 }
@@ -507,8 +580,14 @@ func (l *Ledger) Walk(_ context.Context, id NodeID, direction WalkDirection, edg
 	return result, nil
 }
 
-// Batch atomically writes multiple nodes and edges. All operations succeed
-// or none do.
+// Batch writes multiple nodes and edges after validating EVERY operation
+// up front — validation failures (malformed ops, missing edge endpoints,
+// directionality/matrix violations) write nothing. The store is
+// append-only by design, so there is no rollback-by-deletion: a
+// mid-batch I/O failure (disk full) can leave earlier ops committed;
+// WriteNode's dedup keeps a retried batch idempotent for those.
+// (The previous doc claimed full atomicity while edges were validated
+// only AFTER all nodes were persisted — audit A020.)
 func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 	if len(ops) == 0 {
 		return nil
@@ -523,6 +602,9 @@ func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 		edge *Edge
 	}
 	var items []prepared
+	// Node IDs (and types) staged earlier in this batch — edges may
+	// reference them before they hit the store.
+	newNodeTypes := map[NodeID]string{}
 
 	for i, op := range ops {
 		switch op.OpType {
@@ -559,6 +641,7 @@ func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 				n.ContentCommitment = contentCommitment(n.Salt, n.Content)
 			}
 			n.ID = computeID(n)
+			newNodeTypes[n.ID] = n.Type
 			items = append(items, prepared{node: &n})
 		case BatchAddEdge:
 			if op.Edge == nil {
@@ -571,6 +654,31 @@ func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 			if !validEdgeTypes[e.Type] {
 				return fmt.Errorf("ledger: batch op %d: unknown edge type %q", i, e.Type)
 			}
+			// Validate endpoints + the same directionality/matrix rules
+			// AddEdge enforces, BEFORE anything is written (audit A020):
+			// endpoints must be earlier in this batch or already stored.
+			fromType, ok := newNodeTypes[e.From]
+			if !ok {
+				n, err := l.store.ReadNode(e.From)
+				if err != nil {
+					return fmt.Errorf("ledger: batch op %d: edge from %q not found: %w", i, e.From, err)
+				}
+				fromType = n.Type
+			}
+			toType, ok := newNodeTypes[e.To]
+			if !ok {
+				n, err := l.store.ReadNode(e.To)
+				if err != nil {
+					return fmt.Errorf("ledger: batch op %d: edge to %q not found: %w", i, e.To, err)
+				}
+				toType = n.Type
+			}
+			if fromType == nodeTypeDecisionRepo && toType == nodeTypeDecisionInternal {
+				return fmt.Errorf("ledger: batch op %d: directionality violation: decision_repo %q cannot have edge to decision_internal %q", i, e.From, e.To)
+			}
+			if err := validateEdgeMatrix(e.Type, fromType, toType); err != nil {
+				return fmt.Errorf("ledger: batch op %d: %w", i, err)
+			}
 			items = append(items, prepared{edge: &e})
 		default:
 			return fmt.Errorf("ledger: batch op %d: unknown op type", i)
@@ -578,8 +686,7 @@ func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 	}
 
 	// Phase 2: write all nodes first so edges can reference them.
-	// Collect new node IDs so edge validation can find them.
-	newNodeIDs := map[NodeID]bool{}
+	// All validation already happened in Phase 1.
 	for _, it := range items {
 		if it.node != nil {
 			if err := l.store.WriteNode(*it.node); err != nil {
@@ -588,23 +695,12 @@ func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 			if err := l.index.InsertNode(*it.node); err != nil {
 				return fmt.Errorf("ledger: batch index node: %w", err)
 			}
-			newNodeIDs[it.node.ID] = true
 		}
 	}
 
-	// Phase 3: write edges, verifying endpoints exist.
+	// Phase 3: write edges.
 	for _, it := range items {
 		if it.edge != nil {
-			if !newNodeIDs[it.edge.From] {
-				if _, err := l.store.ReadNode(it.edge.From); err != nil {
-					return fmt.Errorf("ledger: batch edge from %q not found: %w", it.edge.From, err)
-				}
-			}
-			if !newNodeIDs[it.edge.To] {
-				if _, err := l.store.ReadNode(it.edge.To); err != nil {
-					return fmt.Errorf("ledger: batch edge to %q not found: %w", it.edge.To, err)
-				}
-			}
 			if err := l.store.WriteEdge(*it.edge); err != nil {
 				return fmt.Errorf("ledger: batch write edge: %w", err)
 			}
@@ -621,7 +717,13 @@ func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 func (l *Ledger) RebuildIndex() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.rebuildIndexUnlocked()
+}
 
+// rebuildIndexUnlocked drops and repopulates the index from the store. The
+// caller MUST hold l.mu -- AddNode/AddEdge call this from inside their locked
+// critical sections, so it must not re-acquire the mutex.
+func (l *Ledger) rebuildIndexUnlocked() error {
 	if err := l.index.Drop(); err != nil {
 		return fmt.Errorf("ledger: drop index: %w", err)
 	}

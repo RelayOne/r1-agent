@@ -198,11 +198,34 @@ func PruneTimelineAfter(repoRoot, checkpointID string) error {
 	if err != nil {
 		return fmt.Errorf("checkpoint: prune create tmp: %w", err)
 	}
-	for _, e := range keep {
-		b, _ := json.Marshal(e)
-		f.Write(b)
-		f.Write([]byte{'\n'})
+	// Every error below aborts WITHOUT renaming: a short write (disk
+	// full, I/O error) must never replace the authoritative WAL with a
+	// truncated file — that silently destroys the history --resume-from
+	// depends on, possibly including the target checkpoint itself.
+	fail := func(step string, err error) error {
+		f.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("checkpoint: prune %s: %w (original timeline left intact)", step, err)
 	}
-	f.Close()
-	return os.Rename(tmp, p)
+	for _, e := range keep {
+		b, err := json.Marshal(e)
+		if err != nil {
+			return fail("marshal", err)
+		}
+		if _, err := f.Write(append(b, '\n')); err != nil {
+			return fail("write", err)
+		}
+	}
+	if err := f.Sync(); err != nil {
+		return fail("sync", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("checkpoint: prune close: %w (original timeline left intact)", err)
+	}
+	if err := os.Rename(tmp, p); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("checkpoint: prune rename: %w", err)
+	}
+	return nil
 }

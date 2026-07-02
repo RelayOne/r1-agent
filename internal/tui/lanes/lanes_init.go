@@ -32,15 +32,23 @@ import (
 // leaks the previous goroutine. The spec's checklist item 11 doesn't
 // mandate idempotency; we still guard against the obvious leak by
 // cancelling any previous context first.
+//
+// The m.cancel swap happens under m.mu because Mount's cleanup
+// (lanes_mount.go stopProducer) may read/nil the field from another
+// goroutine.
 func (m *Model) Init() tea.Cmd {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	m.mu.Lock()
+	prev := m.cancel
+	m.cancel = cancel
+	m.mu.Unlock()
+
 	// Cancel any previous producer goroutine. Defensive — Bubble Tea
 	// v2 calls Init once per program in normal operation.
-	if m.cancel != nil {
-		m.cancel()
+	if prev != nil {
+		prev()
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cancel = cancel
 
 	go m.runProducer(ctx)
 

@@ -242,7 +242,9 @@ func TestUnresolvedCriticalFilter(t *testing.T) {
 func TestDrainAdvancesCursor(t *testing.T) {
 	w := NewWorkspace(nil, nil)
 
-	// Round 0 Note (will not be drained at sinceRound=1).
+	// Round 0 Note. Under the index-cursor semantics (audit A019) Drain
+	// returns EVERY undrained Note regardless of round — late/older
+	// Notes must never be silently dropped.
 	n0 := validPublishNote()
 	n0.Title = "round-0 note"
 	if err := w.Publish(n0); err != nil {
@@ -270,30 +272,43 @@ func TestDrainAdvancesCursor(t *testing.T) {
 	}
 
 	drained, cursor := w.Drain(1)
-	if len(drained) != 2 {
-		t.Fatalf("Drain(1) len=%d, want 2", len(drained))
+	if len(drained) != 3 {
+		t.Fatalf("Drain(1) len=%d, want 3 (all undrained notes, incl. round 0)", len(drained))
 	}
-	for _, n := range drained {
-		if n.Round < 1 {
-			t.Fatalf("Drain(1) returned Note with Round=%d, want >=1", n.Round)
-		}
-	}
-	if cursor != 2 {
-		t.Fatalf("Drain(1) cursor=%d, want 2", cursor)
+	if cursor != 3 {
+		t.Fatalf("Drain(1) cursor=%d, want 3 (index of notes consumed)", cursor)
 	}
 
 	// drainedUpTo must have advanced internally.
 	w.mu.RLock()
-	if w.drainedUpTo != 2 {
+	if w.drainedUpTo != 3 {
 		w.mu.RUnlock()
-		t.Fatalf("w.drainedUpTo=%d after Drain(1), want 2", w.drainedUpTo)
+		t.Fatalf("w.drainedUpTo=%d after Drain(1), want 3", w.drainedUpTo)
 	}
 	w.mu.RUnlock()
 
-	// Calling Drain with a smaller sinceRound must NOT regress drainedUpTo.
-	_, cursor2 := w.Drain(0)
-	if cursor2 != 2 {
-		t.Fatalf("Drain(0) cursor=%d, want 2 (must not regress)", cursor2)
+	// A second Drain returns nothing new and must not regress the cursor.
+	again, cursor2 := w.Drain(0)
+	if len(again) != 0 || cursor2 != 3 {
+		t.Fatalf("Drain(0) len=%d cursor=%d, want 0/3 (exactly-once, no regress)", len(again), cursor2)
+	}
+
+	// LATE NOTE: a slow lobe publishing for an already-drained round
+	// must surface on the NEXT drain (audit A019 — previously lost).
+	w.mu.Lock()
+	w.currentRound = 1 // stamp as an old round
+	w.mu.Unlock()
+	late := validPublishNote()
+	late.Title = "late round-1 note"
+	if err := w.Publish(late); err != nil {
+		t.Fatalf("Publish late: %v", err)
+	}
+	w.mu.Lock()
+	w.currentRound = 2
+	w.mu.Unlock()
+	lateDrained, _ := w.Drain(2)
+	if len(lateDrained) != 1 || lateDrained[0].Title != "late round-1 note" {
+		t.Fatalf("late note not surfaced: got %+v", lateDrained)
 	}
 }
 

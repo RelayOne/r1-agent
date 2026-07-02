@@ -83,6 +83,7 @@ import (
 	"github.com/RelayOne/r1/internal/streamjson"
 	"github.com/RelayOne/r1/internal/subscriptions"
 	"github.com/RelayOne/r1/internal/taskstate"
+	"github.com/RelayOne/r1/internal/telemetry"
 	"github.com/RelayOne/r1/internal/testselect"
 	"github.com/RelayOne/r1/internal/tui"
 	"github.com/RelayOne/r1/internal/verify"
@@ -92,7 +93,10 @@ import (
 	"github.com/RelayOne/r1/internal/worktree"
 )
 
-// version is set at build time via ldflags.
+// version is overridden at build time via ldflags
+// (-X main.version=...; see the Makefile release/binaries targets and
+// resolveVersion in version.go, which falls back to the embedded VCS
+// revision when this is left at "dev").
 var version = "dev"
 var fatalReporter *r1coderadar.Client
 
@@ -138,6 +142,29 @@ type BuildConfig struct {
 	InPlace bool
 }
 
+// emitRunTelemetry surfaces + persists a run's structured telemetry
+// (O6). It prints the human-readable Format() next to the cost/progress
+// summary and writes a JSON Snapshot under
+// <repo>/.r1/telemetry/<run-id>.json so `r1 stats telemetry` can diff
+// runs. Both steps are best-effort: telemetry is diagnostic and must
+// never fail or slow a build. A nil/empty collector is a no-op (e.g.
+// --plan-only runs that never executed a task).
+func emitRunTelemetry(repo, runID string, tel *telemetry.Collector) {
+	if tel == nil || tel.EventCount() == 0 {
+		return
+	}
+	fmt.Printf("  Telemetry:\n")
+	for _, line := range strings.Split(strings.TrimRight(tel.Format(), "\n"), "\n") {
+		fmt.Printf("    %s\n", line)
+	}
+	dir := r1dir.JoinFor(repo, "telemetry")
+	if path, err := telemetry.WriteSnapshot(dir, tel.Snapshot(runID)); err != nil {
+		fmt.Fprintf(os.Stderr, "warn: telemetry snapshot not written: %v\n", err)
+	} else {
+		fmt.Printf("  Telemetry snapshot: %s\n", path)
+	}
+}
+
 // runBuild executes a build plan and returns the result.
 // This is the core build logic, called by both buildCmd and shipCmd.
 // Returns the build report and any fatal error.
@@ -150,8 +177,15 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	var buildSuccess bool
 	reporter := remote.New()
 	if reporter != nil {
-		if url, err := reporter.RegisterSession(cfg.PlanPath); err == nil && url != "" {
-			fmt.Printf("  dashboard: %s\n", url)
+		if url, err := reporter.RegisterSession(cfg.PlanPath); err == nil {
+			// Prefer the server-returned share URL; fall back to the
+			// endpoint-derived one when the response omits it.
+			if url == "" {
+				url = reporter.WebURL()
+			}
+			if url != "" {
+				fmt.Printf("  dashboard: %s (session %s)\n", url, reporter.SessionID())
+			}
 		}
 		defer func() {
 			summary := "build finished"
@@ -273,6 +307,15 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	sched.PriorityName = cfg.SchedulerAlgo
 	startTime := time.Now()
 
+	// O6: one run-level telemetry collector shared across every per-task
+	// orchestrator (injected via appCfg.Telemetry below). app.New would
+	// otherwise auto-construct a fresh per-task collector whose Summary
+	// dies with the task; sharing one aggregates task.start/task.end
+	// across the whole build so the end-of-run summary + persisted
+	// snapshot reflect the run, not the last task.
+	runTelemetry := telemetry.New()
+	runID := startTime.UTC().Format("20060102T150405.000000000Z")
+
 	// Create ONE shared worktree manager for the entire build session.
 	// The merge mutex MUST be shared across all parallel tasks to prevent
 	// concurrent ref mutations that corrupt the repository.
@@ -288,7 +331,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	} else {
 		fmt.Printf("  ⚠ stancesign: could not resolve identity (%v) — commits will be unsigned\n", sErr)
 	}
-	wisdomStore := wisdom.NewStore()
+	wisdomStore := newPersistentWisdom(absRepo)
 
 	// Metrics registry: shared across all tasks in this build session.
 	metricsReg := metrics.NewRegistry()
@@ -309,6 +352,18 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	// Unified event bus: shared across all tasks in this build session.
 	eventBus := hub.New()
 	defer attachEventSubscribers(eventBus)()
+
+	// Live remote progress: bridge task lifecycle + model-cost events
+	// into SessionReporter.Update snapshots so the Ember dashboard shows
+	// per-task phase/cost between registration and completion. This
+	// defer is registered AFTER the reporter.Complete defer above, so
+	// (LIFO) Stop's final flush lands BEFORE the session is marked
+	// complete.
+	if reporter != nil {
+		remoteProgress := remote.NewHubProgress(reporter, cfg.PlanPath)
+		remoteProgress.Register(eventBus)
+		defer remoteProgress.Stop()
+	}
 
 	// S-1 TUI progress renderer. Paints a live dashboard on stderr
 	// when the operator runs on an interactive terminal. Non-TTY
@@ -434,6 +489,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			Pools:               pools,
 			Worktrees:           sharedWorktrees,
 			State:               ts,
+			Telemetry:           runTelemetry, // O6: shared run-level collector
 			Wisdom:              wisdomStore,
 			Memory:              openCrossSessionMemory(absRepo),
 			BuildCommand:        cfg.BuildCommand,
@@ -497,6 +553,15 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		attemptNum := len(priorAttempts) + 1
 
 		if err != nil {
+			// R5: a cancelled run (Ctrl-C / timeout) is not a task failure.
+			// Skip the failure Attempt record and markTask StatusFailed so
+			// attempt numbering, fingerprint escalation, and wisdom are not
+			// corrupted for work that never ran; the task stays StatusPending
+			// for resume.
+			if errors.Is(err, context.Canceled) {
+				ui.TaskComplete(task.ID, false, elapsed, result.TotalCostUSD, 1)
+				return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD}
+			}
 			ui.TaskComplete(task.ID, false, elapsed, result.TotalCostUSD, 1)
 			attempt := session.Attempt{
 				TaskID:   task.ID,
@@ -595,6 +660,10 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		fmt.Printf("  Cost: %s\n", tracker.Summary())
 	}
 	fmt.Printf("  Progress: %s\n", estimator.Summary())
+	// O6: surface + persist the run's structured telemetry (latency
+	// percentiles, success rate, per-category cost) that the orchestrator
+	// collected but previously discarded at exit.
+	emitRunTelemetry(absRepo, runID, runTelemetry)
 
 	// Fire webhook notification on build completion (if configured).
 	if webhookURL := r1env.Get("R1_WEBHOOK_URL", "STOKE_WEBHOOK_URL"); webhookURL != "" {
@@ -814,6 +883,11 @@ func main() {
 		// EL-CLI: hash-chain verify + session/mission/loop listing
 		// over .stoke/events.db (spec event-log-proper.md §21-35).
 		eventlogCmd(os.Args[2:])
+	case "replay":
+		// O4: read side for the per-task session replay recordings that
+		// internal/workflow persists under <repo>/.r1/replays. list | show |
+		// errors over internal/replay Load/Player/Recording.
+		os.Exit(runReplayCmd(os.Args[2:], os.Stdout, os.Stderr))
 	case "plan-status":
 		statusCmd(os.Args[2:])
 	case "pool":
@@ -932,8 +1006,16 @@ func main() {
 		// (TASK-31 of cortex-concerns) is wired; future cortex subcommands
 		// extend cortexCmd's dispatch in cortex_memory_audit.go.
 		cortexCmd(os.Args[2:])
-	case "version", "--version", "-v":
-		fmt.Println(version)
+	case "memory":
+		// Memory subcommand family (ops_memory.go): `list` / `add` over
+		// the scoped memory bus, plus `consolidate` (A101) which runs the
+		// STOKE-010 episodic→semantic consolidation pass over the tiered
+		// memory Router.
+		os.Exit(runMemoryCmd(os.Args[2:], os.Stdout, os.Stderr))
+	case "--version", "-v":
+		fmt.Println(resolveVersion())
+	case "version":
+		fmt.Println(versionDetail())
 	case "help", "--help", "-h":
 		usage()
 	default:
@@ -945,19 +1027,75 @@ func main() {
 
 // --- init/wizard: project configuration wizard ---
 
-func initCmd(args []string) {
-	// LINT-ALLOW chdir-cli-entry: r1 init subcommand; cwd captured once as the project default, overridable via positional arg below.
-	projectDir, _ := os.Getwd()
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		projectDir = args[0]
-	}
+// initOptions is the resolved routing for `r1 init` (audit A076).
+// Default routes to the modern wizard.RunWizard in ModeAuto (detect,
+// propose, confirm); --auto/-a selects ModeYes (CI-safe, no prompts);
+// --interactive keeps the legacy question wizard as its backend;
+// --research enables the AI research-convergence pass when a model
+// provider can be resolved.
+type initOptions struct {
+	projectDir  string
+	mode        wizard.Mode
+	interactive bool
+	research    bool
+}
 
-	autoMode := false
+// parseInitFlags resolves `r1 init` args into routing options. Split out
+// of initCmd so the flag→mode resolution is unit-testable.
+func parseInitFlags(args []string, cwd string) initOptions {
+	o := initOptions{projectDir: cwd, mode: wizard.ModeAuto}
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		o.projectDir = args[0]
+	}
 	for _, a := range args {
-		if a == "--auto" || a == "-a" {
-			autoMode = true
+		switch a {
+		case "--auto", "-a":
+			o.mode = wizard.ModeYes
+		case "--interactive", "-i":
+			o.interactive = true
+		case "--research":
+			o.research = true
 		}
 	}
+	return o
+}
+
+// wizardResearchProvider adapts the direct-API provider.Provider to the
+// wizard's minimal Chat seam (internal/wizard run.go Provider) for the
+// opt-in `r1 init --research` convergence pass (audit A076).
+type wizardResearchProvider struct {
+	p     provider.Provider
+	model string
+}
+
+func (w wizardResearchProvider) Chat(_ context.Context, system, user string) (string, error) {
+	userContent, err := json.Marshal([]map[string]any{{"type": "text", "text": user}})
+	if err != nil {
+		return "", err
+	}
+	resp, err := w.p.Chat(provider.ChatRequest{
+		Model:     w.model,
+		System:    system,
+		MaxTokens: 2000,
+		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
+	})
+	if err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	for _, c := range resp.Content {
+		if c.Type == "text" {
+			out.WriteString(c.Text)
+		}
+	}
+	return out.String(), nil
+}
+
+func initCmd(args []string) {
+	// LINT-ALLOW chdir-cli-entry: r1 init subcommand; cwd captured once as the project default, overridable via positional arg below.
+	cwd, _ := os.Getwd()
+	opts := parseInitFlags(args, cwd)
+	projectDir := opts.projectDir
 
 	// If reinitializing, verify existing ledger integrity first.
 	// Uses the dual-resolve helper so an operator reinitialising a
@@ -979,22 +1117,50 @@ func initCmd(args []string) {
 		fmt.Println("  Ledger integrity: OK (reinitializing)")
 	}
 
-	w := wizard.New(projectDir)
-
-	var err error
-	if autoMode {
-		err = w.RunAutoDetect()
-		if err == nil {
-			fmt.Printf("  stoke.policy.yaml generated (auto-detect mode)\n")
+	if opts.interactive {
+		// Legacy question flow, kept solely as the --interactive
+		// backend (audit A076). Writes r1.policy.yaml itself.
+		if err := wizard.New(projectDir).Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "wizard error: %v\n", err)
+			os.Exit(1)
 		}
-	} else {
-		err = w.Run()
+		return
 	}
 
+	wopts := wizard.Opts{ProjectRoot: projectDir, Mode: opts.mode, Stdin: os.Stdin}
+	if opts.research {
+		prov, modelName, reason := resolveInspectProvider("", "", "")
+		if prov == nil {
+			fmt.Fprintf(os.Stderr, "wizard error: --research needs a model provider: %s\n", reason)
+			os.Exit(1)
+		}
+		wopts.Research = true
+		wopts.Provider = wizardResearchProvider{p: prov, model: modelName}
+	}
+
+	res, err := wizard.RunWizard(context.Background(), wopts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "wizard error: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Install the ledger append-only guard as a pre-commit hook so the
+	// content-addressed ledger cannot be silently rewritten by a later
+	// commit. Best-effort: projects without a .git directory get a
+	// warning, not a failed init.
+	if err := wizard.InstallLedgerGuardHook(projectDir); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: ledger guard hook not installed: %v\n", err)
+	} else {
+		fmt.Println("  Ledger guard pre-commit hook: installed")
+	}
+
+	fmt.Printf("  Maturity: %s (score %d/100)\n", res.Maturity.Stage, res.Maturity.Score)
+	fmt.Printf("  Written: r1.policy.yaml, %s\n", filepath.Join(r1dir.JoinFor(projectDir), "config.yaml"))
+	fmt.Printf("  Rationale: %s\n", filepath.Join(r1dir.JoinFor(projectDir), "wizard-rationale.md"))
+	if len(res.Skills) > 0 {
+		fmt.Printf("  Skills: %s\n", strings.Join(res.Skills, ", "))
+	}
+	fmt.Printf("\n  Run `r1 build` to start.\n")
 }
 
 // --- mcp-serve: start MCP codebase tool server ---
@@ -1213,6 +1379,9 @@ func runCmd(args []string) {
 
 	result, err := orchestrator.Run(ctx)
 	elapsed := time.Since(startTime).Seconds()
+	// O6: surface + persist this run's telemetry regardless of outcome
+	// (task.end is already recorded by the time Run returns).
+	emitRunTelemetry(absRepo, "run-"+startTime.UTC().Format("20060102T150405.000000000Z"), orchestrator.Telemetry())
 
 	if err != nil {
 		ui.TaskComplete("task", false, elapsed, result.TotalCostUSD, 1)
@@ -1482,6 +1651,13 @@ func buildCmd(args []string) {
 				priorAttempts, _ := store.LoadAttempts(task.ID)
 				attemptNum := len(priorAttempts) + 1
 				if err != nil {
+					// R5: a cancelled run is not a task failure — leave the
+					// task StatusPending for resume instead of recording a
+					// phantom failure Attempt and marking it StatusFailed.
+					if errors.Is(err, context.Canceled) {
+						tui.SendTaskComplete(program, task.ID, false, result.TotalCostUSD, elapsed, attemptNum, err.Error(), ts.ClaimedVsVerified())
+						return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD}
+					}
 					tui.SendTaskComplete(program, task.ID, false, result.TotalCostUSD, elapsed, attemptNum, err.Error(), ts.ClaimedVsVerified())
 					store.SaveAttempt(session.Attempt{TaskID: task.ID, Number: attemptNum, Success: false, Error: err.Error(), CostUSD: result.TotalCostUSD})
 					markTask(p, task.ID, plan.StatusFailed)
@@ -1765,6 +1941,15 @@ func sowCmd(args []string) {
 	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution")
 	governance := fs.Bool("governance", false, "Force-enable the V2 governance layer (default on via policy)")
 	noGovernance := fs.Bool("no-governance", false, "Kill-switch: disable the V2 governance layer for this run")
+	// Governance tier + HITL wait ceiling (audit A032). Enterprise tier
+	// gates every descent T8 soft-pass through hitl.RequestApproval: an
+	// hitl_required line is emitted on the stream-json critical lane and
+	// the run blocks until the operator answers on stdin (or the wait
+	// ceiling fires, which rejects). Community (default) auto-grants
+	// soft-passes, preserving prior behavior. Wiring:
+	// buildDescentConfig -> buildSoftPassApprovalFunc (hitl_wiring.go).
+	governanceTier := fs.String("governance-tier", "community", "Governance tier for descent soft-pass resolution: community (auto-grant, default) or enterprise (each soft-pass requires human approval via an hitl_required line on the stream-json output answered with a JSON decision line on stdin)")
+	hitlTimeout := fs.Duration("hitl-timeout", 0, "HITL approval wait ceiling override (default: 1h community, 15m enterprise). A timed-out approval counts as a rejection.")
 	cortexEnabled := fs.Bool("cortex", true, "Enable parallel-cognition deterministic lobes (default on; --cortex=false or --no-cortex to disable)")
 	noCortex := fs.Bool("no-cortex", false, "Disable the cortex lobes for this run")
 	// SOW builds are long-running (hours-to-days for large SOWs). Hard timeout
@@ -1820,7 +2005,7 @@ func sowCmd(args []string) {
 	// preserved regardless of the default policy's TTLs. Stored via
 	// setRetentionPolicy (retention_policy.go) for downstream consumption
 	// by the retention enforcement hooks.
-	retentionPermanent := fs.Bool("retention-permanent", false, "Override the retention policy for this run so every surface is pinned to retain_forever. Useful for audit runs where the full memory + stream + checkpoint trail must be preserved.")
+	retentionPermanent := fs.Bool("retention-permanent", false, "Override the retention policy for this run so every surface is pinned to retain_forever. Useful for audit runs where the full memory + stream + checkpoint trail must be preserved. Applies to this process's session-end enforcement (active when STOKE_RETENTION=1); the r1-server hourly sweep runs in a separate process with its own defaults and is NOT affected by this flag.")
 	// CS-4 (work-stoke-alignment): preload the memory bus from a JSON
 	// snapshot before the main SOW loop. CloudSwarm's supervisor uses
 	// this to hand back per-task memory across sessions. Empty path =
@@ -1877,12 +2062,13 @@ func sowCmd(args []string) {
 	// S-0/S-2 (work-stoke T1): TwoLane emitter + HITL service wired into
 	// the sow-native config below. Bound to the real stdout BEFORE the
 	// redirect on the next branch so descent.tier / session.start /
-	// hitl_required lines land on the stream, not on stderr. Community-
-	// tier default: 1h HITL wait ceiling (matches run_cmd.go:146). The
-	// legacy nil-guards in sow_native_streamjson.go keep tests using
+	// hitl_required lines land on the stream, not on stderr. Wait
+	// ceiling resolved by hitlWaitCeiling (audit A032): --hitl-timeout
+	// override wins, else 15m enterprise / 1h community. The legacy
+	// nil-guards in sow_native_streamjson.go keep tests using
 	// zero-value cfg happy even though production now always sets these.
 	sowStreamJSON := streamjson.NewTwoLane(os.Stdout, *outputFormat == "stream-json")
-	sowHITL := hitl.New(sowStreamJSON, os.Stdin, time.Hour)
+	sowHITL := hitl.New(sowStreamJSON, os.Stdin, hitlWaitCeiling(*governanceTier, *hitlTimeout))
 	streamResult := &streamjsonResult{subtype: "success", cost: 0, turns: 0, text: "ok"}
 	if streamEmitter.Enabled() {
 		os.Stdout = os.Stderr
@@ -3136,11 +3322,13 @@ func sowCmd(args []string) {
 			// real stdout before it's redirected to stderr for human
 			// log output in stream-json mode. Both fields are nil-safe
 			// on every consumer site (sow_native_streamjson.go +
-			// descent_bridge_hitl.go).
-			StreamJSON:  sowStreamJSON,
-			HITL:        sowHITL,
-			Timeline:    sowTimeline,
-			ResumeState: resumeState,
+			// descent_bridge.go, where buildDescentConfig installs the
+			// enterprise-tier SoftPassApprovalFunc — audit A032).
+			StreamJSON:     sowStreamJSON,
+			HITL:           sowHITL,
+			GovernanceTier: *governanceTier,
+			Timeline:       sowTimeline,
+			ResumeState:    resumeState,
 			// H-91d: correlation IDs stamped into every worker JSONL
 			// entry (via engine.WorkerLogContext). Generated once per
 			// `r1 sow` invocation — the same RunID ties all
@@ -7117,6 +7305,7 @@ COMMANDS:
   why-broken      Explain which decision introduced a regression
   self-tune       Recommend a better harness config from trial metrics
   watch           Live operator dashboard for an in-flight SOW run
+  replay          Inspect per-task session replay recordings: list | show | errors
   status          Show session dashboard (progress, cost, learning)
   pool            Show subscription pool utilization
   add-claude      Add a Claude Max subscription to the pool
@@ -7145,8 +7334,11 @@ RUN FLAGS (CloudSwarm stream-json mode — activated by --output):
   --branch <name>             Branch name to check out
   --model <name>              Override primary model
   --sow <path>                Path to SOW file; switches to SOW mode
-  --hitl-timeout <duration>   HITL wait override (default 1h community, 15m enterprise)
-  --governance-tier <tier>    community (default) | enterprise (HITL-gated soft-pass)
+  --hitl-timeout <duration>   Accepted for CloudSwarm compat; no effect here.
+                              run mode is announce-only (no worker dispatch, no
+                              descent), so HITL never fires. Honored by r1 sow.
+  --governance-tier <tier>    community (default) | enterprise. Echoed on the
+                              stream; HITL-gated soft-pass runs in r1 sow.
   TASK_SPEC                   Positional free-text task (used when --sow absent)
 
   Exit codes (stream-json mode): 0=pass, 1=AC failed, 2=budget/usage,
@@ -7211,6 +7403,12 @@ SOW FLAGS:
   Safety:
     --timeout <duration>    Wall-clock cap (default: 0 = supervisor-driven)
     --policy <path>         Path to stoke.policy.yaml
+    --governance-tier <t>   community (default: descent soft-pass auto-grants) |
+                            enterprise (every soft-pass emits hitl_required on
+                            the stream-json output and blocks for a JSON
+                            decision line on stdin)
+    --hitl-timeout <dur>    HITL approval wait ceiling (default: 1h community,
+                            15m enterprise; timeout = rejection)
 
 PLAN FLAGS:
   --task <goal>        High-level goal description

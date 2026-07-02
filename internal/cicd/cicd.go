@@ -1,6 +1,8 @@
 // Package cicd provides R1 CI/CD integration templates and validation.
 //
-// T-R1P-020: GitHub Actions integration recipe — YAML workflow template
+// GitHub Actions integration recipe — YAML workflow template
+//   (historically mis-tagged T-R1P-020; that ticket is the multi-language
+//   LSP client, internal/lsp/client — audit A067)
 // T-R1P-021: GitLab CI integration recipe — .gitlab-ci.yml template
 // T-R1P-022: CircleCI integration recipe — .circleci/config.yml template
 //
@@ -231,14 +233,21 @@ func githubTrigger(opts Options) string {
 func githubJobStep(opts Options) string {
 	switch opts.Mode {
 	case ModeReview:
-		return `      - name: R1 code review
+		// audit A056: earlier revisions invoked `r1 review`, a command
+		// that has never existed in cmd/r1. `r1 audit` is the shipped
+		// multi-persona review surface; its JSON report is uploaded as
+		// a build artifact.
+		return `      - name: R1 code review (audit personas)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          r1 review --policy ${{ env.R1_POLICY_PATH || 'stoke.policy.yaml' }} \
-            --pr-number ${{ github.event.pull_request.number }} \
-            --repo ${{ github.repository }} \
-            --output github-comment`
+          r1 audit --repo . --json | tee r1-review.json
+      - name: Upload review report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r1-review
+          path: r1-review.json`
 
 	case ModeAutoFix:
 		return `      - name: R1 auto-fix
@@ -306,13 +315,15 @@ r1-%s:
 func gitlabJobBody(opts Options) string {
 	switch opts.Mode {
 	case ModeReview:
+		// audit A056: `r1 review` never existed; `r1 audit` is the
+		// shipped review surface.
 		return `  rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   script:
-    - r1 review --policy "$R1_POLICY" --pr-number "$CI_MERGE_REQUEST_IID" --output gitlab-comment
+    - r1 audit --repo . --json | tee r1-review.json
   artifacts:
-    reports:
-      codequality: r1-review.json`
+    paths:
+      - r1-review.json`
 
 	case ModeAutoFix:
 		return `  rules:
@@ -395,9 +406,13 @@ workflows:
 func circleCIJobSteps(opts Options) string {
 	switch opts.Mode {
 	case ModeReview:
+		// audit A056: `r1 review` never existed; `r1 audit` is the
+		// shipped review surface.
 		return `      - run:
-          name: R1 code review
-          command: r1 review --policy "$R1_POLICY" --output circleci-comment`
+          name: R1 code review (audit personas)
+          command: r1 audit --repo . --json | tee r1-review.json
+      - store_artifacts:
+          path: r1-review.json`
 
 	case ModeAutoFix:
 		return `      - run:

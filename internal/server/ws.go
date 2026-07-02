@@ -11,11 +11,11 @@
 //     with code 4408.
 //
 // Implemented over net/http.Hijacker (not coder/websocket). The codebase
-// already ships two RFC 6455 implementations (internal/server/dashboard.go
-// handleWebSocket and internal/beacon/transport/transport.go ServeWS) so
-// taking on a third-party dependency is unnecessary for the small subset
-// of the protocol we need (text frames, ping/pong control frames, server
-// close codes). Behaviour is verified by the unit tests in ws_test.go.
+// already ships a hand-rolled RFC 6455 implementation
+// (internal/server/dashboard.go handleWebSocket) so taking on a
+// third-party dependency is unnecessary for the small subset of the
+// protocol we need (text frames, ping/pong control frames, server close
+// codes). Behaviour is verified by the unit tests in ws_test.go.
 //
 // JSON-RPC 2.0 framing for session.subscribe (TASK-15) is implemented in
 // the same file because the verb is intrinsic to the WS transport per
@@ -356,9 +356,172 @@ func (c *laneWSConn) handleClientFrame(ctx context.Context, payload []byte) {
 		c.handleSessionSubscribe(ctx, req.ID, req.Params)
 	case "session.unsubscribe":
 		c.handleSessionUnsubscribe(req.ID, req.Params)
+	case "r1.lanes.list", "r1.lanes.kill", "r1.lanes.pin":
+		// Audit A040: the remote lanes TUI transport
+		// (internal/tui/lanes remoteTransport) issues these over the
+		// same WS; delegate to the MCP lane tool semantics.
+		c.handleLaneTool(ctx, req.ID, req.Method, req.Params)
+	case "r1.lanes.killAll":
+		// No MCP-side killAll exists (LaneToolNames lists only
+		// list/subscribe/get/kill/pin); implement it server-side as
+		// iterated kill over the session's non-terminal lanes.
+		c.handleLaneKillAll(ctx, req.ID, req.Params)
 	default:
 		c.writeRPCError(req.ID, -32601, "method not found", nil)
 	}
+}
+
+// laneToolEnvelope mirrors the spec §7 result envelope emitted by
+// internal/mcp/lanes_server.go handlers.
+type laneToolEnvelope struct {
+	OK           bool            `json:"ok"`
+	Data         json.RawMessage `json:"data,omitempty"`
+	ErrorCode    string          `json:"error_code,omitempty"`
+	ErrorMessage string          `json:"error_message,omitempty"`
+}
+
+// boundSessionID returns the session id of an active subscription on
+// this connection, or "". The remote TUI transport subscribes before
+// issuing lane control calls and omits session_id from the params, so
+// the connection's subscription is the canonical binding.
+func (c *laneWSConn) boundSessionID() string {
+	for _, sub := range c.subscriptions {
+		if sub != nil && sub.sessionID != "" {
+			return sub.sessionID
+		}
+	}
+	return ""
+}
+
+// resolveLaneArgs decodes paramsRaw into a tool-args map and fills in
+// session_id from the connection's subscription when the caller
+// omitted it. Returns (nil, false) after writing the error reply.
+func (c *laneWSConn) resolveLaneArgs(id, paramsRaw json.RawMessage) (map[string]interface{}, bool) {
+	args := map[string]interface{}{}
+	if len(paramsRaw) > 0 {
+		if err := json.Unmarshal(paramsRaw, &args); err != nil {
+			c.writeRPCError(id, -32602, "invalid params", nil)
+			return nil, false
+		}
+	}
+	if sid, _ := args["session_id"].(string); sid == "" {
+		bound := c.boundSessionID()
+		if bound == "" {
+			c.writeRPCError(id, -32602, "missing session_id (subscribe first or pass session_id)", nil)
+			return nil, false
+		}
+		args["session_id"] = bound
+	}
+	return args, true
+}
+
+// invokeLaneTool runs one lane tool and unwraps the §7 envelope.
+// Returns (data, true) on ok; writes the JSON-RPC error and returns
+// (nil, false) otherwise.
+func (c *laneWSConn) invokeLaneTool(ctx context.Context, id json.RawMessage, tool string, args map[string]interface{}) (json.RawMessage, bool) {
+	out, err := c.srv.Lanes.Tools.HandleToolCall(ctx, tool, args)
+	if err != nil {
+		c.writeRPCError(id, -32603, tool+": "+err.Error(), nil)
+		return nil, false
+	}
+	var env laneToolEnvelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		c.writeRPCError(id, -32603, tool+": malformed tool envelope", nil)
+		return nil, false
+	}
+	if !env.OK {
+		c.writeRPCError(id, -32000, env.ErrorMessage, map[string]any{"code": env.ErrorCode})
+		return nil, false
+	}
+	if len(env.Data) == 0 {
+		return json.RawMessage(`{}`), true
+	}
+	return env.Data, true
+}
+
+// handleLaneTool routes r1.lanes.list / kill / pin to the LanesWiring
+// tool invoker and replies with the unwrapped data object (so e.g.
+// r1.lanes.list yields result={"lanes":[...]} exactly as the remote
+// TUI transport decodes it).
+func (c *laneWSConn) handleLaneTool(ctx context.Context, id json.RawMessage, method string, paramsRaw json.RawMessage) {
+	if c.srv.Lanes == nil || c.srv.Lanes.Tools == nil {
+		c.writeRPCError(id, -32601, "lanes tools not configured", nil)
+		return
+	}
+	args, ok := c.resolveLaneArgs(id, paramsRaw)
+	if !ok {
+		return
+	}
+	data, ok := c.invokeLaneTool(ctx, id, method, args)
+	if !ok {
+		return
+	}
+	_ = c.writeJSON(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"result":  data,
+	})
+}
+
+// handleLaneKillAll implements r1.lanes.killAll as iterated
+// r1.lanes.kill over every non-terminal lane in the bound session
+// (cascade=false per lane — the outer iteration already covers every
+// descendant, and kill is idempotent on already-terminal lanes).
+func (c *laneWSConn) handleLaneKillAll(ctx context.Context, id, paramsRaw json.RawMessage) {
+	if c.srv.Lanes == nil || c.srv.Lanes.Tools == nil {
+		c.writeRPCError(id, -32601, "lanes tools not configured", nil)
+		return
+	}
+	args, ok := c.resolveLaneArgs(id, paramsRaw)
+	if !ok {
+		return
+	}
+	reason, _ := args["reason"].(string)
+	sid := args["session_id"]
+
+	listData, ok := c.invokeLaneTool(ctx, id, "r1.lanes.list", map[string]interface{}{
+		"session_id":       sid,
+		"include_terminal": false,
+		"limit":            float64(500),
+	})
+	if !ok {
+		return
+	}
+	var listOut struct {
+		Lanes []struct {
+			LaneID string `json:"lane_id"`
+		} `json:"lanes"`
+	}
+	if err := json.Unmarshal(listData, &listOut); err != nil {
+		c.writeRPCError(id, -32603, "killAll: malformed list data", nil)
+		return
+	}
+	killed := make([]string, 0, len(listOut.Lanes))
+	for _, l := range listOut.Lanes {
+		if l.LaneID == "" {
+			continue
+		}
+		killData, ok := c.invokeLaneTool(ctx, id, "r1.lanes.kill", map[string]interface{}{
+			"session_id": sid,
+			"lane_id":    l.LaneID,
+			"reason":     reason,
+			"cascade":    false,
+		})
+		if !ok {
+			return
+		}
+		var killOut struct {
+			KilledLaneIDs []string `json:"killed_lane_ids"`
+		}
+		if err := json.Unmarshal(killData, &killOut); err == nil {
+			killed = append(killed, killOut.KilledLaneIDs...)
+		}
+	}
+	_ = c.writeJSON(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"result":  map[string]any{"killed_lane_ids": killed},
+	})
 }
 
 // handleSessionSubscribe implements TASK-15 / TASK-16 / TASK-17:

@@ -29,9 +29,9 @@ type StanceSession struct {
 	pauseMu    sync.Mutex   // serializes channel lifecycle operations
 }
 
-// CheckpointCheck should be called by the stance runner at safe points.
-// If a pause has been requested, it acknowledges the pause and blocks until
-// resume or context cancellation.
+// CheckpointCheck is called by StanceRunner.Run (runner.go) between model
+// turns — the stance's safe points. If a pause has been requested, it
+// acknowledges the pause and blocks until resume or context cancellation.
 func (s *StanceSession) CheckpointCheck(ctx context.Context) error {
 	// Fast path: bail out if context is already done.
 	if err := ctx.Err(); err != nil {

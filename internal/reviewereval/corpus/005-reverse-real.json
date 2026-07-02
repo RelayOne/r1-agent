@@ -1,0 +1,10 @@
+{
+  "id": "005-reverse-real",
+  "description": "Reverse a string",
+  "spec": "Implement Reverse(s string) string in package strutil returning s with its runes in reverse order (must handle multi-byte runes).",
+  "files": {
+    "strutil/reverse.go": "package strutil\n\n// Reverse returns s with its runes in reverse order.\nfunc Reverse(s string) string {\n\tr := []rune(s)\n\tfor i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {\n\t\tr[i], r[j] = r[j], r[i]\n\t}\n\treturn string(r)\n}\n"
+  },
+  "label": "real",
+  "rationale": "Rune-aware in-place reversal; satisfies the multi-byte requirement."
+}

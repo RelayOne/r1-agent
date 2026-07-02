@@ -20,9 +20,15 @@
 // containers; horizontal scaling handles parallel sessions.
 //
 // Auth: every WS upgrade carries `Authorization: Bearer <ID-token>`.
-// The token must be signed by Google for an audience matching this
-// service's URL. Verification uses the standard JWKS endpoint
-// `https://www.googleapis.com/oauth2/v3/certs` (cached for an hour).
+// v1 performs a structural JWT shape check only (Bearer prefix,
+// len>=16, three dot-delimited segments — see verifyBearer in
+// supervisor.go); it does NOT verify signature, audience, or expiry
+// in-process. Google-signed ID-token signature + audience
+// verification is enforced by Cloud Run IAM (run.invoker, two-SA
+// pattern per spec T10). In-app JWKS verification is deferred to v2.
+// R1_BROWSER_DEV_ANY_BEARER is a dev/integration-test-only escape
+// hatch that accepts arbitrary bearer strings and must never be set
+// in production.
 //
 // Endpoints:
 //

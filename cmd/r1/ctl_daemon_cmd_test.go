@@ -265,13 +265,68 @@ func TestCtl_PauseResume(t *testing.T) {
 }
 
 func TestCtl_Shutdown(t *testing.T) {
-	env := newCtlTestEnv(t, "tk-shut", map[string]any{"ok": true})
-	_, _, code := runCtl("shutdown")
+	// O1: shutdown POSTs the real /v1/daemon/shutdown route (mounted on
+	// the default serve mux), no longer the best-effort queue pause.
+	env := newCtlTestEnv(t, "tk-shut", map[string]any{"accepted_at": "2026-07-02T00:00:00Z"})
+	_, stderr, code := runCtl("shutdown")
 	if code != 0 {
-		t.Fatalf("shutdown: exit %d", code)
+		t.Fatalf("shutdown: exit %d (stderr=%q)", code, stderr)
 	}
-	if env.requests[0].Path != "/v1/queue/pause" {
-		t.Errorf("shutdown maps to pause; got %q", env.requests[0].Path)
+	if len(env.requests) != 1 {
+		t.Fatalf("shutdown: want 1 request, got %d", len(env.requests))
+	}
+	r := env.requests[0]
+	if r.Method != "POST" || r.Path != "/v1/daemon/shutdown" {
+		t.Errorf("shutdown wire: got %s %s, want POST /v1/daemon/shutdown", r.Method, r.Path)
+	}
+	if r.Auth != "Bearer tk-shut" {
+		t.Errorf("shutdown auth: got %q, want Bearer tk-shut", r.Auth)
+	}
+}
+
+// TestCtl_ShutdownFallbackTo404 proves the O1 back-compat path: a daemon
+// that predates /v1/daemon/shutdown answers 404, and the verb degrades
+// to the best-effort /v1/queue/pause rather than failing.
+func TestCtl_ShutdownFallbackTo404(t *testing.T) {
+	var reqs []recordedReq
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		reqs = append(reqs, recordedReq{Method: r.Method, Path: r.URL.RequestURI(), Auth: r.Header.Get("Authorization"), Body: body})
+		if r.URL.Path == "/v1/daemon/shutdown" {
+			http.Error(w, "unknown route", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	t.Cleanup(srv.Close)
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse URL: %v", err)
+	}
+	port, _ := strconv.Atoi(u.Port())
+	dir := t.TempDir()
+	if _, err := daemondisco.WriteDiscoveryTo(dir, 4242, "/tmp/r1-old.sock", port, "tk-old", "r1-old"); err != nil {
+		t.Fatalf("write discovery: %v", err)
+	}
+	t.Setenv("R1_HOME", dir)
+
+	_, stderr, code := runCtl("shutdown")
+	if code != 0 {
+		t.Fatalf("shutdown fallback: exit %d (stderr=%q)", code, stderr)
+	}
+	if len(reqs) != 2 {
+		t.Fatalf("want 2 requests (shutdown 404 + pause), got %d: %+v", len(reqs), reqs)
+	}
+	if reqs[0].Path != "/v1/daemon/shutdown" {
+		t.Errorf("first request path: got %q, want /v1/daemon/shutdown", reqs[0].Path)
+	}
+	if reqs[1].Path != "/v1/queue/pause" {
+		t.Errorf("fallback path: got %q, want /v1/queue/pause", reqs[1].Path)
+	}
+	if !strings.Contains(stderr, "falling back") {
+		t.Errorf("fallback should warn on stderr; got %q", stderr)
 	}
 }
 

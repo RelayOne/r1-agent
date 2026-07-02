@@ -1,15 +1,12 @@
-//go:build integration_session_migrate
-
 // integration_roundtrip_test.go — spec C1 §T22.
 //
 // 1000-turn round-trip integration test across two in-process
-// daemons. Build with `-tags integration_session_migrate` to opt in:
-//
-//   go test -count=1 -tags integration_session_migrate ./internal/migration/...
-//
-// The test is heavy (allocates a full ledger.Store, a full bus.WAL,
-// 1000 events, signs + verifies, replays) and is not part of the
-// default unit-test gate; CI runs it separately.
+// daemons. It runs in the default unit-test gate (`go test ./...`):
+// despite allocating a full ledger.Store, a full bus.WAL, 1000
+// events, and signing + verifying + replaying, it completes in well
+// under a second, so no opt-in build tag is needed. (It previously
+// hid behind `-tags integration_session_migrate`, which nothing in
+// CI ever invoked.)
 
 package migration
 
@@ -42,11 +39,6 @@ import (
 // daemon HTTP round-trip is exercised by separate cmd/r1-server
 // integration tests (out of scope here).
 func TestIntegration_RoundTrip1000Turns(t *testing.T) {
-	// The -tags integration_session_migrate build tag is the gate;
-	// no need to additionally gate on -short. The test runs only when
-	// the operator opts in via the tag (matches the spec's "author
-	// it but don't run live" instruction — it's wired into CI but
-	// out of the default unit-test gate).
 	start := time.Now()
 	const numTurns = 1000
 	sessionID := "integration-source-sess"

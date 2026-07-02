@@ -297,6 +297,94 @@ func TestEnforceSweepRetainForeverSkipsFileSweeps(t *testing.T) {
 	}
 }
 
+// TestEnforceSweepReplayFiles proves the O4 fix: replay recordings under
+// .stoke/replays / .r1/replays now age out on the stream_files TTL instead of
+// accumulating one JSON per task attempt forever. An old (>90d) recording is
+// swept; a fresh one is kept; the ReplayFilesRemoved counter reflects it.
+func TestEnforceSweepReplayFiles(t *testing.T) {
+	ctx := context.Background()
+	b := newBusForTest(t)
+
+	tmp := t.TempDir()
+	rDir := filepath.Join(tmp, "replays")
+	if err := os.MkdirAll(rDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Redirect the replay dir targets and neutralise the stream/checkpoint
+	// dirs so this test only exercises the replay surface.
+	prevR, prevCR := replaysDir, canonicalReplaysDir
+	prevS, prevC := streamsDir, checkpointsDir
+	replaysDir, canonicalReplaysDir = rDir, rDir
+	streamsDir = filepath.Join(tmp, "streams-missing")
+	checkpointsDir = filepath.Join(tmp, "ckpt-missing")
+	t.Cleanup(func() {
+		replaysDir, canonicalReplaysDir = prevR, prevCR
+		streamsDir, checkpointsDir = prevS, prevC
+	})
+
+	oldMtime := time.Now().Add(-100 * 24 * time.Hour) // >90d (stream_files TTL)
+	newMtime := time.Now().Add(-1 * time.Hour)
+	oldReplay := filepath.Join(rDir, "task-1-1700000000000.json")
+	freshReplay := filepath.Join(rDir, "task-2-1800000000000.json")
+	writeFile(t, oldReplay, `{"id":"task-1"}`, oldMtime)
+	writeFile(t, freshReplay, `{"id":"task-2"}`, newMtime)
+
+	res, err := EnforceSweep(ctx, Defaults(), b)
+	if err != nil {
+		t.Fatalf("EnforceSweep: %v", err)
+	}
+	if res.ReplayFilesRemoved != 1 {
+		t.Errorf("ReplayFilesRemoved = %d, want 1", res.ReplayFilesRemoved)
+	}
+	if _, err := os.Stat(oldReplay); !os.IsNotExist(err) {
+		t.Errorf("old replay still present: err=%v", err)
+	}
+	if _, err := os.Stat(freshReplay); err != nil {
+		t.Errorf("fresh replay gone: %v", err)
+	}
+}
+
+// TestEnforceSweepReplayFilesRetainForever proves that opting stream_files out
+// of the sweep (RetainForever) also opts replays out, since replays share that
+// TTL until a dedicated replay_files policy key lands.
+func TestEnforceSweepReplayFilesRetainForever(t *testing.T) {
+	ctx := context.Background()
+	b := newBusForTest(t)
+
+	tmp := t.TempDir()
+	rDir := filepath.Join(tmp, "replays")
+	if err := os.MkdirAll(rDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prevR, prevCR := replaysDir, canonicalReplaysDir
+	prevS, prevC := streamsDir, checkpointsDir
+	replaysDir, canonicalReplaysDir = rDir, rDir
+	streamsDir = filepath.Join(tmp, "streams-missing")
+	checkpointsDir = filepath.Join(tmp, "ckpt-missing")
+	t.Cleanup(func() {
+		replaysDir, canonicalReplaysDir = prevR, prevCR
+		streamsDir, checkpointsDir = prevS, prevC
+	})
+
+	ancient := time.Now().Add(-365 * 24 * time.Hour)
+	writeFile(t, filepath.Join(rDir, "ancient.json"), `{"id":"x"}`, ancient)
+
+	p := Defaults()
+	p.StreamFiles = RetainForever
+
+	res, err := EnforceSweep(ctx, p, b)
+	if err != nil {
+		t.Fatalf("EnforceSweep: %v", err)
+	}
+	if res.ReplayFilesRemoved != 0 {
+		t.Errorf("ReplayFilesRemoved = %d, want 0 under RetainForever", res.ReplayFilesRemoved)
+	}
+	if _, err := os.Stat(filepath.Join(rDir, "ancient.json")); err != nil {
+		t.Errorf("ancient replay wrongly deleted: %v", err)
+	}
+}
+
 // --- helpers ---------------------------------------------------------------
 
 func writeFile(t *testing.T, path, content string, mtime time.Time) {

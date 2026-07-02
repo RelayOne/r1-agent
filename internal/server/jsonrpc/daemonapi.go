@@ -11,6 +11,7 @@
 //	session.resume
 //	session.cancel         (sigterm + grace + kill)
 //	session.send           (write a turn)
+//	session.interrupt      (drop-partial cancel of the in-flight turn)
 //	session.subscribe      (TASK-32 — declared here, body in subscribe.go)
 //	session.unsubscribe    (TASK-32)
 //	lanes.list
@@ -19,6 +20,14 @@
 //	daemon.info
 //	daemon.shutdown
 //	daemon.reload_config
+//
+// RegisterDaemonAPI additionally registers the IPC-CONTRACT §2.7/§2.8
+// canonical names as aliases (audit A029): session.lanes.list,
+// session.lanes.kill and daemon.status map onto the same
+// DaemonLanesList / DaemonLanesKill / DaemonInfo methods, while
+// session.lanes.subscribe, session.lanes.unsubscribe and
+// session.set_workdir return the not_implemented sentinel (-32010)
+// until a daemon-side backing exists.
 //
 // The DaemonAPI interface below is the dependency injection surface for
 // the daemon binary: a daemon embeds an implementation, the dispatcher
@@ -36,6 +45,8 @@ package jsonrpc
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/RelayOne/r1/internal/desktopapi"
 )
 
 // ----------------------------------------------------------------------
@@ -103,6 +114,25 @@ type SessionSendResponse struct {
 	// the inbound turn (so the caller can correlate with subscriber
 	// events that fire as a consequence).
 	Seq uint64 `json:"seq,omitempty"`
+}
+
+// SessionInterruptRequest is the params for session.interrupt.
+// DropPartial is accepted for wire compatibility with the web client
+// contract (r1d.session.interrupt(sessionId, {drop_partial: true}));
+// the daemon's interrupt is ALWAYS drop-partial (the in-flight turn's
+// context is cancelled and the partial assistant message is never
+// persisted), so the flag is informational.
+type SessionInterruptRequest struct {
+	SessionID   string `json:"session_id"`
+	DropPartial bool   `json:"drop_partial,omitempty"`
+}
+
+// SessionInterruptResponse acknowledges the interrupt. WasRunning
+// reports whether an in-flight Run was actually cancelled (false =
+// the session was idle; the call is an idempotent no-op).
+type SessionInterruptResponse struct {
+	InterruptedAt string `json:"interrupted_at"`
+	WasRunning    bool   `json:"was_running"`
 }
 
 // SessionSubscribeRequest is the params for session.subscribe.
@@ -256,6 +286,7 @@ type DaemonAPI interface {
 	DaemonSessionResume(ctx context.Context, req SessionIDRequest) (SessionResumeResponse, error)
 	DaemonSessionCancel(ctx context.Context, req SessionIDRequest) (SessionCancelResponse, error)
 	DaemonSessionSend(ctx context.Context, req SessionSendRequest) (SessionSendResponse, error)
+	DaemonSessionInterrupt(ctx context.Context, req SessionInterruptRequest) (SessionInterruptResponse, error)
 	DaemonSessionSubscribe(ctx context.Context, req SessionSubscribeRequest) (SessionSubscribeResponse, error)
 	DaemonSessionUnsubscribe(ctx context.Context, req SessionUnsubscribeRequest) (SessionUnsubscribeResponse, error)
 
@@ -325,6 +356,13 @@ func RegisterDaemonAPI(d *Dispatcher, h DaemonAPI) {
 		}
 		return h.DaemonSessionSend(ctx, req)
 	})
+	d.Register("session.interrupt", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var req SessionInterruptRequest
+		if err := decodeParams(params, &req); err != nil {
+			return nil, err
+		}
+		return h.DaemonSessionInterrupt(ctx, req)
+	})
 	d.Register("session.subscribe", func(ctx context.Context, params json.RawMessage) (any, error) {
 		var req SessionSubscribeRequest
 		if err := decodeParams(params, &req); err != nil {
@@ -379,5 +417,48 @@ func RegisterDaemonAPI(d *Dispatcher, h DaemonAPI) {
 			return nil, err
 		}
 		return h.DaemonReloadConfig(ctx, req)
+	})
+
+	// ------------------------------------------------------------------
+	// IPC-CONTRACT.md §2.7/§2.8 canonical names (audit A029).
+	//
+	// The Tauri host sends the desktop-contract verb names
+	// (`session.lanes.*`, `session.set_workdir`, `daemon.status`) while
+	// this surface historically registered only its internal names
+	// (`lanes.*`, `daemon.info`). Register the canonical names as
+	// aliases onto the same DaemonAPI methods so the host's verbs
+	// resolve on the daemon transport too (response shapes are the
+	// daemon shapes above until the WS transport switch). Verbs with no
+	// daemon backing yet — lane channel subscription is host-owned
+	// (audit A052) and per-session workdir rebinding is unimplemented —
+	// return the scaffold's not_implemented sentinel (-32010,
+	// stoke_code "not_implemented") instead of -32601 method_not_found
+	// so clients get the documented "coming soon" degradation.
+	// ------------------------------------------------------------------
+	d.Register("session.lanes.list", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var req LanesListRequest
+		if err := decodeParams(params, &req); err != nil {
+			return nil, err
+		}
+		return h.DaemonLanesList(ctx, req)
+	})
+	d.Register("session.lanes.kill", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var req LanesKillRequest
+		if err := decodeParams(params, &req); err != nil {
+			return nil, err
+		}
+		return h.DaemonLanesKill(ctx, req)
+	})
+	d.Register("daemon.status", func(ctx context.Context, params json.RawMessage) (any, error) {
+		return h.DaemonInfo(ctx)
+	})
+	d.Register("session.lanes.subscribe", func(ctx context.Context, params json.RawMessage) (any, error) {
+		return nil, desktopapi.ErrNotImplemented
+	})
+	d.Register("session.lanes.unsubscribe", func(ctx context.Context, params json.RawMessage) (any, error) {
+		return nil, desktopapi.ErrNotImplemented
+	})
+	d.Register("session.set_workdir", func(ctx context.Context, params json.RawMessage) (any, error) {
+		return nil, desktopapi.ErrNotImplemented
 	})
 }

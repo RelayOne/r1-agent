@@ -5,12 +5,6 @@ package wizard
 // them gives callers a single source of truth without changing any
 // wire formats or YAML keys.
 const (
-	// Preset names persisted to .stoke/config.yaml and referenced by
-	// init / run to select supervisor / bus / quality bundles.
-	presetMinimal  = "minimal"
-	presetBalanced = "balanced"
-	presetStrict   = "strict"
-
 	// Team-size buckets emitted by InferTeamSize and consumed by the
 	// wizard UI. These round-trip to YAML so they must stay as strings.
 	teamSizeSolo   = "solo"

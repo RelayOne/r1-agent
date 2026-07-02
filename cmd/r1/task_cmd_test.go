@@ -9,15 +9,56 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/RelayOne/r1/internal/deploy"
 	"github.com/RelayOne/r1/internal/executor"
+	"github.com/RelayOne/r1/internal/plan"
 	"github.com/RelayOne/r1/internal/router"
 )
 
-// newTestRouter builds a router with every scaffolding executor
-// registered plus a CodeExecutor rooted at /tmp with a fake
+// fakeDeliverable is a minimal executor.Deliverable for the fake
+// executors registered by the test router.
+type fakeDeliverable struct{ summary string }
+
+func (d fakeDeliverable) Summary() string { return d.summary }
+func (d fakeDeliverable) Size() int       { return len(d.summary) }
+
+// fakeTaskExecutor is a deterministic Executor double for non-code
+// task types: Execute returns the configured deliverable/error and
+// records the Plan it saw. Tests use it so the generalized dispatch
+// path (audit A051) is exercised without real HTTP/flyctl/rod
+// backends.
+type fakeTaskExecutor struct {
+	taskType    executor.TaskType
+	deliverable executor.Deliverable
+	err         error
+	gotPlan     *executor.Plan
+}
+
+func (f *fakeTaskExecutor) TaskType() executor.TaskType { return f.taskType }
+
+func (f *fakeTaskExecutor) Execute(_ context.Context, p executor.Plan, _ executor.EffortLevel) (executor.Deliverable, error) {
+	f.gotPlan = &p
+	return f.deliverable, f.err
+}
+
+func (f *fakeTaskExecutor) BuildCriteria(_ executor.Task, _ executor.Deliverable) []plan.AcceptanceCriterion {
+	return nil
+}
+
+func (f *fakeTaskExecutor) BuildRepairFunc(_ executor.Plan) func(ctx context.Context, directive string) error {
+	return nil
+}
+
+func (f *fakeTaskExecutor) BuildEnvFixFunc() func(ctx context.Context, rootCause, stderr string) bool {
+	return nil
+}
+
+// newTestRouter builds a router with fake executors for every
+// non-code task type plus a CodeExecutor rooted at /tmp with a fake
 // ExecuteHook that returns a synthetic deliverable. Mirrors the
-// production buildDefaultTaskRouter shape (CodeExecutor wired via
-// ExecuteHook) but never touches os.Getwd or invokes shipCmd.
+// production buildDefaultTaskRouter shape (every type registered,
+// every Execute dispatchable) but never touches os.Getwd, the
+// network, or shipCmd.
 func newTestRouter() *router.Router {
 	return newTestRouterWithCodeHook(func(ctx context.Context, p executor.Plan, _ executor.EffortLevel) (executor.Deliverable, error) {
 		return executor.CodeDeliverable{
@@ -29,16 +70,16 @@ func newTestRouter() *router.Router {
 
 // newTestRouterWithCodeHook lets a single test inject a custom
 // ExecuteHook for the CodeExecutor without re-wiring every other
-// scaffolding executor.
+// fake executor.
 func newTestRouterWithCodeHook(hook func(ctx context.Context, p executor.Plan, effort executor.EffortLevel) (executor.Deliverable, error)) *router.Router {
 	r := router.New()
 	codeExec := executor.NewCodeExecutor("/tmp")
 	codeExec.ExecuteHook = hook
 	r.Register(executor.TaskCode, codeExec)
-	r.Register(executor.TaskResearch, &executor.ResearchExecutor{})
-	r.Register(executor.TaskBrowser, &executor.BrowserExecutor{})
-	r.Register(executor.TaskDeploy, &executor.DeployExecutor{})
-	r.Register(executor.TaskDelegate, &executor.DelegateExecutor{})
+	r.Register(executor.TaskResearch, &fakeTaskExecutor{taskType: executor.TaskResearch, deliverable: fakeDeliverable{summary: "research-stub"}})
+	r.Register(executor.TaskBrowser, &fakeTaskExecutor{taskType: executor.TaskBrowser, deliverable: fakeDeliverable{summary: "browser-stub"}})
+	r.Register(executor.TaskDeploy, &fakeTaskExecutor{taskType: executor.TaskDeploy, deliverable: fakeDeliverable{summary: "deploy-stub"}})
+	r.Register(executor.TaskDelegate, &fakeTaskExecutor{taskType: executor.TaskDelegate, deliverable: fakeDeliverable{summary: "delegate-stub"}})
 	return r
 }
 
@@ -53,18 +94,103 @@ func TestRunTaskCmdClassifyOnly(t *testing.T) {
 	}
 }
 
-func TestRunTaskCmdDispatchNotWired(t *testing.T) {
+// TestRunTaskCmdNonCodeDispatchExecutes is the A051 regression test:
+// non-code task types must route through Executor.Execute and print
+// the deliverable summary, exactly like TaskCode, instead of exiting
+// 2 with a scaffolding banner.
+func TestRunTaskCmdNonCodeDispatchExecutes(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	code := runTaskCmd([]string{"deploy", "to", "fly.io"}, &out, &errBuf, newTestRouter())
-	if code != 2 {
-		t.Fatalf("exit code = %d, want 2 (stderr=%q)", code, errBuf.String())
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, errBuf.String())
 	}
 	got := out.String()
 	if !strings.Contains(got, "classified as deploy") {
 		t.Errorf("stdout = %q, want to mention 'classified as deploy'", got)
 	}
-	if !strings.Contains(got, "not yet wired") {
-		t.Errorf("stdout = %q, want 'not yet wired' hint", got)
+	if !strings.Contains(got, "deliverable: deploy-stub") {
+		t.Errorf("stdout = %q, want the fake deploy deliverable summary", got)
+	}
+}
+
+// TestRunTaskCmdNotWiredSentinelExitsTwo asserts the reserved exit-2
+// contract: an executor reporting ExecutorNotWiredError (a genuinely
+// unwired sub-path) maps to exit 2 with the sentinel's hint.
+func TestRunTaskCmdNotWiredSentinelExitsTwo(t *testing.T) {
+	r := newTestRouter()
+	r.Register(executor.TaskBrowser, &fakeTaskExecutor{
+		taskType: executor.TaskBrowser,
+		err:      &executor.ExecutorNotWiredError{Type: executor.TaskBrowser, FollowUp: "browser.NewRodClient(cfg) (build with -tags stoke_rod)"},
+	})
+	var out, errBuf bytes.Buffer
+	code := runTaskCmd([]string{"--type=browser", "click", "the", "button"}, &out, &errBuf, r)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2 (stderr=%q)", code, errBuf.String())
+	}
+	if got := out.String(); !strings.Contains(got, "not wired yet") {
+		t.Errorf("stdout = %q, want the ExecutorNotWiredError hint", got)
+	}
+}
+
+// TestRunTaskCmdExecutorErrorExitsOne asserts a plain executor error
+// (e.g. unconfigured delegate backend) surfaces on stderr with exit 1.
+func TestRunTaskCmdExecutorErrorExitsOne(t *testing.T) {
+	r := newTestRouter()
+	r.Register(executor.TaskDelegate, &fakeTaskExecutor{
+		taskType: executor.TaskDelegate,
+		err:      newTestErr("delegate: Hirer is nil"),
+	})
+	var out, errBuf bytes.Buffer
+	code := runTaskCmd([]string{"--type=delegate", "hire", "an", "agent"}, &out, &errBuf, r)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 (stdout=%q)", code, out.String())
+	}
+	if !strings.Contains(errBuf.String(), "Hirer is nil") {
+		t.Errorf("stderr = %q, want the executor error text", errBuf.String())
+	}
+}
+
+// TestBuildDefaultTaskRouterRegistersRealExecutors pins the
+// production wiring (audit A051): the default router must register
+// constructor-built executors, not zero values — a research executor
+// with a non-nil Fetcher and a deploy executor bound to the fly
+// provider.
+func TestBuildDefaultTaskRouterRegistersRealExecutors(t *testing.T) {
+	r := buildDefaultTaskRouter()
+
+	force := func(tt executor.TaskType) executor.Executor {
+		t.Helper()
+		r.SetClassifier(func(string) executor.TaskType { return tt })
+		defer r.SetClassifier(nil)
+		e, _, err := r.Dispatch("probe")
+		if err != nil {
+			t.Fatalf("Dispatch(%s): %v", tt.String(), err)
+		}
+		return e
+	}
+
+	re, ok := force(executor.TaskResearch).(*executor.ResearchExecutor)
+	if !ok {
+		t.Fatalf("research executor has unexpected type %T", force(executor.TaskResearch))
+	}
+	if re.Fetcher == nil {
+		t.Error("production research executor has nil Fetcher (would fail every Execute)")
+	}
+
+	de, ok := force(executor.TaskDeploy).(*executor.DeployExecutor)
+	if !ok {
+		t.Fatalf("deploy executor has unexpected type %T", force(executor.TaskDeploy))
+	}
+	if de.Config.Provider != deploy.ProviderFly {
+		t.Errorf("deploy executor provider = %v, want ProviderFly", de.Config.Provider)
+	}
+
+	be, ok := force(executor.TaskBrowser).(*executor.BrowserExecutor)
+	if !ok {
+		t.Fatalf("browser executor has unexpected type %T", force(executor.TaskBrowser))
+	}
+	if be.Client == nil {
+		t.Error("production browser executor has nil Client")
 	}
 }
 
@@ -157,13 +283,17 @@ func TestRunTaskCmdWhitespaceInput(t *testing.T) {
 
 func TestRunTaskCmdForceType(t *testing.T) {
 	var out, errBuf bytes.Buffer
-	// Plain code-shaped input but --type=research forces the route.
+	// Plain code-shaped input but --type=research forces the route;
+	// the research executor dispatches for real (exit 0, A051).
 	code := runTaskCmd([]string{"--type=research", "refactor", "sessions.go"}, &out, &errBuf, newTestRouter())
-	if code != 2 {
-		t.Fatalf("exit code = %d, want 2 (stderr=%q)", code, errBuf.String())
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, errBuf.String())
 	}
 	if !strings.Contains(out.String(), "classified as research") {
 		t.Errorf("--type override failed: stdout = %q", out.String())
+	}
+	if !strings.Contains(out.String(), "deliverable: research-stub") {
+		t.Errorf("stdout = %q, want the research deliverable summary", out.String())
 	}
 }
 

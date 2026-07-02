@@ -249,6 +249,13 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 	m.mergeMu.Lock()
 	defer m.mergeMu.Unlock()
 
+	// Preflight self-heal: a crashed or SIGKILLed prior run can leave a
+	// half-finished merge (MERGE_HEAD + conflicted index) in RepoRoot. Because
+	// mergeMu serializes all merges, one such wedge makes every subsequent
+	// merge fail with "MERGE_HEAD exists" -- a repo-wide stall. Clear it before
+	// we start.
+	m.abortInProgressMerge()
+
 	mergeCtx, cancel := context.WithTimeout(ctx, mergeTimeout)
 	defer cancel()
 
@@ -258,6 +265,9 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 	validateCmd.Dir = m.RepoRoot
 	if out, err := validateCmd.CombinedOutput(); err != nil {
 		if mergeCtx.Err() != nil {
+			// merge-tree is a dry run so it shouldn't wedge, but a SIGKILL
+			// mid-write is undefined; abort defensively (no-op if clean).
+			m.abortInProgressMerge()
 			return fmt.Errorf("merge-tree timed out after %v", mergeTimeout)
 		}
 		// Attempt semantic conflict resolution before failing.
@@ -292,6 +302,10 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 	}
 	if out, err := mergeCmd.CombinedOutput(); err != nil {
 		if mergeCtx.Err() != nil {
+			// CommandContext SIGKILLs git mid-merge at the 2min deadline,
+			// leaving MERGE_HEAD + a conflicted index/working tree. mergeCtx is
+			// already dead, so abortInProgressMerge uses a fresh context.
+			m.abortInProgressMerge()
 			return fmt.Errorf("git merge timed out after %v", mergeTimeout)
 		}
 		// If we previously auto-resolved all conflicts via merge-tree,
@@ -305,6 +319,10 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 				return fmt.Errorf("git merge conflict auto-resolution failed: %w (original: %s)", applyErr, string(out))
 			}
 		} else {
+			// Generic merge failure: a real 'git merge' that started but did not
+			// complete can leave MERGE_HEAD + a conflicted index behind. Clear it
+			// so the next (mutex-serialized) merge isn't blocked by our residue.
+			m.abortInProgressMerge()
 			return fmt.Errorf("git merge: %w: %s", err, string(out))
 		}
 	}
@@ -312,6 +330,72 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 	// Clean up worktree and branch after successful merge
 	m.Cleanup(ctx, handle)
 	return nil
+}
+
+// abortInProgressMerge clears a half-finished merge from RepoRoot so a failed or
+// timed-out merge can't wedge every subsequent (mergeMu-serialized) merge with
+// a stale "MERGE_HEAD exists". It no-ops unless a merge is actually in progress,
+// tries `git merge --abort` first, and falls back to `git reset --merge` for
+// states where --abort is refused. It always derives a fresh, bounded context
+// (never the caller's mergeCtx, which is already dead on the timeout paths) so
+// the cleanup runs even when the enclosing operation was cancelled.
+func (m *Manager) abortInProgressMerge() {
+	if !m.mergeInProgress() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	abortCmd := exec.CommandContext(ctx, m.GitBinary, "merge", "--abort") // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
+	abortCmd.Dir = m.RepoRoot
+	if err := abortCmd.Run(); err == nil {
+		return
+	}
+	// Fallback: `git reset --merge` handles states where --abort is refused
+	// (e.g. an index left dirty by a partial conflict-resolution apply).
+	resetCmd := exec.CommandContext(ctx, m.GitBinary, "reset", "--merge") // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
+	resetCmd.Dir = m.RepoRoot
+	_ = resetCmd.Run()
+}
+
+// mergeInProgress reports whether RepoRoot has a MERGE_HEAD (i.e. a merge is
+// mid-flight). It resolves the git dir so a linked-worktree ".git" file pointer
+// is handled as well as a normal ".git" directory.
+func (m *Manager) mergeInProgress() bool {
+	gitDir := m.resolveGitDir()
+	if gitDir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(gitDir, "MERGE_HEAD"))
+	return err == nil
+}
+
+// resolveGitDir returns RepoRoot's git directory, dereferencing a ".git" file
+// pointer ("gitdir: <path>") when RepoRoot is a linked worktree. Returns "" if
+// it cannot be determined.
+func (m *Manager) resolveGitDir() string {
+	p := filepath.Join(m.RepoRoot, ".git")
+	info, err := os.Stat(p)
+	if err != nil {
+		return ""
+	}
+	if info.IsDir() {
+		return p
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	const prefix = "gitdir:"
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, prefix) {
+		return ""
+	}
+	gd := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	if !filepath.IsAbs(gd) {
+		gd = filepath.Join(m.RepoRoot, gd)
+	}
+	return gd
 }
 
 // allAutoResolved returns true if every conflict in the slice was auto-resolved.

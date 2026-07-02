@@ -25,8 +25,8 @@ func TestGenerateBitbucket_Review(t *testing.T) {
 		"oidc: true",
 		"caches:",
 		"script:",
-		"r1 review",
-		"bitbucket-comment",
+		"r1 audit",
+		"r1-review.json",
 		"ANTHROPIC_API_KEY",
 	} {
 		if !strings.Contains(yaml, want) {

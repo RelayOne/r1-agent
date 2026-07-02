@@ -74,14 +74,29 @@ func (e *ErrWALTruncatedError) Error() string {
 	return fmt.Sprintf("lanes: WAL truncated past seq=%d", e.FromSeq)
 }
 
+// LaneToolInvoker is the lane-control surface the WS handler routes
+// the r1.lanes.list / r1.lanes.kill / r1.lanes.pin JSON-RPC methods
+// to (audit A040). *mcp.LanesServer satisfies it structurally via
+// HandleToolCall, so the WS route delegates to the exact semantics of
+// internal/mcp/lanes_server.go (spec §7) without importing mcp here.
+// The returned string is the §7 result envelope
+// ({"ok":true,"data":...} / {"ok":false,"error_code":...,"error_message":...});
+// the WS route unwraps it into the JSON-RPC result / error.
+type LaneToolInvoker interface {
+	HandleToolCall(ctx context.Context, toolName string, args map[string]interface{}) (string, error)
+}
+
 // LanesWiring carries the optional dependencies needed by the lanes-protocol
-// endpoints. Either field may be nil:
+// endpoints. Any field may be nil:
 //
 //   - Hub == nil disables the live subscription (clients only see replay).
 //   - WAL == nil disables replay (clients only see live + session.bound).
+//   - Tools == nil disables the r1.lanes.* control methods over WS
+//     (clients get -32601, the pre-A040 behavior).
 type LanesWiring struct {
-	Hub LanesHub
-	WAL LanesWAL
+	Hub   LanesHub
+	WAL   LanesWAL
+	Tools LaneToolInvoker
 }
 
 // LanesProtocolVersion is the X-R1-Lanes-Version header value (spec §5.6).

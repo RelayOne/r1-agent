@@ -29,8 +29,17 @@ func NewVerifyBridge(b *bus.Bus, l *ledger.Ledger, buildCmd, testCmd, lintCmd st
 // Run executes the verification pipeline, emitting start/complete events and
 // writing outcomes to the ledger.
 func (vb *VerifyBridge) Run(ctx context.Context, dir, taskID, missionID string) ([]verify.Outcome, error) {
-	scope := bus.Scope{TaskID: taskID, MissionID: missionID}
+	vb.PublishStarted(dir, taskID, missionID)
+	outcomes, err := vb.pipeline.Run(ctx, dir)
+	vb.PublishCompleted(ctx, taskID, missionID, outcomes, err == nil)
+	return outcomes, err
+}
 
+// PublishStarted emits the verify.started bus event. Split out from Run
+// (audit A037) so callers whose verification is executed elsewhere — the
+// workflow engine rebuilds its own policy-filtered pipeline per attempt —
+// can still announce the run on the governance bus.
+func (vb *VerifyBridge) PublishStarted(dir, taskID, missionID string) {
 	startPayload, _ := json.Marshal(map[string]string{
 		"dir":     dir,
 		"task_id": taskID,
@@ -39,25 +48,29 @@ func (vb *VerifyBridge) Run(ctx context.Context, dir, taskID, missionID string) 
 		Type:      EvtVerifyStarted,
 		Timestamp: time.Now(),
 		EmitterID: "bridge.verify",
-		Scope:     scope,
+		Scope:     bus.Scope{TaskID: taskID, MissionID: missionID},
 		Payload:   startPayload,
 	})
+}
 
-	outcomes, err := vb.pipeline.Run(ctx, dir)
-
+// PublishCompleted emits the verify.completed bus event and writes the
+// "verification" ledger node for outcomes produced by an external runner
+// (audit A037). Use alongside PublishStarted when the pipeline itself is
+// executed outside the bridge.
+func (vb *VerifyBridge) PublishCompleted(ctx context.Context, taskID, missionID string, outcomes []verify.Outcome, success bool) {
 	completePayload, _ := json.Marshal(struct {
 		Outcomes []verify.Outcome `json:"outcomes"`
 		Success  bool             `json:"success"`
 	}{
 		Outcomes: outcomes,
-		Success:  err == nil,
+		Success:  success,
 	})
 
 	_ = vb.bus.Publish(bus.Event{
 		Type:      EvtVerifyCompleted,
 		Timestamp: time.Now(),
 		EmitterID: "bridge.verify",
-		Scope:     scope,
+		Scope:     bus.Scope{TaskID: taskID, MissionID: missionID},
 		Payload:   completePayload,
 	})
 
@@ -68,6 +81,4 @@ func (vb *VerifyBridge) Run(ctx context.Context, dir, taskID, missionID string) 
 		MissionID:     missionID,
 		Content:       completePayload,
 	})
-
-	return outcomes, err
 }

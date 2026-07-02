@@ -6,7 +6,9 @@
 // differentiator for handling ambiguous tasks:
 // - Fork N approaches with different strategies/prompts
 // - Each runs in an isolated git worktree
-// - Score results by test pass rate, code quality, diff size
+// - Score full executions by test pass rate, diff size, speed
+//   (DefaultScorer); score plan-only explorations by plan structure
+//   plus speed (PlanScorer)
 // - Select the best, discard the rest
 // - Optionally merge insights from failed approaches into retry prompts
 package specexec
@@ -14,7 +16,9 @@ package specexec
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -42,6 +46,13 @@ type Outcome struct {
 	Error       string        `json:"error,omitempty"`
 	Artifacts   []string      `json:"artifacts,omitempty"` // file paths, worktree refs
 	Insights    []string      `json:"insights,omitempty"`  // learnings from this approach
+
+	// PlanText carries the plan produced by a plan-only exploration.
+	// Populated by executors whose strategies run with PlanOnly=true
+	// (scheduler.WithSpecExec); consumed by PlanScorer, which ranks
+	// plans by structural quality since plan-only outcomes have no
+	// test/diff signal.
+	PlanText string `json:"plan_text,omitempty"`
 }
 
 // Scorer evaluates an outcome and assigns a score.
@@ -106,6 +117,78 @@ func DefaultScorer(o Outcome) float64 {
 		score += 0.1
 	}
 
+	return score
+}
+
+// PlanStopThreshold is the early-stop threshold for plan-only runs
+// scored by PlanScorer. It equals the maximum structural score, so it
+// is reached exactly when a plan exhibits full structural quality
+// (any nonzero speed credit then pushes the total past it). With
+// DefaultScorer, plan-only outcomes capped at ~0.6 and the previous
+// 0.9 threshold was unreachable dead code.
+const PlanStopThreshold = 0.8
+
+// Plan-structure signals for PlanScorer. Deterministic on purpose —
+// no repo access, no LLM judge — so scoring is reproducible and free.
+var (
+	// planPathRe matches a concrete repo-style file path with a
+	// directory component and an extension, e.g. "internal/auth/token.go".
+	planPathRe = regexp.MustCompile(`[A-Za-z0-9_.-]+/[A-Za-z0-9_/.-]*[A-Za-z0-9_-]+\.[A-Za-z][A-Za-z0-9]{0,9}`)
+
+	// planStepRe matches ordered steps: "1. ...", "2) ...", "Step 3".
+	planStepRe = regexp.MustCompile(`(?mi)^\s*(?:\d+[.)]\s|step\s+\d+)`)
+
+	// planVerifyRe matches a verification story: tests, checks, validation.
+	planVerifyRe = regexp.MustCompile(`(?i)\b(?:test|verif|validat|check)`)
+)
+
+// PlanScorer scores plan-only outcomes by deterministic structural
+// quality of the plan text plus speed. scheduler.WithSpecExec uses it
+// because its speculative strategies run with PlanOnly=true and so
+// carry no test/diff signal for DefaultScorer — under DefaultScorer
+// every successful plan scored a flat ~0.4-0.6 and the winner
+// degenerated to "fastest plan" (audit A024).
+//
+// Weights (max 1.0):
+//
+//	0.30 substantive plan text (non-empty; half credit under 120 chars)
+//	0.20 references at least one concrete file path
+//	0.20 has ordered steps (numbered list / "Step N")
+//	0.10 states a verification story (test/verify/validate/check)
+//	0.20 speed (30s ≈ 1.0, 5min ≈ 0.1 — same decay as DefaultScorer)
+//
+// Outcomes with empty PlanText degrade to speed-only scoring, which
+// matches the previous behavior for callers that do not thread plan
+// text into Outcome.PlanText.
+func PlanScorer(o Outcome) float64 {
+	if !o.Success {
+		return 0
+	}
+	score := 0.0
+	text := strings.TrimSpace(o.PlanText)
+
+	switch {
+	case len(text) >= 120:
+		score += 0.3
+	case len(text) > 0:
+		score += 0.15
+	}
+	if planPathRe.MatchString(text) {
+		score += 0.2
+	}
+	if planStepRe.MatchString(text) {
+		score += 0.2
+	}
+	if planVerifyRe.MatchString(text) {
+		score += 0.1
+	}
+
+	// Faster preferred (20% weight), matching DefaultScorer's decay.
+	if o.Duration > 0 {
+		score += 0.2 * (30.0 / (30.0 + o.Duration.Seconds()))
+	} else {
+		score += 0.1
+	}
 	return score
 }
 

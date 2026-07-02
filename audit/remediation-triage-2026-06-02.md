@@ -29,7 +29,7 @@ User directed: tackle B1 next; apply doc fixes (B4 relabel + B6 counts); explain
 
 ---
 
-## STATUS: FIXED (commit: 72053d5f)
+## STATUS: FIXED (commit: b456ddd8)
 
 ### F1 — FTS5 compiled out of every shipped binary → activated
 - **Was:** No build path set the `sqlite_fts5` tag, so `research`, `wisdom/sqlite`,

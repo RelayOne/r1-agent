@@ -36,7 +36,6 @@ import (
 	"github.com/RelayOne/r1/internal/microcompact"
 	"github.com/RelayOne/r1/internal/model"
 	"github.com/RelayOne/r1/internal/patchapply"
-	"github.com/RelayOne/r1/internal/promptcache"
 	"github.com/RelayOne/r1/internal/promptguard"
 	stokeprompts "github.com/RelayOne/r1/internal/prompts"
 	"github.com/RelayOne/r1/internal/r1dir"
@@ -131,7 +130,7 @@ type Engine struct {
 	CodexHome       string
 	OnEvent         engine.OnEventFunc
 	State           *taskstate.TaskState
-	Wisdom          *wisdom.Store      // cross-task learning accumulator (nil = disabled)
+	Wisdom          wisdom.Recorder    // cross-task learning accumulator (nil = disabled); *wisdom.Store or *wisdom.SQLiteStore
 	CostTracker     *costtrack.Tracker // per-session cost tracking (nil = disabled)
 	Hooks           []TaskHook         // lifecycle hooks (nil = no hooks)
 	Recorder        *replay.Recorder   // session replay recording (nil = disabled)
@@ -276,7 +275,12 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			replayDir := r1dir.JoinFor(e.RepoRoot, "replays")
 			if mkErr := os.MkdirAll(replayDir, 0o755); mkErr == nil {
 				replayPath := filepath.Join(replayDir, rec.ID+".json")
-				_ = replay.Save(rec, replayPath)
+				if saveErr := replay.Save(rec, replayPath); saveErr != nil {
+					// O4: surface a silently-failed recording write — operators
+					// relying on `r1 replay` for post-mortem must know when a
+					// recording never landed rather than discover an empty dir.
+					log.Warn("replay recording save failed", "path", replayPath, "err", saveErr)
+				}
 			}
 		}()
 	}
@@ -439,6 +443,16 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	if e.Boulder != nil {
 		e.Boulder.TrackTask(name, e.Task, handle.Name)
 		e.Boulder.UpdateStatus(name, boulder.StatusInProgress)
+		// Wrap OnEvent to record activity on each agent event. Installed
+		// BEFORE the scanner goroutine starts so the goroutine never
+		// races the rebind below.
+		origOnEvent := e.OnEvent
+		e.OnEvent = func(ev stream.Event) {
+			e.Boulder.RecordActivity()
+			if origOnEvent != nil {
+				origOnEvent(ev)
+			}
+		}
 		// Background scanner: periodically check for idle agents.
 		// Track nudge count to escalate from warning to cancellation.
 		var boulderNudgeCount int
@@ -456,9 +470,12 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 					e.Boulder.Scan(time.Now(), func(taskID, msg string) bool {
 						boulderNudgeCount++
 						log.Warn("boulder nudge", "task", taskID, "message", msg, "nudge_count", boulderNudgeCount)
-						// Fire a system event so the TUI/observer sees the nudge.
-						if e.OnEvent != nil {
-							e.OnEvent(stream.Event{
+						// Fire a system event so the TUI/observer sees the
+						// nudge — via the ORIGINAL callback, so the nudge
+						// itself does not reset the idle timer it just
+						// detected.
+						if origOnEvent != nil {
+							origOnEvent(stream.Event{
 								Type:      "system",
 								DeltaText: fmt.Sprintf("[boulder] idle agent nudge #%d: %s", boulderNudgeCount, msg),
 							})
@@ -476,14 +493,6 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				}
 			}
 		}()
-		// Wrap OnEvent to record activity on each agent event.
-		origOnEvent := e.OnEvent
-		e.OnEvent = func(ev stream.Event) {
-			e.Boulder.RecordActivity()
-			if origOnEvent != nil {
-				origOnEvent(ev)
-			}
-		}
 	}
 
 	planPhase := phases[0]
@@ -522,6 +531,21 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		e.CostTracker.Record(planRunner, e.Task+"/plan", planResult.Tokens.Input, planResult.Tokens.Output, planResult.Tokens.CacheRead, planResult.Tokens.CacheCreation)
 	}
 
+	// P1: thread the plan-phase output into the execute prompt. The plan
+	// phase runs a full agent turn but its result was previously consumed
+	// ONLY in PlanOnly mode — every task paid plan cost for zero effect on
+	// execution. Capture it unconditionally into Result.PlanOutput and
+	// build a bounded plan block that is prepended to the execute prompt on
+	// EVERY attempt (attempt 1 verbatim, retries via buildRetryPrompt's
+	// originalPrompt) so the executor works from the vetted decomposition.
+	result.PlanOutput = planResult.ResultText
+	var planContext string
+	if planText := strings.TrimSpace(planResult.ResultText); planText != "" {
+		// Cap to ~4k tokens so a verbose plan cannot crowd out the task.
+		capped, _ := tokenest.TruncateToFit(planText, 4000, tokenest.ContentMixed)
+		planContext = "\n\n## Implementation plan (from plan phase)\n" + capped
+	}
+
 	// Checkpoint after plan phase completion.
 	cpStore.Save(checkpoint.Checkpoint{
 		ID: checkpoint.IdempotencyKey(name, 1, 0), TaskID: name,
@@ -533,7 +557,6 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	// --- PLAN-ONLY MODE: structurally prevents execute/verify/commit/merge ---
 	// This is not a prompt instruction. The harness does not call execute.
 	if e.PlanOnly {
-		result.PlanOutput = planResult.ResultText
 		e.Worktrees.Cleanup(ctx, handle)
 		return result, nil
 	}
@@ -547,6 +570,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	var lastFailure *failure.Analysis
 	var lastDiff string
 	var priorFingerprints []failure.Fingerprint // track failure fingerprints across attempts
+	// P4: cross-run fix recall. Set on a failure whose fingerprint a PRIOR
+	// run (or attempt) already recorded a learning for; consumed by the NEXT
+	// attempt's retry prompt so later runs against a persistent wisdom store
+	// get the prior context instead of rediscovering it.
+	var priorFixHint string
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// Budget gate: stop before spending more if over budget.
@@ -591,10 +619,18 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			result.Branch = handle.Branch
 		}
 
-		// Build execute prompt
-		prompt := executePhase.Prompt
+		// Build execute prompt. P1: the plan block rides on the base
+		// prompt so it is present on attempt 1 and, because
+		// buildRetryPrompt re-emits its originalPrompt argument, on every
+		// retry as well.
+		prompt := executePhase.Prompt + planContext
 		if attempt > 1 && lastFailure != nil {
 			prompt = buildRetryPrompt(prompt, attempt, lastFailure, lastDiff, handle.Path)
+			// P4: if a prior run recorded a learning for this exact failure
+			// fingerprint, surface it so the retry doesn't rediscover it.
+			if priorFixHint != "" {
+				prompt += "\n\n--- CROSS-RUN RECALL ---\n" + priorFixHint + "\n"
+			}
 			// Invoke BeforeRetry hooks for additional prompt augmentation
 			for _, h := range e.Hooks {
 				aug, err := h.BeforeRetry(ctx, e.Task, attempt, lastFailure)
@@ -670,6 +706,15 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			}
 
 			if runErr != nil {
+				// R5: if the PARENT context was cancelled (Ctrl-C / timeout),
+				// this run was killed, not failed on its merits. Propagate
+				// context.Canceled (not a task failure) so the caller skips
+				// failure bookkeeping and leaves the task pending for resume.
+				// Boulder's execCtx-only cancellation (parent still live) is
+				// left to fall through as a genuine failure.
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return result, fmt.Errorf("execute phase (attempt %d) cancelled: %w", attempt, ctxErr)
+				}
 				_ = e.advanceState(taskstate.Failed, fmt.Sprintf("execute phase attempt %d failed: %s", attempt, runErr))
 				return result, fmt.Errorf("execute phase (attempt %d): %w", attempt, runErr)
 			}
@@ -1262,6 +1307,17 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 
 		// Compute failure fingerprint for dedup across retries and tasks.
 		fp := failure.Compute(analysis)
+		// P4: close the fingerprint->prior-fix recall loop. The retry loop
+		// already RECORDS the fingerprint into wisdom (below) but never
+		// RECALLED it before this. Look the pattern up now; on a hit, stage a
+		// hint that the next attempt's retry prompt injects. Against a
+		// persistent (SQLite) store this surfaces a fix learned on a previous
+		// run when the same failure recurs.
+		if e.Wisdom != nil {
+			if prior := e.Wisdom.FindByPattern(fp.Hash); prior != nil && prior.Description != "" {
+				priorFixHint = fmt.Sprintf("A previous run hit this exact failure fingerprint; recorded learning: %s\nDo NOT repeat the approach that produced it.", prior.Description)
+			}
+		}
 		if matched, count := failure.MatchHistory(fp, priorFingerprints); matched != nil && count > 0 {
 			log.Error("fingerprint dedup: same failure repeated", "pattern", fp.Pattern, "count", count+1)
 			_ = e.advanceState(taskstate.Failed,
@@ -1283,7 +1339,10 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 
 		// Record failure as a wisdom gotcha for subsequent tasks, with fingerprint
 		// so cross-task dedup can detect if task B hits the same pattern as task A.
-		if e.Wisdom != nil {
+		// R5: skip when execCtx was cancelled — a cancellation-induced
+		// "signal: killed"/"context canceled" analysis is not a real learning
+		// and would otherwise be injected into unrelated retry prompts.
+		if e.Wisdom != nil && execCtx.Err() == nil {
 			desc := analysis.Summary
 			if analysis.RootCause != "" {
 				desc = analysis.RootCause
@@ -1504,6 +1563,16 @@ func (e Engine) runCrossModelReview(
 	e.emitReviewEvent(name, evidence.ReviewEngine, verdict.Pass)
 	if !verdict.Pass {
 		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+		// A review rejection is a learning like any other failure: the
+		// generic verification-failure path records a wisdom gotcha,
+		// but this early return skipped it — so review dissent left no
+		// trace for subsequent tasks (audit A049).
+		if e.Wisdom != nil {
+			e.Wisdom.Record(e.Task, wisdom.Learning{
+				Category:    wisdom.Gotcha,
+				Description: fmt.Sprintf("cross-model review rejected: %s severity, %d findings", verdict.Severity, len(verdict.Findings)),
+			})
+		}
 		e.Worktrees.Cleanup(ctx, handle)
 		_ = e.advanceState(taskstate.Failed, "cross-model review rejected")
 		return nil, fmt.Errorf("cross-model review rejected: %s severity, %d findings", verdict.Severity, len(verdict.Findings))
@@ -2009,15 +2078,39 @@ func sandboxDomainsForPhase(phase string) []string {
 	return nil
 }
 
-func planPromptWithSkills(e Engine) string {
-	prompt := stokeprompts.BuildPlanPrompt(e.Task, false, "")
+// defaultSkillTokenBudget is the fallback injection budget used when the
+// engine carries no normalized policy (zero-value SkillsConfig). Matches
+// config.DefaultSkillsConfig().TokenBudget.
+const defaultSkillTokenBudget = 3000
+
+// injectSkillsBudgeted applies policy-configured skill injection to the
+// prompt (audit A059). Enabled / TokenBudget / AlwaysOn / Excluded come
+// from e.Policy.Skills. A zero-value SkillsConfig (engine constructed
+// without a loaded policy — normalized policies always carry a non-zero
+// TokenBudget) preserves the historical default: injection enabled with
+// a 3000-token budget. An explicit enabled:false disables injection.
+func injectSkillsBudgeted(e Engine, prompt string) string {
+	s := e.Policy.Skills
+	if !s.Enabled && s.TokenBudget > 0 {
+		return prompt // explicit skills.enabled: false in the policy
+	}
+	budget := s.TokenBudget
+	if budget <= 0 {
+		budget = defaultSkillTokenBudget
+	}
 	reg := e.SkillRegistry
 	if reg == nil {
 		reg = skill.DefaultRegistry(e.RepoRoot)
 		_ = reg.Load()
 	}
-	prompt, _ = reg.InjectPromptBudgeted(prompt, e.StackMatches, 3000)
-	return prompt
+	reg.ConfigureInjection(s.AlwaysOn, s.Excluded)
+	out, _ := reg.InjectPromptBudgeted(prompt, e.StackMatches, budget)
+	return out
+}
+
+func planPromptWithSkills(e Engine) string {
+	prompt := stokeprompts.BuildPlanPrompt(e.Task, false, "")
+	return injectSkillsBudgeted(e, prompt)
 }
 
 func executePromptWithContext(e Engine) string {
@@ -2032,13 +2125,9 @@ func executePromptWithContext(e Engine) string {
 	basePrompt := executePrompt(e.Task, e.TaskType, e.TaskVerification)
 
 	// Inject matching built-in skills (keyword-triggered prompt augmentation).
-	// Use Engine's registry if available, otherwise auto-create from project root.
-	reg := e.SkillRegistry
-	if reg == nil {
-		reg = skill.DefaultRegistry(e.RepoRoot)
-		_ = reg.Load()
-	}
-	prompt, _ := reg.InjectPromptBudgeted(basePrompt, e.StackMatches, 3000)
+	// Budget and enable/always-on/excluded lists come from the policy
+	// (e.Policy.Skills) via injectSkillsBudgeted.
+	prompt := injectSkillsBudgeted(e, basePrompt)
 
 	// Append Tool RAG hits AFTER skill injection so the
 	// retrieval terms don't back-feed into skill keyword
@@ -2059,19 +2148,9 @@ func executePromptWithContext(e Engine) string {
 	// Repository map is injected below via ctxpack (not here) to avoid
 	// duplication and to respect context window constraints.
 
-	// Optimize prompt for cache alignment: separate static instructions from
-	// dynamic task content so API-level prefix caching works effectively.
-	opt := promptcache.New()
-	opt.AddSection(promptcache.Section{
-		Label: "system", Content: stokeprompts.ScopeSystemPrompt(), Static: true, Priority: 0,
-	})
-	opt.AddSection(promptcache.Section{
-		Label: "task", Content: prompt, Static: false, Priority: 10,
-	})
-	optimized := opt.Build(prompt)
-
-	// Estimate token usage for budget tracking and context window management.
-	promptTokens := tokenest.Estimate(optimized.System+optimized.User, tokenest.ContentMixed)
+	// Estimate token usage for the (dynamic) base prompt so ctxpack can
+	// bin-pack the ranked repomap around it within the window budget.
+	promptTokens := tokenest.Estimate(prompt, tokenest.ContentMixed)
 
 	// Pack context items into the available window using adaptive bin-packing.
 	var contextItems []ctxpack.Item
@@ -2109,8 +2188,30 @@ func executePromptWithContext(e Engine) string {
 		}
 	}
 
-	// Track prompt fingerprint for cache stability monitoring.
-	stokeprompts.TrackPromptVersion(optimized.System)
+	// P2: render the packed context items into the returned prompt. ctxpack
+	// decides what fits the window, but PackResult.Included was previously
+	// computed and thrown away — so the ranked repomap (CLAUDE.md design
+	// decision 24, "ranked repomap injected into execute prompts") never
+	// actually reached the executor on the workflow path. Append every
+	// included item that is not the base prompt itself, in packed
+	// (relevance) order, so the map rides along inside the budget ctxpack
+	// already reserved for it.
+	if len(packed.Included) > 0 {
+		var sb strings.Builder
+		sb.WriteString(prompt)
+		for _, item := range packed.Included {
+			if item.ID == "prompt" || item.Content == "" {
+				continue
+			}
+			sb.WriteString("\n\n")
+			sb.WriteString(item.Content)
+		}
+		prompt = sb.String()
+	}
+
+	// Track prompt fingerprint for cache stability monitoring. The static
+	// scope-enforcement instructions are the cacheable prefix.
+	stokeprompts.TrackPromptVersion(stokeprompts.ScopeSystemPrompt())
 	if packed.Utilization > 0.9 {
 		log := logging.Component("workflow")
 		log.Warn("context window nearly full", "utilization", fmt.Sprintf("%.0f%%", packed.Utilization*100), "tokens", packed.TotalTokens)

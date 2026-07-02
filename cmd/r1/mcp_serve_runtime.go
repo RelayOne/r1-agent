@@ -15,9 +15,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 
 	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/config"
 	"github.com/RelayOne/r1/internal/cortex"
 	antitrunclobe "github.com/RelayOne/r1/internal/cortex/lobes/antitrunc"
 	"github.com/RelayOne/r1/internal/cortex/lobes/memoryrecall"
@@ -57,9 +59,12 @@ func (stubProvider) ChatStream(_ provider.ChatRequest, _ func(stream.Event)) (*p
 //                        and .publish still round-trip via the Workspace,
 //                        but lobes_list returns []. Cheapest, no creds.
 //   - "deterministic"  — register the 4 deterministic Lobes
-//                        (memoryrecall, walkeeper, rulecheck, antitrunc).
-//                        No API creds needed; the LLM Lobes (clarifyq,
-//                        memorycurator, planupdate) are skipped.
+//                        (memoryrecall, walkeeper, rulecheck, antitrunc),
+//                        minus any Lobe the policy's `cortex:` block
+//                        explicitly disables (enabled: false). Absent
+//                        flags default ON (audit A057). No API creds
+//                        needed; the LLM Lobes (clarifyq, memorycurator,
+//                        planupdate) are skipped.
 //   - "all"            — RESERVED. Today behaves identically to
 //                        "deterministic" because LLM Lobe construction
 //                        requires an Anthropic provider; once
@@ -74,7 +79,7 @@ func (stubProvider) ChatStream(_ provider.ChatRequest, _ func(stream.Event)) (*p
 // with where Lobes write — even when the cortex is not Started (Lobe
 // runners are inert until Start, but lobes_list reflects registration
 // regardless).
-func buildCortexBackend(sessionID, busDir, lobeMode string) (mcp.CortexBackend, error) {
+func buildCortexBackend(sessionID, busDir, lobeMode string, cortexCfg config.CortexConfig) (mcp.CortexBackend, error) {
 	eventBus := hub.New()
 	durableBus, err := bus.New(busDir)
 	if err != nil {
@@ -115,11 +120,28 @@ func buildCortexBackend(sessionID, busDir, lobeMode string) (mcp.CortexBackend, 
 	}
 	wisStore := wisdom.NewStore()
 
-	lobeList := []cortex.Lobe{
-		memoryrecall.NewMemoryRecallLobe(ws, memStore, wisStore, eventBus),
-		walkeeper.NewWALKeeperLobe(eventBus, durableBus, ws, walkeeper.WALFraming{}),
-		rulecheck.NewRuleCheckLobe(durableBus, ws),
-		antitrunclobe.NewAntiTruncLobe(ws, "", ""),
+	// Per-lobe policy gating (audit A057): honor the `cortex:` block's
+	// explicit enabled flags. Absent flags resolve to default-ON via the
+	// tri-state *bool in config.LobeFlag, preserving the default-on
+	// contract for deployments without a cortex: section.
+	lobeList := make([]cortex.Lobe, 0, 4)
+	if cortexCfg.LobeEnabled("memory-recall", true) {
+		lobeList = append(lobeList, memoryrecall.NewMemoryRecallLobe(ws, memStore, wisStore, eventBus))
+	}
+	if cortexCfg.LobeEnabled("wal-keeper", true) {
+		lobeList = append(lobeList, walkeeper.NewWALKeeperLobe(eventBus, durableBus, ws, walkeeper.WALFraming{}))
+	}
+	if cortexCfg.LobeEnabled("rule-check", true) {
+		lobeList = append(lobeList, rulecheck.NewRuleCheckLobe(durableBus, ws))
+	}
+	if cortexCfg.LobeEnabled("antitrunc", true) {
+		lobeList = append(lobeList, antitrunclobe.NewAntiTruncLobe(ws, "", ""))
+	}
+	if len(lobeList) < 4 {
+		// slog default handler writes to stderr, so this cannot break
+		// the stdout JSON-RPC framing.
+		slog.Info("r1 mcp serve: policy cortex block disabled one or more deterministic lobes",
+			"registered", len(lobeList))
 	}
 
 	// Live cortex: holds the LobeRunners. Returned to callers because
@@ -171,7 +193,7 @@ func startMCPServer(opts mcpServeOptions, stderr io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("bus tmpdir: %w", err)
 		}
-		c, err := buildCortexBackend(opts.SessionID, busDir, opts.LobeMode)
+		c, err := buildCortexBackend(opts.SessionID, busDir, opts.LobeMode, opts.Cortex)
 		if err != nil {
 			return fmt.Errorf("build cortex backend: %w", err)
 		}
@@ -213,6 +235,12 @@ type mcpServeOptions struct {
 	SessionID  string // --session-id (or generated UUID surface'd to stderr)
 	AuthKey    string // R1_MCP_KEY env var
 	LobeMode   string // --lobes: "none" | "deterministic" | "all"
+
+	// Cortex carries the policy's `cortex:` block (per-Lobe enable
+	// flags, audit A057). Loaded by runMCPServe via config.AutoLoadPolicy
+	// (--policy overrides discovery); the zero value resolves every flag
+	// to default-on.
+	Cortex config.CortexConfig
 }
 
 // envOrEmpty returns os.Getenv(key) for live process; tests override

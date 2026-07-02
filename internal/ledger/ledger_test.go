@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"go/ast"
 	"go/parser"
@@ -594,6 +595,39 @@ func TestBatchRejectsEdgeToNonexistent(t *testing.T) {
 	}
 }
 
+// TestBatchValidationFailureWritesNothing covers audit A020: a batch
+// [AddNode A, AddEdge A->missing] used to persist node A permanently
+// (store + index) and only THEN fail edge validation — despite the doc's
+// "all operations succeed or none do". Validation now runs entirely
+// before any write.
+func TestBatchValidationFailureWritesNothing(t *testing.T) {
+	l := newTestLedger(t)
+	ctx := context.Background()
+
+	n := makeNode("decision", "will-not-persist", "s1")
+	err := l.Batch(ctx, []BatchOp{
+		{OpType: BatchAddNode, Node: &n},
+		{OpType: BatchAddEdge, Edge: &Edge{
+			From: "nonexistent-from",
+			To:   "nonexistent-to",
+			Type: EdgeDependsOn,
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected error for edge with nonexistent endpoints")
+	}
+	nodes, err := l.store.ListNodes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range nodes {
+		if string(got.Content) != "" && got.MissionID == n.MissionID && got.Type == n.Type {
+			// Any node from this failed batch leaking is the A020 bug.
+			t.Fatalf("failed batch persisted node %s — validation must precede all writes", got.ID)
+		}
+	}
+}
+
 func TestBatchEmpty(t *testing.T) {
 	l := newTestLedger(t)
 	ctx := context.Background()
@@ -1068,5 +1102,124 @@ func TestEdgeMatrixValidateFunction(t *testing.T) {
 		if !tc.wantErr && err != nil {
 			t.Errorf("validateEdgeMatrix(%s, %s, %s): unexpected error: %v", tc.edge, tc.from, tc.to, err)
 		}
+	}
+}
+
+// TestNewHealsStaleIndexAndKeepsChainLinear is the R4 regression guard. It
+// simulates a crash between store.WriteNode and index.InsertNode -- a node that
+// is durable on the chain tier but missing its index row -- by deleting the row
+// directly from .index.db. On re-open, New()'s consistency probe must detect the
+// index/store drift and rebuild the index from the store, so (a) the node is
+// visible again and (b) a subsequent AddNode chains off the true latest node
+// instead of forking the STOKE-002 Merkle chain off a missing predecessor.
+func TestNewHealsStaleIndexAndKeepsChainLinear(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "ledger")
+
+	l, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	mkNode := func(body string, at time.Time) Node {
+		return Node{
+			Type:          "decision",
+			SchemaVersion: 1,
+			CreatedAt:     at,
+			CreatedBy:     "stance-1",
+			MissionID:     "m1",
+			Content:       json.RawMessage(`{"text":"` + body + `"}`),
+		}
+	}
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	idA, err := l.AddNode(ctx, mkNode("A", base))
+	if err != nil {
+		t.Fatalf("AddNode A: %v", err)
+	}
+	idB, err := l.AddNode(ctx, mkNode("B", base.Add(time.Second)))
+	if err != nil {
+		t.Fatalf("AddNode B: %v", err)
+	}
+	idC, err := l.AddNode(ctx, mkNode("C", base.Add(2*time.Second)))
+	if err != nil {
+		t.Fatalf("AddNode C: %v", err)
+	}
+
+	// Precondition: the chain is linear A <- B <- C.
+	nodeA, err := l.Get(ctx, idA)
+	if err != nil {
+		t.Fatalf("Get A: %v", err)
+	}
+	nodeB, err := l.Get(ctx, idB)
+	if err != nil {
+		t.Fatalf("Get B: %v", err)
+	}
+	nodeC, err := l.Get(ctx, idC)
+	if err != nil {
+		t.Fatalf("Get C: %v", err)
+	}
+	hA, _ := hashNode(*nodeA)
+	hB, _ := hashNode(*nodeB)
+	if nodeB.ParentHash != hA {
+		t.Fatalf("pre-corruption B.ParentHash=%q want hash(A)=%q", nodeB.ParentHash, hA)
+	}
+	if nodeC.ParentHash != hB {
+		t.Fatalf("pre-corruption C.ParentHash=%q want hash(B)=%q", nodeC.ParentHash, hB)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Corrupt the index: drop node C's row while its chain record stays on disk.
+	db, err := sql.Open("sqlite3", filepath.Join(root, ".index.db"))
+	if err != nil {
+		t.Fatalf("open index db: %v", err)
+	}
+	if _, err := db.Exec("DELETE FROM nodes WHERE id = ?", idC); err != nil {
+		t.Fatalf("delete index row: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close index db: %v", err)
+	}
+
+	// Re-open: the probe must see index(2) != chain(3) and self-heal.
+	l2, err := New(root)
+	if err != nil {
+		t.Fatalf("re-open New: %v", err)
+	}
+	defer l2.Close()
+
+	ids, err := l2.QueryNodes(QueryFilter{MissionID: "m1"})
+	if err != nil {
+		t.Fatalf("QueryNodes: %v", err)
+	}
+	if len(ids) != 3 {
+		t.Fatalf("after heal got %d mission nodes, want 3 (index not healed)", len(ids))
+	}
+	foundC := false
+	for _, id := range ids {
+		if id == idC {
+			foundC = true
+		}
+	}
+	if !foundC {
+		t.Fatal("healed index is missing node C")
+	}
+
+	// A new node must chain off C (the true latest), proving correct Merkle
+	// linkage was restored -- without the heal, latest-in-mission would resolve
+	// to B and fork the chain.
+	idD, err := l2.AddNode(ctx, mkNode("D", base.Add(3*time.Second)))
+	if err != nil {
+		t.Fatalf("AddNode D: %v", err)
+	}
+	nodeD, err := l2.Get(ctx, idD)
+	if err != nil {
+		t.Fatalf("Get D: %v", err)
+	}
+	hC, _ := hashNode(*nodeC)
+	if nodeD.ParentHash != hC {
+		t.Errorf("chain forked after heal: D.ParentHash=%q want hash(C)=%q", nodeD.ParentHash, hC)
 	}
 }

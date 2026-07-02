@@ -150,6 +150,14 @@ func TestCortexIntegration(t *testing.T) {
 	}
 	defer func() { _ = c.Stop(context.Background()) }()
 
+	// Record a main turn so the LLM-classed lobes have output-budget
+	// headroom. The BudgetTracker fails closed (budget 0 → Exceeded)
+	// until the first EventModelPostCall, and in production the loop
+	// always completes a model call — which fires that event — before
+	// any midturn check runs. Mirror that sequencing here (audit A061:
+	// runOnce now enforces the 30% cap for KindLLM lobes).
+	c.Tracker().RecordMainTurn(10_000)
+
 	// Drive one round.
 	msgs := []agentloop.Message{
 		{Role: "user", Content: []agentloop.ContentBlock{{Type: "text", Text: "hi"}}},

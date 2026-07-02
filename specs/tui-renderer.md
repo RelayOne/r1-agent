@@ -1,10 +1,20 @@
-<!-- STATUS: done -->
+<!-- STATUS: superseded -->
 <!-- BUILD_COMPLETED: 2026-04-22 -->
 <!-- CREATED: 2026-04-20 -->
+<!-- SUPERSEDED: 2026-07-02 -->
 <!-- DEPENDS_ON: spec-2 (streamjson subtypes), spec-7 (cost data + progress data), spec-11 (sessionctl for pause/approve) -->
 <!-- BUILD_ORDER: 12 -->
 
 # Live TUI Renderer — Implementation Spec
+
+> **SUPERSEDED (2026-07-02, audit A074 in `audit/complete-systems-2026-07-01.md`).**
+> `internal/tui/renderer/` was deleted: the package was never mounted by any
+> binary (its run.go / `tea.NewProgram` / `--tui` wiring — deferred items 7-10
+> below — never landed), and the live TUI surface is owned by the wired
+> `internal/tui` Shell (`r1 tui`, Bubble Tea v1) plus the Cortex lanes panel
+> `internal/tui/lanes` (specs/tui-lanes.md, Bubble Tea v2). This spec is kept
+> for the event→UI mapping and fallback design record only; do not build
+> against it.
 
 ## Overview
 

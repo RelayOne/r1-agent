@@ -1217,3 +1217,47 @@ func TestFireHooksDiscardsNothingWhenAllFieldsZero(t *testing.T) {
 		t.Fatalf("expected 1 event (just the trigger), got %d: %+v", len(seen), eventTypes(seen))
 	}
 }
+
+// TestManyPastDueDelayedRestore covers audit A015: restoreDelayed armed
+// 1ms timers for past-due entries BEFORE inserting them into b.delayed
+// without the mutex — with several past-due entries the callbacks raced
+// the loop's map writes (concurrent map write panic under -race), and a
+// callback firing before its insert leaked the event forever.
+func TestManyPastDueDelayedRestore(t *testing.T) {
+	dir := t.TempDir()
+
+	b, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	const n = 8
+	for i := 0; i < n; i++ {
+		// 1ms delay: past due by the time the bus reopens below.
+		if _, err := b.PublishDelayed(makeEvent(EvtWorkerSpawned, "w1"), time.Millisecond); err != nil {
+			t.Fatalf("PublishDelayed %d: %v", i, err)
+		}
+	}
+	// Close before the timers fire so restore sees them all pending.
+	// (Close stops timers; the WAL still holds the schedule records.)
+	b.Close()
+
+	b2, err := New(dir)
+	if err != nil {
+		t.Fatalf("New (reopen): %v", err)
+	}
+	defer b2.Close()
+
+	var mu sync.Mutex
+	var received int
+	b2.Subscribe(Pattern{TypePrefix: "worker."}, func(e Event) {
+		mu.Lock()
+		received++
+		mu.Unlock()
+	})
+
+	waitFor(t, 2*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return received >= n
+	})
+}

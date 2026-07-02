@@ -120,7 +120,7 @@ Every Claude / Codex Skill the agent loads becomes a `SkillLoaded` ledger node; 
 **What this means for you**: you stop paying for skill text the agent isn't using anymore, and you stop debugging "why did it suddenly behave differently" — the ledger answers in two clicks.
 
 ### Provider-agnostic with a 5-tier fallback
-Claude → Codex → OpenRouter → direct API → lint-only. Subscription pool, circuit breaker, OAuth poller. When Claude rate-limits, Codex picks up; when OpenRouter is degraded, the direct API kicks in; when everything is down, lint-only mode keeps the missions on the rails.
+Claude → Codex automatic fallback with subscription pool, circuit breaker, and OAuth poller. When Claude rate-limits, Codex picks up. The router additionally defines OpenRouter / direct API / lint-only tiers, but those are not yet wired as execution runners — the honest claim today is two-provider automatic degradation.
 
 **What this means for you**: vendor-lock-out doesn't kill your dev velocity. Cost optimization is automatic (cheap-model floor with escalation only on tagged-critical paths).
 
@@ -191,7 +191,7 @@ That means:
 
 - Anti-truncation isn't an idea — it's a documented behavior pattern from real production runs that needed mechanical enforcement.
 - The cortex Lobe pattern wasn't designed in a vacuum — it's the answer to "we need plan updates and clarifying questions WITHOUT subagent latency."
-- The 5-provider fallback isn't theoretical — it's how the portfolio survived rate-limit windows on each provider.
+- The Claude→Codex fallback isn't theoretical — it's how the portfolio survived rate-limit windows; the remaining router tiers (OpenRouter / direct API / lint-only) are defined but not yet wired as runners.
 - The audit ledger isn't compliance theater — it's how the portfolio passes security reviews from clients who don't trust AI in their codebase.
 
 r1 is what survives 18 months of dogfooding inside a working portfolio. Everything in it is there because something broke without it.
@@ -251,7 +251,7 @@ Tier C is the work that makes "should we switch agent runtimes" a harder questio
 
 **IDE-native install (C4).** One spec covering Cursor, Windsurf, VS Code, and JetBrains with one `r1 ide install / uninstall / verify` command. The customer installs r1 once; every IDE on the machine sees it. Competitors that require a per-IDE walkthrough lose the install funnel; we win it.
 
-**BitBucket parity (C5).** *Shipped 2026-05-12.* The CI integration story is GitHub Actions, GitLab CI, *and* BitBucket Pipelines. Customers on BitBucket — a non-trivial slice of enterprise — stop being a third-class platform with a "PR open" workaround. Implementation lives under `internal/cicd/bitbucket/`; operator runbook in `docs/integrations/bitbucket-pipelines.md`.
+**BitBucket parity (C5).** *Shipped 2026-05-12; runtime client wired to the CLI 2026-07-02 (audit A056).* The CI integration story is GitHub Actions, GitLab CI, *and* BitBucket Pipelines. Customers on BitBucket — a non-trivial slice of enterprise — stop being a third-class platform with a "PR open" workaround. Implementation lives under `internal/cicd/bitbucket/`; the REST runtime client is reachable via `r1 cicd trigger|status|logs --provider bitbucket` (the auto-review comment pipeline is library-complete but has no CLI verb yet); operator runbook in `docs/integrations/bitbucket-pipelines.md`.
 **BitBucket parity (C5).** The CI integration story is GitHub Actions, GitLab CI, *and* BitBucket Pipelines. Customers on BitBucket — a non-trivial slice of enterprise — stop being a third-class platform with a "PR open" workaround.
 
 **Hosted-SaaS browser sandbox (C6).** Two interchangeable providers (Browserless managed + an in-house Cloud Run provider), tenant-isolated sandbox, deny-by-default egress policy. Every "scrape this site / fill this form / verify this UI" agent workflow becomes usable on the hosted tier without the customer worrying about cross-tenant browser-fingerprint leakage or unrestricted outbound network access.

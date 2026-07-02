@@ -134,6 +134,59 @@ func TestGovernorCloseIsClean(t *testing.T) {
 	}
 }
 
+// TestGovernorDrainLandsTerminalCostNode is the R3 regression. The Governor is
+// registered as a wildcard ModeObserve subscriber on the hub bus, so its
+// terminal cost write runs on the hub's fire-and-forget observe goroutine.
+// Emitting the cost event via EmitAsync (exactly as workflow.emitEventAsync
+// fires terminal lifecycle events) and then draining the hub bus BEFORE the
+// governor closes must guarantee the cost_record ledger node has landed.
+//
+// Before R3 the hub had no Drain: the observe goroutine raced the deferred
+// governor.Close(), and the terminal write hit a closed bus+ledger
+// nondeterministically. Drain closes that race by blocking until the observe
+// chain (EmitAsync goroutine -> Emit -> observe goroutine -> ledger.AddNode)
+// completes.
+func TestGovernorDrainLandsTerminalCostNode(t *testing.T) {
+	g := newTestGovernor(t, 0)
+
+	h := hub.New()
+	h.Register(g.HubSubscriber())
+
+	// Terminal cost event, fired fire-and-forget like the real workflow.
+	h.EmitAsync(&hub.Event{
+		Type:   hub.EventModelPostCall,
+		TaskID: "task-terminal",
+		Model: &hub.ModelEvent{
+			Provider:     "anthropic",
+			Model:        "claude",
+			CostUSD:      0.25,
+			InputTokens:  10,
+			OutputTokens: 5,
+		},
+	})
+
+	// Drain must block until the observe goroutine ran the Governor handler
+	// -> costBridge.PublishUsage -> ledger.AddNode.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := h.Drain(ctx); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+
+	// The terminal cost_record node must exist BEFORE any Close — proving the
+	// write landed rather than racing teardown.
+	nodes, err := g.Ledger().Query(context.Background(), ledger.QueryFilter{Type: "cost_record"})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(nodes) < 1 {
+		t.Fatalf("expected >=1 cost_record node after Drain, got %d", len(nodes))
+	}
+	if nodes[0].MissionID != "mission-test" {
+		t.Errorf("cost_record node MissionID = %q, want mission-test", nodes[0].MissionID)
+	}
+}
+
 // TestGovernorBudgetWarningBelowSpawn checks that a sub-80% (but >=50%)
 // spend produces a warning rather than a spawn — proving the threshold
 // ladder is wired, not just "any event fires".

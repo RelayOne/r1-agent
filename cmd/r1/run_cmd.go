@@ -3,22 +3,31 @@
 // The `r1 run` subcommand in CloudSwarm-compatible mode. Activated
 // when the invocation includes `--output stream-json`. Routes either
 // a free-text TASK_SPEC (through the chat intent classifier) or a
-// --sow path (directly to runSessionNative) while emitting
-// NDJSON events on stdout and reading HITL decisions from stdin.
+// --sow path (announce-only inventory walk) while emitting NDJSON
+// events on stdout.
 //
 // Exit codes (D11 per spec — item 7 contract):
-//   0  all sessions passed (including soft-passes)
-//   1  >=1 session failed
-//   2  budget exhausted OR usage error
-//   3  operator aborted (HITL rejected) OR stdin closed mid-HITL
-//   130 SIGINT
-//   143 SIGTERM
 //
-// This file owns flag parsing, emitter + HITL construction, signal
-// handling, and top-level lifecycle events. Spec items 9-10 wire the
-// emitter through runSessionNative; dispatchCloudSwarmSOW and
+//	0  all sessions passed (including soft-passes)
+//	1  >=1 session failed
+//	2  budget exhausted OR usage error
+//	3  operator aborted (HITL rejected) OR stdin closed mid-HITL
+//	130 SIGINT
+//	143 SIGTERM
+//
+// This file owns flag parsing, emitter construction, signal handling,
+// and top-level lifecycle events. Spec items 9-10 wire the emitter
+// through runSessionNative; dispatchCloudSwarmSOW and
 // dispatchCloudSwarmFreeText are the junction points those items
 // extend.
+//
+// HITL (audit A032): run mode is announce-only — it never dispatches
+// descent workers, so no soft-pass gate can fire and no HITL service
+// is constructed here. The HITL-gated soft-pass flow lives in `r1 sow`
+// (sowCmd builds the hitl.Service with hitlWaitCeiling and
+// buildDescentConfig installs the enterprise-tier approval func; see
+// hitl_wiring.go). --hitl-timeout stays parsed for CloudSwarm wire
+// compatibility; exit code 3 is reserved for the sow-backed flow.
 //
 // Backward compatibility: legacy `r1 run --task X` (no --output)
 // continues to dispatch to the classic workflow via runCmd.
@@ -36,7 +45,6 @@ import (
 
 	"github.com/RelayOne/r1/internal/chat"
 	"github.com/RelayOne/r1/internal/costtrack"
-	"github.com/RelayOne/r1/internal/hitl"
 	"github.com/RelayOne/r1/internal/plan"
 	"github.com/RelayOne/r1/internal/r1env"
 	"github.com/RelayOne/r1/internal/streamjson"
@@ -87,12 +95,17 @@ func runCommandExitCode(args []string) int {
 		branch   = fs.String("branch", "", "Branch name to check out")
 		model    = fs.String("model", "", "Override primary model")
 		sowPath  = fs.String("sow", "", "Path to SOW file; switches to SOW mode")
-		hitlTmo  = fs.Duration("hitl-timeout", 0, "HITL wait override (default 1h community, 15m enterprise)")
-		govTier  = fs.String("governance-tier", "community", "community (default) | enterprise")
+		govTier  = fs.String("governance-tier", "community", "community (default) | enterprise; echoed on the stream. HITL-gated soft-pass runs in `r1 sow`.")
 		taskFlag = fs.String("task", "", "Task prompt (alternative to positional)")
 		// Legacy-compatible flags consumed silently to avoid unknown-flag
 		// errors when callers reuse the `run` invocation shape.
 		_ = fs.String("repo-root", "", "(ignored in run mode — use --repo)")
+		// --hitl-timeout is accepted for CloudSwarm wire compatibility
+		// but has no effect in announce-only run mode: no descent /
+		// soft-pass ever executes here, so no HITL request can fire.
+		// The flag is honored by `r1 sow` (audit A032), which builds
+		// the HITL service via hitlWaitCeiling (hitl_wiring.go).
+		_ = fs.Duration("hitl-timeout", 0, "(accepted for compat; effective in `r1 sow`, which runs the HITL-gated descent)")
 	)
 	if err := fs.Parse(args); err != nil {
 		return ExitBudgetOrUsage
@@ -138,16 +151,10 @@ func runCommandExitCode(args []string) int {
 		return ExitBudgetOrUsage
 	}
 
-	// Governance-tier defaulting for the HITL wait ceiling.
-	waitTimeout := *hitlTmo
-	if waitTimeout <= 0 {
-		if *govTier == "enterprise" {
-			waitTimeout = 15 * time.Minute
-		} else {
-			waitTimeout = 1 * time.Hour
-		}
-	}
-	hitlSvc := hitl.New(emitter, os.Stdin, waitTimeout)
+	// No HITL service here (audit A032): announce-only run mode never
+	// dispatches descent workers, so a service would have zero
+	// consumers — `r1 sow` owns the HITL-gated soft-pass flow. The
+	// tier still shapes the stream events below.
 
 	// Emit session.start. The TwoLane session_id is carried on every
 	// downstream event so CloudSwarm can correlate lines.
@@ -203,9 +210,9 @@ func runCommandExitCode(args []string) int {
 	var exitCode int
 	switch {
 	case *sowPath != "":
-		exitCode = dispatchCloudSwarmSOW(ctx, *sowPath, *repoURL, *branch, *model, *govTier, emitter, hitlSvc)
+		exitCode = dispatchCloudSwarmSOW(ctx, *sowPath, *repoURL, *branch, *model, *govTier, emitter)
 	case taskSpec != "":
-		exitCode = dispatchCloudSwarmFreeText(ctx, taskSpec, *repoURL, *branch, *model, *govTier, emitter, hitlSvc)
+		exitCode = dispatchCloudSwarmFreeText(ctx, taskSpec, *repoURL, *branch, *model, *govTier, emitter)
 	default:
 		fmt.Fprintln(os.Stderr, "usage: r1 run --output stream-json [--sow PATH | TASK_SPEC]")
 		fs.PrintDefaults()
@@ -280,7 +287,6 @@ func dispatchCloudSwarmSOW(
 	ctx context.Context,
 	sowPath, repoURL, branch, model, govTier string,
 	emitter *streamjson.TwoLane,
-	hitlSvc *hitl.Service,
 ) int {
 	if _, err := os.Stat(sowPath); err != nil {
 		emitter.EmitTopLevel(streamjson.TypeError, map[string]any{
@@ -345,7 +351,6 @@ func dispatchCloudSwarmSOW(
 			"_stoke.dev/reason":  "announced; worker dispatch requires `r1 sow` with runner config",
 		})
 	}
-	_ = hitlSvc
 	_ = model
 	_ = ctx
 	return ExitPass
@@ -359,7 +364,6 @@ func dispatchCloudSwarmFreeText(
 	ctx context.Context,
 	taskSpec, repoURL, branch, model, govTier string,
 	emitter *streamjson.TwoLane,
-	hitlSvc *hitl.Service,
 ) int {
 	intent := chat.ClassifyIntent(taskSpec)
 	emitter.EmitSystem("task.dispatch", map[string]any{
@@ -384,7 +388,6 @@ func dispatchCloudSwarmFreeText(
 		"_stoke.dev/status":    "announce_only",
 		"_stoke.dev/tier":      govTier,
 	})
-	_ = hitlSvc
 	_ = model
 	_ = ctx
 	return 0

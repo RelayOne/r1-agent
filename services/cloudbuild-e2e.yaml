@@ -48,6 +48,19 @@ steps:
         cd cmd/r1-server/e2e
         R1_SERVER_UI_V2=1 R1_SERVER_SHARE_ENABLED=1 \
           go test -tags=e2e -timeout=10m -v ./...
+        # Spec 2 §6 T11 (audit A050): 3k-node graph FPS gate. Runs from
+        # the repo root against the main module with the e2e tag —
+        # graph_e2e_test.go lives in package main, one level above the
+        # e2e submodule, so the submodule run above never compiles it.
+        # The fixture seeder (graph_e2e_fixture.go) provisions the
+        # session DB in a temp R1_DATA_DIR inside the test.
+        cd /workspace
+        # graph-fps.mjs resolves `playwright` by walking ancestor
+        # node_modules dirs (ESM ignores NODE_PATH); link the web
+        # workspace install to the repo root so the runner finds it.
+        ln -sfn /workspace/web/node_modules /workspace/node_modules
+        R1_SERVER_UI_V2=1 \
+          go test -mod=vendor -tags=e2e -timeout=10m -run 'TestGraph3kFPS|TestSeedGraphFixture' -v ./cmd/r1-server
     env:
       - 'CGO_ENABLED=1'
 

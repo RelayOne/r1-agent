@@ -43,6 +43,7 @@ import {
   mountSettingsTrigger,
 } from "./panels/settings";
 import { mountDaemonStatus } from "./panels/daemon-status";
+import { reconcileAutostart } from "./lib/autostart";
 import { mountOnboarding } from "./onboarding/onboarding";
 import {
   mountDiscoveryWizard,
@@ -92,6 +93,21 @@ function mount(): void {
     console.error("[r1-desktop] #app mount point missing from index.html");
     return;
   }
+
+  // Launch-time auto-start reconciliation (audit A054): fixes OS-side
+  // drift against the persisted preference, making autostart.ts's
+  // "called once at app start" contract true. Fire-and-forget —
+  // non-Tauri builds reject inside the plugin bridge and land in the
+  // catch below.
+  void reconcileAutostart()
+    .then((res) => {
+      if (!res.ok) {
+        console.warn("[r1-desktop] autostart reconcile failed:", res.error);
+      }
+    })
+    .catch((err) => {
+      console.warn("[r1-desktop] autostart reconcile unavailable:", err);
+    });
 
   // Discovery wizard takes precedence over the generic onboarding
   // wizard on first launch when `~/.r1/daemon.json` is absent — spec
@@ -168,15 +184,13 @@ function mountAfterDiscovery(app: HTMLElement): void {
 
   // Daemon status pill — spec desktop-cortex-augmentation §5 +
   // checklist item 26. Sits in the title-bar region next to the
-  // settings trigger. mountDaemonStatus subscribes to `daemon.up` /
-  // `daemon.down` on the Tauri global event bus; in non-Tauri builds
-  // the listeners never fire and the pill stays in its default
-  // "offline (starting)" state. The four-state pill model also
-  // expects a `reconnect_status` lifecycle stream from the Rust
-  // transport.rs run-loop to drive `attempt` / `nextInMs` for the
-  // reconnecting state — that stream lands in a sister Rust PR; until
-  // then the pill flips to reconnecting/offline based purely on
-  // `daemon.down.will_retry`.
+  // settings trigger. mountDaemonStatus pulls one
+  // `app_discovery_status` snapshot at mount (closing the startup
+  // race where discovery resolves before listeners register) and
+  // subscribes to the `daemon.up` / `daemon.down` events main.rs
+  // setup_discovery emits (audit A053). In non-Tauri builds the
+  // snapshot invoke rejects, the listeners never fire, and the pill
+  // stays in its default "offline (starting)" state.
   const pillHost = document.createElement("div");
   pillHost.className = "r1-daemon-pill-host";
   toolbar.appendChild(pillHost);

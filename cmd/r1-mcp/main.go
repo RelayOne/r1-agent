@@ -263,7 +263,7 @@ var tools = []Tool{
 	},
 	{
 		Name:        "r1_delegate",
-		Description: "Create a delegation token granting a named policy bundle's scopes to a delegatee. Token is issued via trustplane.Client. Currently the stoke-mcp binary ships StubClient only; SOW task B-5 will add a NewFromEnv factory that swaps in RealClient (hand-written HTTP against the TrustPlane gateway, no Go SDK) when R1_TRUSTPLANE_MODE=real.",
+		Description: "Create a delegation token granting a named policy bundle's scopes to a delegatee. Token is issued via the trustplane client selected by truecom.NewFromEnv(): STOKE_TRUSTPLANE_MODE unset or \"stub\" → in-memory StubClient (local dev default); STOKE_TRUSTPLANE_MODE=real → RealClient against the TrustPlane gateway (requires TRUECOM_API_URL or legacy STOKE_TRUSTPLANE_URL plus an Ed25519 key via TRUECOM_API_KEY / STOKE_TRUSTPLANE_PRIVKEY[_FILE]).",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -324,14 +324,10 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) {
 
 // --- Tool handlers ---
 //
-// Each handler validates the shape and returns a synthetic
-// response for now. When the TrustPlane RealClient + capability
-// registry + verify pipeline are wired into the binary, these
-// become thin adapters over the real engines.
-//
-// The "stoke_X primitives exist" acceptance criterion is met
-// by the schema + response shape; the underlying engines are
-// already shipped in internal/ and get wired in a follow-up.
+// Each handler is a thin adapter over the real engines wired in
+// backends.go: skillmfr.Registry (invoke), verify.EvaluateRubric
+// (verify), ledger.AddNode (audit), and delegation.Manager backed
+// by the truecom.NewFromEnv()-selected trustplane client (delegate).
 
 func (s *Server) handleInvoke(ctx context.Context, req rpcRequest, args json.RawMessage) {
 	var a struct {

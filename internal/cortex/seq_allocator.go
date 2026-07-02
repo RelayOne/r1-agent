@@ -71,7 +71,18 @@ func (a *seqAllocator) run(initial uint64) {
 	for {
 		select {
 		case <-a.quit:
-			return
+			// Drain buffered requests before exiting: a caller that won
+			// the enqueue race must not block forever on its reply.
+			// close(reply) is the "stopped" signal (next() panics per
+			// its post-stop contract).
+			for {
+				select {
+				case reply := <-a.requests:
+					close(reply)
+				default:
+					return
+				}
+			}
 		case reply, ok := <-a.requests:
 			if !ok {
 				return
@@ -98,7 +109,26 @@ func (a *seqAllocator) next() uint64 {
 		panic("cortex: seq allocator stopped")
 	case a.requests <- reply:
 	}
-	return <-reply
+	// The enqueue can win the select even while quit is closed, and the
+	// writer may exit without servicing this request. Waiting on done as
+	// well (plus a final non-blocking read for the serviced-then-exited
+	// race) guarantees no caller is stranded on <-reply forever.
+	select {
+	case v, ok := <-reply:
+		if !ok {
+			panic("cortex: seq allocator stopped")
+		}
+		return v
+	case <-a.done:
+		select {
+		case v, ok := <-reply:
+			if ok {
+				return v
+			}
+		default:
+		}
+		panic("cortex: seq allocator stopped")
+	}
 }
 
 // Stop signals the writer goroutine to exit and blocks until it has.

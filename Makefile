@@ -1,5 +1,5 @@
-.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic smoke-coderadar
-.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic test-oneshot-concurrent
+.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic smoke-coderadar test-coderadar-integration
+.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic test-oneshot-concurrent test-fts5 test-race test-race-full
 
 # Default: run the CI gate
 all: build test vet
@@ -11,14 +11,31 @@ ci: build test vet lint-chdir
 # Build all binaries. Primary is ./cmd/r1; ./cmd/r1-acp is
 # the Agent Client Protocol adapter (S-U-002). Outputs land in
 # ./bin/ so build artifacts do not clutter the repo root.
+# VERSION is derived from git for release-quality binaries; a plain
+# `go build` still self-identifies via the embedded VCS revision
+# (see cmd/r1/version.go). Override on the command line for a pinned build.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION_LDFLAGS := -X main.version=$(VERSION)
+
 build:
 	mkdir -p bin
-	go build -tags sqlite_fts5 -o ./bin/r1 ./cmd/r1
+	go build -tags sqlite_fts5 -ldflags "$(VERSION_LDFLAGS)" -o ./bin/r1 ./cmd/r1
 	go build -o ./bin/r1-acp ./cmd/r1-acp
 
-# Run all tests
-test:
+# Run all tests. Depends on test-fts5 so the sqlite_fts5-gated
+# regression guard runs on every `make test` / `make ci` (audit A068).
+test: test-fts5
 	go test ./... -count=1 -timeout=120s
+
+# FTS5-tagged test lane (audit A068). The FTS5 dormancy regression
+# guard (internal/research/fts5_active_test.go) is behind
+# //go:build sqlite_fts5 — the tag `make build` ships with — so an
+# untagged `go test ./...` never even compiles it, and the exact
+# regression it was written to catch (Search silently degrading to
+# the LIKE fallback) would ship undetected. Also exercises wisdom's
+# opportunistic hasFTS/searchFTS path under the tag.
+test-fts5:
+	go test -tags sqlite_fts5 -count=1 -timeout=120s ./internal/research/ ./internal/wisdom/
 
 # Run go vet
 vet:
@@ -34,13 +51,23 @@ lint:
 lint-chdir:
 	./tools/lint-no-chdir.sh
 
+# CodeRadar hub-integration test (spec coderadar-dogfood.md T6).
+# Hermetic — the test spins up its own httptest ingest server; no DSN,
+# secret, or network access needed. Behind the coderadar_integration
+# build tag so the default `go test ./...` gate stays fast. Runs as a
+# prerequisite of smoke-coderadar so the Cloud Build deploy lane
+# (services/cloudbuild-deploy.yaml step smoke-coderadar) exercises the
+# six-subscriber wire-format contract on every deploy.
+test-coderadar-integration:
+	go test -tags=coderadar_integration -count=1 -timeout=60s ./internal/hub/builtin/
+
 # CodeRadar dogfood smoke (spec coderadar-dogfood.md T8).
 # Requires ENV=dev|staging|prod and either CODERADAR_DSN already set or
 # `gcloud` available to materialize the env-scoped secret. Builds only
 # the coderadar package and runs the live `service_started` round-trip
 # behind the coderadar_smoke build tag. Cloud Build invokes this step
 # after deploy-coord-api per services/cloudbuild-deploy.yaml.
-smoke-coderadar:
+smoke-coderadar: test-coderadar-integration
 	@test -n "$(ENV)" || (echo "ENV=dev|staging|prod required"; exit 1)
 	@if [ -z "$$CODERADAR_DSN" ]; then \
 	  echo "Materializing CODERADAR_DSN from Secret Manager..."; \
@@ -91,9 +118,34 @@ clean:
 	rm -rf dist/
 	rm -f coverage.out
 
-# Run tests with race detector
+# Race-detection lane over the core concurrency packages (HARD1).
+# These are the packages where goroutines, mutexes, and channels carry
+# the harness's real coordination load (event buses, cortex rounds,
+# scheduler dispatch, engine process groups, session stores, worktree
+# merge serialization, idle enforcement, memory stores). Focused so it
+# is fast enough for the nightly GitHub Actions lane
+# (.github/workflows/nightly.yml job race-core) and for local pre-push
+# runs; the full-repo sweep lives in test-race-full and the push-to-main
+# Cloud Build `race` step (cloudbuild.yaml) which runs ./... -race.
+# All packages below verified race-clean on 2026-07-02.
+RACE_CORE_PKGS := \
+	./internal/bus/... \
+	./internal/cortex/... \
+	./internal/scheduler/... \
+	./internal/engine/... \
+	./internal/session/... \
+	./internal/hub/... \
+	./internal/boulder/... \
+	./internal/worktree/... \
+	./internal/memory/...
+
 test-race:
-	go test ./... -race -count=1 -timeout=300s
+	go test $(RACE_CORE_PKGS) -race -count=1 -timeout=300s
+
+# Full-repo race sweep (formerly `test-race`). Slower; the Cloud Build
+# `race` step runs the equivalent (-mod=vendor) on every push to main.
+test-race-full:
+	go test ./... -race -count=1 -timeout=600s
 
 # Run tests with coverage
 test-cover:
@@ -160,13 +212,15 @@ lint-views:
 docs-agentic:
 	go run ./cmd/r1 mcp serve --print-tools --markdown > docs/AGENTIC-API-CATALOG.md
 	@echo "wrote docs/AGENTIC-API-CATALOG.md ($$(wc -l < docs/AGENTIC-API-CATALOG.md) lines)"
-# Verify package count hasn't drifted (CI check)
+# Verify package count hasn't drifted. Local drift guard (not wired into
+# CI); the expected count below is the single numeric source of truth —
+# docs reference it as "at last count".
 check-pkg-count:
-	@expected=180; \
+	@expected=251; \
 	actual=$$(find . -path ./vendor -prune -o -name "*.go" -print | xargs grep -l "^package " | sed 's|/[^/]*$$||' | sort -u | grep "^./internal/" | wc -l | tr -d ' '); \
 	if [ "$$actual" != "$$expected" ]; then \
 		echo "ERROR: internal package count drifted: expected $$expected, got $$actual"; \
-		echo "Update README.md, PACKAGE-AUDIT.md, and CLAUDE.md, then update this check."; \
+		echo "Update expected= in the Makefile check-pkg-count target, and refresh the 'at last count' figures in README.md, docs/README.md, docs/ARCHITECTURE.md, and CLAUDE.md."; \
 		exit 1; \
 	fi; \
 	echo "OK: $$actual internal packages (expected $$expected)"

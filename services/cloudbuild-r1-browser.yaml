@@ -28,9 +28,22 @@ options:
   machineType: E2_HIGHCPU_8
 
 steps:
+  # Gate: run the r1-browser module's tests before the image build
+  # (audit A045). services/r1-browser has its own go.mod, so the
+  # repo-root CI gate (`go test ./...`) never executes these tests.
+  - id: test-r1-browser
+    name: 'golang:1.25'
+    waitFor: ['-']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        (cd services/r1-browser && go test ./... -count=1 -timeout=120s)
+
   - id: build-r1-browser
     name: 'gcr.io/cloud-builders/docker'
-    waitFor: ['-']
+    waitFor: ['test-r1-browser']
     args:
       - build
       - --file=Dockerfile.r1-browser
@@ -44,9 +57,47 @@ steps:
     waitFor: ['build-r1-browser']
     args: [push, --all-tags, us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-browser]
 
+  # Hermetic pre-deploy smoke (audit A046): boot the freshly built image
+  # on the Cloud Build worker's docker daemon and probe /livez from
+  # inside the container's network namespace. R1_BROWSER_SKIP_CHROMIUM
+  # (services/r1-browser/main.go) serves /livez without launching
+  # Chromium. This is the pipeline's only data-plane check — the
+  # deployed service cannot be curled from the Cloud Build worker
+  # because it runs with --no-allow-unauthenticated and internal-only
+  # ingress (see the post-deploy control-plane check below).
+  - id: smoke-container
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-r1-browser']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        docker run -d --name r1-browser-smoke \
+          -e R1_BROWSER_SKIP_CHROMIUM=1 \
+          us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-browser:$SHORT_SHA
+        CODE=""
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          CODE=$(docker run --rm --network container:r1-browser-smoke \
+            curlimages/curl:8.11.1 -s -o /dev/null -w '%{http_code}' --max-time 5 \
+            http://localhost:8080/livez || true)
+          if [ "$$CODE" = "200" ]; then
+            echo "  container livez=200 (attempt $$i)"
+            break
+          fi
+          echo "  container livez=$$CODE — retrying"
+          sleep 2
+        done
+        docker logs r1-browser-smoke || true
+        docker rm -f r1-browser-smoke || true
+        if [ "$$CODE" != "200" ]; then
+          echo "  container smoke FAILED"
+          exit 1
+        fi
+
   - id: deploy-r1-browser
     name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
-    waitFor: ['push-r1-browser']
+    waitFor: ['push-r1-browser', 'smoke-container']
     entrypoint: bash
     args:
       - -c
@@ -68,7 +119,14 @@ steps:
           --service-account=r1-browser-runtime@$PROJECT_ID.iam.gserviceaccount.com \
           --ingress=internal-and-cloud-load-balancing
 
-  # Smoke check /livez on the deployed service. Skips /readyz —
+  # Post-deploy readiness via the control plane (audit A047). The
+  # service is deployed --no-allow-unauthenticated with internal-only
+  # ingress, so a data-plane curl from the (external, tokenless) Cloud
+  # Build worker is rejected at the ingress layer before IAM — and
+  # Cloud Run IAM applies to /livez like every other path; the app-level
+  # "livez is outside the WS auth" exemption never comes into play.
+  # Instead assert: service Ready=True AND the latest ready revision
+  # runs this build's image AND traffic points at that revision.
   # Chromium readiness is verified by the inhouse_live integration
   # test (T13b) which runs from CI separately.
   - id: smoke
@@ -79,20 +137,46 @@ steps:
       - -c
       - |
         set -euo pipefail
-        URL=$(gcloud run services describe r1-browser-${_ENV} --region=${_REGION} --format='value(status.url)')
-        echo "smoke: r1-browser-${_ENV} $$URL"
-        # /livez is unauthenticated (it's outside the WS path).
-        for i in 1 2 3 4 5; do
-          CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$$URL/livez")
-          if [ "$$CODE" = "200" ]; then
-            echo "  livez=200 (attempt $$i)"
-            exit 0
+        READY=""
+        for i in $(seq 1 30); do
+          READY=$(gcloud run services describe r1-browser-${_ENV} \
+            --region=${_REGION} \
+            --format='value(status.conditions[0].status)')
+          if [ "$$READY" = "True" ]; then
+            echo "  Ready=True (attempt $$i)"
+            break
           fi
-          echo "  livez=$$CODE — retrying"
+          echo "  Ready=$$READY — retrying"
           sleep 5
         done
-        echo "  smoke FAILED"
-        exit 1
+        if [ "$$READY" != "True" ]; then
+          echo "  readiness FAILED: service not Ready"
+          exit 1
+        fi
+        REV=$(gcloud run services describe r1-browser-${_ENV} \
+          --region=${_REGION} \
+          --format='value(status.latestReadyRevisionName)')
+        IMAGE=$(gcloud run revisions describe "$$REV" \
+          --region=${_REGION} \
+          --format='value(spec.containers[0].image)')
+        echo "  latestReadyRevision=$$REV image=$$IMAGE"
+        case "$$IMAGE" in
+          *:$SHORT_SHA)
+            echo "  revision image matches :$SHORT_SHA"
+            ;;
+          *)
+            echo "  readiness FAILED: revision image does not match :$SHORT_SHA"
+            exit 1
+            ;;
+        esac
+        SERVING=$(gcloud run services describe r1-browser-${_ENV} \
+          --region=${_REGION} \
+          --format='value(status.traffic[0].revisionName)')
+        if [ -n "$$SERVING" ] && [ "$$SERVING" != "$$REV" ]; then
+          echo "  readiness FAILED: traffic serves $$SERVING, expected $$REV"
+          exit 1
+        fi
+        echo "  smoke OK (control plane)"
 
 images:
   - us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-browser:$SHORT_SHA

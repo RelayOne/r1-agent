@@ -21,10 +21,14 @@
 // are in subscribe.go / prov.go respectively so each concern is
 // independently testable.
 //
-// Cedar policy enforcement is out of scope here — the Store takes
-// a PolicyEnforcer interface so callers inject whatever evaluator
-// they have (trustplane.RealClient.EvaluatePolicy in production,
-// which calls the TrustPlane gateway over HTTP; a mock in tests).
+// Access control is layered on top of this Store rather than baked
+// into it: NamespacedStore (namespace.go) wraps any Store with a
+// per-caller NamespaceAllowList plus an optional InferenceMonitor,
+// and the harness binds each stance to its collaboration namespace
+// via StanceMemory (internal/harness/sharedmem.go). Finer-grained
+// Cedar policy, if a deployment needs it, is evaluated by callers at
+// the tool-invocation boundary — this Store deliberately holds no
+// PolicyEnforcer of its own so the access model stays composable.
 package sharedmem
 
 import (

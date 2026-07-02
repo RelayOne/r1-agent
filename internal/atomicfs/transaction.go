@@ -240,34 +240,60 @@ func (tx *Transaction) Commit() error {
 	for _, op := range tx.ops {
 		if op.origExists {
 			data, err := os.ReadFile(op.Path)
-			if err == nil {
-				backups = append(backups, backup{path: op.Path, data: data})
+			if err != nil {
+				// Silently skipping would make rollback unable to
+				// restore this file after a later failure — abort
+				// while nothing has been applied yet (audit A014).
+				cleanup()
+				return fmt.Errorf("backup %s: %w", op.Path, err)
 			}
+			backups = append(backups, backup{path: op.Path, data: data})
 		}
 	}
 
 	// Phase 4: Apply (rename temps + delete)
 
-	rollback := func() {
+	var renamed []staged
+	rollback := func() []error {
+		var errs []error
+		// Un-create: files that were renamed into place but had no
+		// original must be removed, or "all changes apply or none do"
+		// is violated for every path that succeeded before the failure
+		// (audit A014).
+		for _, s := range renamed {
+			if !s.op.origExists {
+				if err := os.Remove(s.op.Path); err != nil && !os.IsNotExist(err) {
+					errs = append(errs, fmt.Errorf("rollback remove %s: %w", s.op.Path, err))
+				}
+			}
+		}
 		// Restore backups
 		for _, b := range backups {
-			os.WriteFile(b.path, b.data, 0644) // #nosec G306 -- atomic multi-file transaction target; 0644 preserves source perms.
+			if err := os.WriteFile(b.path, b.data, 0644); err != nil { // #nosec G306 -- atomic multi-file transaction target; 0644 preserves source perms.
+				errs = append(errs, fmt.Errorf("rollback restore %s: %w", b.path, err))
+			}
 		}
 		cleanup()
+		return errs
+	}
+	failWith := func(base error) error {
+		if errs := rollback(); len(errs) > 0 {
+			return fmt.Errorf("%w (rollback incomplete: %v)", base, errs)
+		}
+		return base
 	}
 
 	for _, s := range stg {
 		if err := os.Rename(s.tmpPath, s.op.Path); err != nil {
-			rollback()
-			return fmt.Errorf("rename %s: %w", s.op.Path, err)
+			return failWith(fmt.Errorf("rename %s: %w", s.op.Path, err))
 		}
+		renamed = append(renamed, s)
 	}
 
 	for _, op := range tx.ops {
 		if op.Kind == opKindDelete {
 			if err := os.Remove(op.Path); err != nil {
-				rollback()
-				return fmt.Errorf("delete %s: %w", op.Path, err)
+				return failWith(fmt.Errorf("delete %s: %w", op.Path, err))
 			}
 		}
 	}

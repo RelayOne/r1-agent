@@ -19,7 +19,12 @@ type Index struct {
 // NewIndex opens or creates the SQLite index at {rootDir}/.index.db.
 func NewIndex(rootDir string) (*Index, error) {
 	dbPath := filepath.Join(rootDir, ".index.db")
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+	// _busy_timeout=5000 makes a concurrent writer (a second r1/desktop-rpc
+	// process touching the same .stoke/ledger) wait up to 5s for the lock
+	// instead of failing instantly with SQLITE_BUSY, which would otherwise
+	// drop an index write and drift the index out of sync with the store.
+	// session.db (sqlstore.go) already uses this; parity here.
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open index db: %w", err)
 	}
@@ -103,6 +108,16 @@ func (idx *Index) InsertEdge(e Edge) error {
 		e.From, e.To, string(e.Type),
 	)
 	return err
+}
+
+// CountNodes returns the number of node rows in the index. Used by the
+// ledger's open-time consistency probe to detect index/store drift.
+func (idx *Index) CountNodes() (int, error) {
+	var n int
+	if err := idx.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // QueryNodes returns node IDs matching the given filter.

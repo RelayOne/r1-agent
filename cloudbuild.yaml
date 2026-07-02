@@ -122,6 +122,16 @@ steps:
       - -c
       - |
         set -euxo pipefail
+        # linux legs build with CGO + sqlite_fts5 (audit A006): the only
+        # SQLite driver is cgo-only mattn/go-sqlite3, so CGO_ENABLED=0
+        # ships a stub whose every Open() errors at runtime — --sqlite,
+        # session.db auto-detect, research/wisdom/membus FTS were all
+        # inert in every published linux binary. darwin/windows keep
+        # CGO_ENABLED=0: no osxcross/mingw in this image, matching the
+        # goreleaser r1-darwin build; SQLite-backed features are
+        # unavailable in those binaries.
+        apt-get update -q && apt-get install -y -q \
+          gcc-x86-64-linux-gnu gcc-aarch64-linux-gnu
         mkdir -p dist
         for OS_ARCH in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
           OS=$${OS_ARCH%/*}
@@ -130,12 +140,26 @@ steps:
           if [ "$$OS" = "windows" ]; then
             EXT=".exe"
           fi
-          CGO_ENABLED=0 GOOS=$$OS GOARCH=$$ARCH go build \
-            -mod=vendor \
-            -trimpath \
-            -ldflags "-s -w -X main.version=$SHORT_SHA" \
-            -o dist/r1-$${OS}-$${ARCH}$${EXT} \
-            ./cmd/r1
+          if [ "$$OS" = "linux" ]; then
+            CROSSCC=x86_64-linux-gnu-gcc
+            if [ "$$ARCH" = "arm64" ]; then
+              CROSSCC=aarch64-linux-gnu-gcc
+            fi
+            CGO_ENABLED=1 CC=$$CROSSCC GOOS=$$OS GOARCH=$$ARCH go build \
+              -mod=vendor \
+              -tags sqlite_fts5 \
+              -trimpath \
+              -ldflags "-s -w -X main.version=$SHORT_SHA" \
+              -o dist/r1-$${OS}-$${ARCH} \
+              ./cmd/r1
+          else
+            CGO_ENABLED=0 GOOS=$$OS GOARCH=$$ARCH go build \
+              -mod=vendor \
+              -trimpath \
+              -ldflags "-s -w -X main.version=$SHORT_SHA" \
+              -o dist/r1-$${OS}-$${ARCH}$${EXT} \
+              ./cmd/r1
+          fi
         done
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
@@ -151,9 +175,32 @@ steps:
           gcloud storage cp "$$f" "${_PUBLIC_BUCKET}/latest/$$(basename "$$f")"
         done
 
+  # Publish raw binaries to the downloads-CDN channel bucket (audit
+  # A005). services/r1-downloads-cdn serves
+  # https://downloads.r1.run/<channel>/<asset> from
+  # gs://relayone-488319-r1-releases/{prod,staging,dev}/<asset>; before
+  # this step NOTHING wrote channel-prefixed objects (the release
+  # pipeline uploads tarballs under <tag>/, which the CDN rejects), so
+  # the documented install URL was a structural 404. This config runs
+  # on push to main, so main == prod channel. Operator half: the Cloud
+  # Build SA needs write access (roles/storage.objectAdmin) on
+  # relayone-488319-r1-releases for this step to succeed.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: publish-r1-channel
+    waitFor: ['build-multi-platform-r1']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euxo pipefail
+        for f in dist/*; do
+          gcloud storage cp "$$f" "${_RELEASES_BUCKET}/prod/$$(basename "$$f")"
+        done
+
 options:
   logging: CLOUD_LOGGING_ONLY
   machineType: E2_HIGHCPU_8
 
 substitutions:
   _PUBLIC_BUCKET: gs://relayone-488319-public/r1
+  _RELEASES_BUCKET: gs://relayone-488319-r1-releases

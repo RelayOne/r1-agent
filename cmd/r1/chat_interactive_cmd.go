@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -63,6 +64,34 @@ type chatInteractiveSession struct {
 	conv      *conversation.Runtime
 	planFn    func(context.Context, string) (workflow.Result, error)
 	execFn    func(context.Context, string) (workflow.Result, error)
+
+	// Mid-turn input routing (audit A062; specs/cortex-core.md
+	// §"OnUserInputMidTurn"). midTurn is nil when --cortex=false or no
+	// provider is reachable; every field below is then inert and the
+	// session reads the scanner directly, exactly as before.
+	midTurn midTurnRouter
+	// lines is the single-reader stdin pump started by run() when
+	// midTurn is set; prompt() and the executeWithMidTurn listener
+	// both read from it so they never race on the scanner.
+	lines chan string
+	// readErr is the scanner error observed by the pump; read only
+	// after lines closes.
+	readErr error
+	// pendingLine holds a line the mid-turn listener received in the
+	// instant the turn ended; the next prompt() consumes it instead of
+	// routing it through a finished turn.
+	pendingLine *string
+	// queuedMu guards queued: appended by the mid-turn listener
+	// goroutine, popped by the main loop between tasks.
+	queuedMu sync.Mutex
+	// queued holds queue_mission briefs awaiting dispatch after the
+	// current task completes.
+	queued []string
+
+	// lanes is the tui-lanes panel controller, non-nil only when the
+	// session was started with --lanes (specs/tui-lanes.md item 27,
+	// audit A073). See chat_interactive_lanes_panel.go.
+	lanes *chatLanesPanel
 }
 
 var (
@@ -126,16 +155,43 @@ func runChatInteractiveCmd(args []string) error {
 		storePath: storePath,
 		conv:      conv,
 	}
+
+	// --lanes (parsed + stripped in chat_interactive_lanes.go): mount
+	// the Cortex lanes panel around each workflow phase. Failing the
+	// preconditions is an explicit error, never a silent no-op (audit
+	// A073 / specs/tui-lanes.md item 27).
+	if chatInteractiveLanesEnabled {
+		lanesPanel, err := newChatLanesPanel(cfg.CortexEnabled, isatty.IsTerminal(os.Stdin.Fd()))
+		if err != nil {
+			return err
+		}
+		session.lanes = lanesPanel
+		defer lanesPanel.Close()
+	}
+
 	session.planFn = func(ctx context.Context, task string) (workflow.Result, error) {
 		return session.runWorkflow(ctx, task, true)
 	}
 	session.execFn = func(ctx context.Context, task string) (workflow.Result, error) {
 		return session.runWorkflow(ctx, task, false)
 	}
+	// Mid-turn input routing (audit A062): a router-only cortex lets
+	// the operator interrupt / steer / queue while an execute turn is
+	// in flight. nil (no provider) leaves the session exactly as before.
+	if cfg.CortexEnabled {
+		if mt := buildMidTurnCortex(cfg); mt != nil {
+			session.midTurn = mt
+		}
+	}
 	return session.run(context.Background())
 }
 
 func (s *chatInteractiveSession) run(ctx context.Context) error {
+	// With mid-turn routing active, one pump goroutine owns the
+	// scanner for the session's lifetime (see startInputPump).
+	if s.midTurn != nil && s.lines == nil {
+		s.startInputPump()
+	}
 	fmt.Fprintln(s.out, chatTitleStyle.Render("⚡ R1 chat-interactive"))
 	fmt.Fprintln(s.out, chatDimStyle.Render("Type a task, then approve the generated plan. /quit exits."))
 	if turns := s.conv.TurnCount(); turns > 0 {
@@ -155,7 +211,7 @@ func (s *chatInteractiveSession) run(ctx context.Context) error {
 	fmt.Fprintln(s.out)
 
 	for {
-		task, err := s.prompt("task> ")
+		task, err := s.nextTask()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil
@@ -207,7 +263,10 @@ func (s *chatInteractiveSession) run(ctx context.Context) error {
 			switch decision {
 			case "y", "yes":
 				fmt.Fprintln(s.out, chatWarnStyle.Render("Executing..."))
-				result, execErr := s.execFn(ctx, currentTask)
+				if s.midTurn != nil {
+					fmt.Fprintln(s.out, chatDimStyle.Render("(keep typing — mid-turn input is routed: interrupt / steer / queue / chat)"))
+				}
+				result, execErr := s.executeWithMidTurn(ctx, currentTask)
 				if execErr != nil {
 					msg := "execute failed: " + execErr.Error()
 					fmt.Fprintf(s.out, "%s\n\n", chatErrStyle.Render(msg))
@@ -327,7 +386,11 @@ func (s *chatInteractiveSession) runWorkflow(ctx context.Context, task string, p
 		NativeAPIKey:    s.cfg.NativeAPIKey,
 		NativeModel:     s.cfg.NativeModel,
 		NativeBaseURL:   s.cfg.NativeBaseURL,
-		State:           taskstate.NewTaskState(runID),
+		// Shared bus so the native runner's cortex emits lane events
+		// onto the same bus the --lanes panel subscribes to. nil when
+		// --lanes is off (pre-lanes behavior).
+		EventBus: s.lanesEventBus(),
+		State:    taskstate.NewTaskState(runID),
 	})
 	if err != nil {
 		return workflow.Result{}, err
@@ -340,11 +403,36 @@ func (s *chatInteractiveSession) runWorkflow(ctx context.Context, task string, p
 	}
 	defer cancel()
 
+	if s.lanes != nil {
+		phase := "execute"
+		if planOnly {
+			phase = "plan"
+		}
+		return s.lanes.runUnderPanel(runCtx, phase, orchestrator.Run)
+	}
 	return orchestrator.Run(runCtx)
 }
 
 func (s *chatInteractiveSession) prompt(label string) (string, error) {
 	fmt.Fprint(s.out, chatPromptStyle.Render(label))
+	// A line the mid-turn listener caught right as the turn ended is
+	// consumed first (set before the listener joined; no lock needed).
+	if s.pendingLine != nil {
+		line := *s.pendingLine
+		s.pendingLine = nil
+		return line, nil
+	}
+	// Pump mode: the input pump owns the scanner (mid-turn routing).
+	if s.lines != nil {
+		line, ok := <-s.lines
+		if !ok {
+			if s.readErr != nil {
+				return "", s.readErr
+			}
+			return "", io.EOF
+		}
+		return line, nil
+	}
 	if !s.in.Scan() {
 		if err := s.in.Err(); err != nil {
 			return "", err

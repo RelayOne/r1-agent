@@ -311,6 +311,7 @@ func (o *Orchestrator) Run(ctx context.Context, query string, effort Effort) (Re
 	// Stage 2: fan-out. Pre-allocate the findings slice at full
 	// length so workers write into a stable index (no append race).
 	findings := make([]Findings, len(subObjs))
+	persistErr := make([]error, len(subObjs))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(maxPar)
 
@@ -357,10 +358,19 @@ func (o *Orchestrator) Run(ctx context.Context, query string, effort Effort) (Re
 				}
 			}
 			findings[i] = f
-			// Stage 2b: persist per-subagent files. Errors here are
-			// non-fatal — the run still produces an in-memory Report.
+			// Stage 2b: persist per-subagent files. Non-fatal for the
+			// run, but the failure must be RECORDED: the Lead path
+			// re-reads findings from disk, and an unwritten dir reads
+			// back as an empty Findings — silently degrading the
+			// report (audit A083).
 			if o.RunRoot != "" {
-				_ = writeSubagentDir(o.RunRoot, i, obj, f, clock())
+				if err := writeSubagentDir(o.RunRoot, i, obj, f, clock()); err != nil {
+					persistErr[i] = err
+					o.emit("subagent.persist_failed", map[string]any{
+						"index": i,
+						"error": err.Error(),
+					})
+				}
 			}
 			return nil
 		})
@@ -385,6 +395,14 @@ func (o *Orchestrator) Run(ctx context.Context, query string, effort Effort) (Re
 		if o.RunRoot != "" {
 			if loaded, err := readFindingsFromDisk(o.RunRoot, subObjs); err == nil {
 				rf = loaded
+				// Fall back to in-memory findings for exactly the
+				// subagents whose disk state failed to persist — their
+				// on-disk read is an empty Findings, not the truth.
+				for i, perr := range persistErr {
+					if perr != nil && i < len(rf) {
+						rf[i] = findings[i]
+					}
+				}
 			}
 		}
 		b, err := lead(ctx, q, rf)

@@ -103,6 +103,12 @@ func (l *RuleCheckLobe) Description() string {
 // Kind satisfies cortex.Lobe. Deterministic — no LLM calls.
 func (l *RuleCheckLobe) Kind() cortex.LobeKind { return cortex.KindDeterministic }
 
+// RunStyle satisfies cortex.RunStyler. Run blocks until ctx is
+// cancelled (durable-bus subscription), so the Lobe must be excluded
+// from the Round barrier — its runner invokes Run once at Cortex.Start
+// instead of per-round (audit A010).
+func (l *RuleCheckLobe) RunStyle() cortex.RunStyle { return cortex.RunStyleDaemon }
+
 // Run subscribes to supervisor.rule.fired events on the durable bus and
 // blocks until ctx is cancelled. The subscription is cancelled on exit
 // so a subsequent Run call after a daemon restart can re-register

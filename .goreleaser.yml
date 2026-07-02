@@ -7,6 +7,10 @@ before:
     - go mod tidy
     - go vet ./...
     - go test ./... -count=1 -timeout=120s
+    # sqlite_fts5-tagged lane (audit A068): the FTS5 dormancy guard in
+    # internal/research/fts5_active_test.go only compiles under the tag,
+    # which the untagged run above never sets.
+    - go test -tags sqlite_fts5 -count=1 -timeout=120s ./internal/research/ ./internal/wisdom/
 
 builds:
   - id: r1
@@ -16,11 +20,14 @@ builds:
       - CGO_ENABLED=1
     flags:
       - -trimpath
+      # sqlite_fts5 keeps research/wisdom FTS5 active in release
+      # binaries (audit A006) — without the tag Search silently
+      # degrades to the LIKE fallback despite working SQLite.
+      - -tags=sqlite_fts5
     ldflags:
       - -s -w -X main.version={{.Version}}
     goos:
       - linux
-      - darwin
     goarch:
       - amd64
       - arm64
@@ -33,14 +40,28 @@ builds:
         goarch: arm64
         env:
           - CC=aarch64-linux-gnu-gcc
-      - goos: darwin
-        goarch: amd64
-        env:
-          - CC=o64-clang
-      - goos: darwin
-        goarch: arm64
-        env:
-          - CC=o64-clang
+  - id: r1-darwin
+    # Darwin legs split out of the CGO 'r1' build (audit A044): linux
+    # needs CGO for mattn/go-sqlite3, but cross-compiling darwin with
+    # CGO requires osxcross (CC=o64-clang) which the release image
+    # (cloudbuild-release.yaml, golang:1.25) does not ship — the darwin
+    # legs failed with 'exec: o64-clang: not found' and aborted every
+    # tag release. CGO_ENABLED=0 compiles go-sqlite3's !cgo stub:
+    # SQLite-backed features error at runtime on darwin, matching the
+    # CGO_ENABLED=0 darwin binaries the GCS pipeline already ships.
+    main: ./cmd/r1
+    binary: r1
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
   - id: r1-acp
     # Agent Client Protocol adapter (S-U-002). Pure-Go JSON-RPC
     # stdio transport; no CGO dependency unlike the main r1

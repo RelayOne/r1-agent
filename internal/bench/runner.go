@@ -25,6 +25,21 @@ const concernTemplateMissingMarker = "concern: no template for"
 // Runner executes golden missions against the Stoke substrate.
 type Runner struct {
 	goldenDir string
+
+	// Provider drives the spawned stance's model turns. Nil means the
+	// offline deterministic default (a harness.MockProvider with zero
+	// cost) so golden missions never touch the network; callers wanting
+	// real model turns inject a real Provider (e.g. harness.APIProvider).
+	Provider harness.Provider
+
+	// UseFullTemplates opts a run into the production spawn path
+	// (harness.NewWithRoleTemplates): the full concern role-template
+	// registry renders ledger-backed sections end-to-end (audit
+	// A099/A100). Default false keeps the deliberately section-less
+	// bench templates below — the bench substrate exercises the
+	// lifecycle, not the concern content, and the full registry costs
+	// heavyweight ledger section work per spawn.
+	UseFullTemplates bool
 }
 
 // NewRunner creates a Runner that loads golden missions from goldenDir.
@@ -137,27 +152,69 @@ func (r *Runner) Run(ctx context.Context, mission *MissionConfig) (*RunResult, e
 	}
 	defer b.Close()
 
-	cb := concern.NewBuilder(l, b)
-	// Register minimal concern templates so spawn() can build a concern
-	// field for the dev/proposing and reviewer/reviewing roles. We use
-	// section-less templates intentionally — the bench substrate exercises
-	// the lifecycle, not the concern content. Importing the full
-	// internal/concern/templates registry would pull heavyweight ledger
-	// section dependencies into every bench test.
-	cb.RegisterTemplate("bench_dev_proposing", concern.Template{
-		Role: concern.RoleDev,
-		Face: concern.FaceProposing,
-	})
-	cb.RegisterTemplate("bench_reviewer_reviewing", concern.Template{
-		Role: concern.RoleReviewer,
-		Face: concern.FaceReviewing,
-	})
-
-	h := harness.New(harness.Config{
+	hcfg := harness.Config{
 		MissionID:     mission.ID,
 		DefaultModel:  "claude-opus-4-6",
 		OperatingMode: "full_auto",
-	}, l, b, cb)
+	}
+
+	// taskScope seeds SpawnRequest.TaskDAGScope. The section-less default
+	// keeps the mission ID; the full-template path swaps in a real task
+	// ledger node ID because dev_implementing_ticket's required
+	// task_dag_scope section walks the ledger graph from it.
+	taskScope := mission.ID
+
+	var h *harness.Harness
+	if r.UseFullTemplates {
+		// Production spawn path (audit A099/A100): seed the mission and
+		// task nodes the role template's required sections project, then
+		// let harness.NewWithRoleTemplates register the full registry.
+		goal := mission.Intent
+		if goal == "" {
+			goal = mission.Title
+		}
+		goalContent, _ := json.Marshal(map[string]string{"goal": goal})
+		if _, err := l.AddNode(ctx, ledger.Node{
+			Type:          "mission",
+			SchemaVersion: 1,
+			CreatedBy:     "bench-runner",
+			MissionID:     mission.ID,
+			Content:       goalContent,
+		}); err != nil {
+			return nil, fmt.Errorf("bench: seed mission node: %w", err)
+		}
+		taskContent, _ := json.Marshal(map[string]string{"summary": mission.Title})
+		taskNodeID, err := l.AddNode(ctx, ledger.Node{
+			Type:          "task",
+			SchemaVersion: 1,
+			CreatedBy:     "bench-runner",
+			MissionID:     mission.ID,
+			Content:       taskContent,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("bench: seed task node: %w", err)
+		}
+		taskScope = taskNodeID
+		h = harness.NewWithRoleTemplates(hcfg, l, b)
+	} else {
+		cb := concern.NewBuilder(l, b)
+		// Register minimal concern templates so spawn() can build a concern
+		// field for the dev/proposing and reviewer/reviewing roles. We use
+		// section-less templates intentionally — the bench substrate exercises
+		// the lifecycle, not the concern content. Importing the full
+		// internal/concern/templates registry would pull heavyweight ledger
+		// section dependencies into every bench test. Opt into the full
+		// registry per run via Runner.UseFullTemplates.
+		cb.RegisterTemplate("bench_dev_proposing", concern.Template{
+			Role: concern.RoleDev,
+			Face: concern.FaceProposing,
+		})
+		cb.RegisterTemplate("bench_reviewer_reviewing", concern.Template{
+			Role: concern.RoleReviewer,
+			Face: concern.FaceReviewing,
+		})
+		h = harness.New(hcfg, l, b, cb)
+	}
 
 	start := time.Now()
 
@@ -174,9 +231,9 @@ func (r *Runner) Run(ctx context.Context, mission *MissionConfig) (*RunResult, e
 	})
 
 	// Spawn a dev stance to execute the mission.
-	_, err = h.SpawnStance(ctx, harness.SpawnRequest{
+	handle, err := h.SpawnStance(ctx, harness.SpawnRequest{
 		Role:         "dev",
-		TaskDAGScope: mission.ID,
+		TaskDAGScope: taskScope,
 	})
 	if err != nil {
 		// If a concern Template is missing — e.g. callers using NewRunner
@@ -188,6 +245,22 @@ func (r *Runner) Run(ctx context.Context, mission *MissionConfig) (*RunResult, e
 			return nil, fmt.Errorf("bench: spawn stance: %w: %v", ErrFixtureBoundary, err)
 		}
 		return nil, fmt.Errorf("bench: spawn stance: %w", err)
+	}
+
+	// Drive the stance through at least one real runner turn so golden
+	// missions measure actual substrate work — worker.action events,
+	// between-turn checkpoint discipline, and token/cost accounting via
+	// cost_record ledger nodes (audit A041; previously the stance
+	// performed no work between spawn and mission.completed).
+	prov := r.Provider
+	if prov == nil {
+		prov = &harness.MockProvider{Responses: []*harness.ChatResponse{{
+			Content: "bench: golden mission acknowledged (offline substrate provider)",
+		}}}
+	}
+	stanceRunner := h.NewStanceRunner(prov, nil, harness.RunnerConfig{MaxTurns: 4})
+	if _, err := stanceRunner.Run(ctx, handle.ID, fmt.Sprintf("Execute golden mission %s: %s", mission.ID, mission.Title)); err != nil {
+		return nil, fmt.Errorf("bench: run stance: %w", err)
 	}
 
 	// Publish mission.completed event.

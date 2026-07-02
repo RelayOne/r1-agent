@@ -24,6 +24,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"html/template"
 	"net/http"
 	"strings"
@@ -243,27 +244,92 @@ func serveMemoryGraph(w http.ResponseWriter, r *http.Request) {
 	serveSessionGraph(w, r)
 }
 
-// buildGraphPayload returns the JSON payload graph.js hydrates from.
-// Empty-payload fallback while the per-session ledger lookup isn't
-// wired — graph.js still works, the scene just starts empty + the
-// SSE stream populates it.
-func buildGraphPayload(sessionID, memoryID string) []byte {
-	type emptyGraph struct {
-		Nodes     []struct{} `json:"nodes"`
-		Edges     []struct{} `json:"edges"`
-		Filter    string     `json:"filter,omitempty"`
-		MemoryID  string     `json:"memory_id,omitempty"`
-		SessionID string     `json:"session_id"`
+// graphPayloadDB is the server DB used by buildGraphPayload to load
+// the per-session ledger projection. Set by mountUI when a DB handle
+// is available; nil (DB-less unit tests exercising the static UI)
+// falls back to the empty payload + SSE population (audit A050).
+var graphPayloadDB *DB
+
+// v2GraphShapes mirrors the 11 shape pools in ui/js/graph.js. Node
+// types hash into this list deterministically so a given ledger node
+// type always renders with the same geometry.
+var v2GraphShapes = []string{
+	"sphere", "cube", "diamond", "octahedron", "cone", "icosahedron",
+	"cylinder", "plane", "torus", "hex_prism", "ring",
+}
+
+// shapeForNodeType maps a ledger node type onto one of the renderer's
+// shape pools. Core types get fixed shapes; everything else hashes
+// deterministically. Empty types render as spheres.
+func shapeForNodeType(t string) string {
+	switch t {
+	case "":
+		return "sphere"
+	case "mission":
+		return "icosahedron"
+	case "task":
+		return "cube"
+	case "worker", "stance":
+		return "cone"
+	case "verify", "verification":
+		return "octahedron"
+	case "merge":
+		return "torus"
 	}
-	g := emptyGraph{
-		Nodes:     []struct{}{},
-		Edges:     []struct{}{},
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(t))
+	return v2GraphShapes[int(h.Sum32())%len(v2GraphShapes)]
+}
+
+// buildGraphPayload returns the JSON payload graph.js hydrates from:
+// the session's ledger nodes + edges projected from the server DB via
+// GetLedger (audit A050 — this was an empty-payload stub until the
+// per-session ledger lookup landed). A nil DB, empty session id, or
+// lookup failure degrades to the empty payload; the SSE stream can
+// still populate the scene incrementally.
+func buildGraphPayload(sessionID, memoryID string) []byte {
+	type graphNode struct {
+		ID    string `json:"id"`
+		Shape string `json:"shape"`
+		Type  string `json:"node_type,omitempty"`
+	}
+	type graphEdge struct {
+		Source string `json:"source"`
+		Target string `json:"target"`
+		Type   string `json:"edge_type,omitempty"`
+	}
+	payload := struct {
+		Nodes     []graphNode `json:"nodes"`
+		Edges     []graphEdge `json:"edges"`
+		Filter    string      `json:"filter,omitempty"`
+		MemoryID  string      `json:"memory_id,omitempty"`
+		SessionID string      `json:"session_id"`
+	}{
+		Nodes:     []graphNode{},
+		Edges:     []graphEdge{},
 		SessionID: sessionID,
 	}
 	if memoryID != "" {
-		g.Filter = "memory"
-		g.MemoryID = memoryID
+		payload.Filter = "memory"
+		payload.MemoryID = memoryID
 	}
-	out, _ := json.Marshal(g)
+	if graphPayloadDB != nil && sessionID != "" {
+		if snap, err := graphPayloadDB.GetLedger(sessionID); err == nil {
+			for _, n := range snap.Nodes {
+				payload.Nodes = append(payload.Nodes, graphNode{
+					ID: n.ID, Shape: shapeForNodeType(n.Type), Type: n.Type,
+				})
+			}
+			for _, e := range snap.Edges {
+				if e.From == "" || e.To == "" {
+					continue
+				}
+				payload.Edges = append(payload.Edges, graphEdge{
+					Source: e.From, Target: e.To, Type: e.Type,
+				})
+			}
+		}
+	}
+	out, _ := json.Marshal(payload)
 	return out
 }

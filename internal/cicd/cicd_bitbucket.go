@@ -79,9 +79,11 @@ func bitbucketTrigger(opts Options) string {
 func bitbucketJobStep(opts Options) string {
 	switch opts.Mode {
 	case ModeReview:
-		return bitbucketStepBlock(opts, "R1 code review",
+		// audit A056: `r1 review` never existed; `r1 audit` is the
+		// shipped review surface.
+		return bitbucketStepBlock(opts, "R1 code review (audit personas)",
 			[]string{
-				`r1 review --policy "$R1_POLICY" --pr-id "$BITBUCKET_PR_ID" --output bitbucket-comment`,
+				`r1 audit --repo . --json | tee r1-review.json`,
 			})
 	case ModeAutoFix:
 		return bitbucketStepBlock(opts, "R1 auto-fix",

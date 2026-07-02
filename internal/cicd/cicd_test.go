@@ -19,7 +19,7 @@ func TestGenerateGitHub_Review(t *testing.T) {
 		"ANTHROPIC_API_KEY",
 		"pull_request",
 		"actions/checkout",
-		"r1 review",
+		"r1 audit",
 		"jobs:",
 		"steps:",
 		"on:",
@@ -81,7 +81,7 @@ func TestGenerateGitLab_Review(t *testing.T) {
 		"ANTHROPIC_API_KEY",
 		"stages:",
 		"script:",
-		"r1 review",
+		"r1 audit",
 		"merge_request_event",
 	} {
 		if !strings.Contains(yaml, want) {
@@ -121,7 +121,7 @@ func TestGenerateCircleCI_Review(t *testing.T) {
 		"jobs:",
 		"steps:",
 		"ANTHROPIC_API_KEY",
-		"r1 review",
+		"r1 audit",
 		"workflows:",
 	} {
 		if !strings.Contains(yaml, want) {
@@ -207,7 +207,7 @@ func TestDefaultOptions(t *testing.T) {
 		t.Fatalf("GenerateConfig with defaults: %v", err)
 	}
 	// Should have defaulted to review mode.
-	if !strings.Contains(yaml, "r1 review") {
+	if !strings.Contains(yaml, "r1 audit") {
 		t.Error("default mode should be review")
 	}
 }

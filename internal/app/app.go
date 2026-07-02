@@ -7,8 +7,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/RelayOne/r1/internal/boulder"
+	"github.com/RelayOne/r1/internal/bridge"
 	"github.com/RelayOne/r1/internal/convergence"
 	"github.com/RelayOne/r1/internal/config"
 	"github.com/RelayOne/r1/internal/env"
@@ -69,7 +71,7 @@ type RunConfig struct {
 	Pools            *subscriptions.Manager
 	Worktrees        *worktree.Manager
 	State            *taskstate.TaskState
-	Wisdom           *wisdom.Store       // cross-task learning (nil = disabled)
+	Wisdom           wisdom.Recorder     // cross-task learning (nil = disabled); *wisdom.Store or persistent *wisdom.SQLiteStore
 	Boulder          *boulder.Enforcer   // idle agent detection (nil = disabled)
 	CostTracker      *costtrack.Tracker  // per-session cost tracking (nil = disabled)
 	Recorder         *replay.Recorder    // session replay recording (nil = disabled)
@@ -83,7 +85,14 @@ type RunConfig struct {
 	RBACPolicy       *rbac.Policy        // RBAC enforcement (nil = no enforcement)
 	RBACIdentity     string              // identity for RBAC checks (e.g., username or API key)
 	Memory           *memory.Store              // cross-session persistent knowledge (nil = disabled)
-	Telemetry        *telemetry.Collector       // structured metrics collector (nil = disabled)
+	// Telemetry is the structured metrics collector for the run. When
+	// nil, New auto-constructs one (in-memory, cheap) so every
+	// production run records task lifecycle metrics; read it back via
+	// Orchestrator.Telemetry() / telemetry.Collector.Format(). Pass a
+	// shared Collector to aggregate across runs. (Audit A096: this
+	// used to say "nil = disabled" with no production path able to
+	// enable it.)
+	Telemetry *telemetry.Collector
 	Convergence      *convergence.Validator     // adversarial self-audit gate (nil = auto-created)
 	// ConvergenceIgnores is the CTO-approved ignore list used to filter
 	// false positives before the convergence gate decides to block a
@@ -144,6 +153,13 @@ type Orchestrator struct {
 	governor *governance.Governor // V2 governance bridge (nil = disabled)
 }
 
+// Telemetry returns the run's structured metrics collector. It is
+// always non-nil after New (auto-constructed when not injected — audit
+// A096); render it with Format() or aggregate via Summary().
+func (o *Orchestrator) Telemetry() *telemetry.Collector {
+	return o.cfg.Telemetry
+}
+
 // New creates an Orchestrator from the given config, loading and validating the policy file.
 func New(cfg RunConfig) (*Orchestrator, error) {
 	// Validate required inputs at the API boundary.
@@ -158,6 +174,14 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 	}
 	if cfg.AuthMode == "" {
 		cfg.AuthMode = AuthModeMode1
+	}
+	// Auto-construct the telemetry collector (audit A096): an in-memory
+	// collector is cheap, and constructing it here means task lifecycle
+	// metrics exist on every production run instead of never (no
+	// RunConfig site ever set this field). Injected collectors are
+	// honored so callers can aggregate across runs.
+	if cfg.Telemetry == nil {
+		cfg.Telemetry = telemetry.New()
 	}
 
 	// Run preflight checks: log warnings for any failed checks (advisory, not blocking).
@@ -198,6 +222,16 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 		if len(policy.Files.Protected) > 0 {
 			cfg.EventBus.Register(hub.FileProtectionGate(policy.Files.Protected))
 		}
+
+		// Register the honesty enforcement suite per the policy's
+		// honesty: block (see honesty_boot.go). The LLM-backed checkers
+		// only activate when a judge provider can be built (same
+		// key-selection logic as the convergence override judge).
+		judgeModel := policy.Honesty.JudgeModel
+		if judgeModel == "" {
+			judgeModel = cfg.NativeModel
+		}
+		registerHonestySubscribers(cfg.EventBus, policy.Honesty, buildJudgeProvider(cfg), judgeModel)
 
 		// Discover and register plugin hooks as hub script subscribers.
 		pluginReg := plugins.NewRegistry(r1dir.JoinFor(cfg.RepoRoot, "plugins"))
@@ -253,11 +287,25 @@ func DefaultPolicyYAML() string {
 }
 
 // Run executes the full workflow: auto-detects build commands, sets up worktrees, and runs plan/execute/verify phases.
-func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
+func (o *Orchestrator) Run(ctx context.Context) (res workflow.Result, err error) {
 	// Release the V2 governance layer (supervisor + ledger + bus) when
 	// the run finishes. No-op when governance is disabled (governor nil).
+	//
+	// The Governor is a wildcard ModeObserve subscriber on the hub bus, so
+	// its terminal task-lifecycle / declaration / cost writes to the ledger
+	// and v2 bus run on the hub's fire-and-forget observe goroutines. Drain
+	// the hub bus BEFORE closing the governor so those trailing writes are
+	// not lost to a closed bus+ledger (enhance R3). Drain is bounded at 5s so
+	// a wedged observe handler cannot hang teardown.
 	if o.governor != nil {
 		defer func() {
+			if o.cfg.EventBus != nil {
+				drainCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if derr := o.cfg.EventBus.Drain(drainCtx); derr != nil {
+					fmt.Fprintf(os.Stderr, "[governance] warning: bus drain timed out: %v\n", derr)
+				}
+				cancel()
+			}
 			if err := o.governor.Close(); err != nil {
 				fmt.Fprintf(os.Stderr, "[governance] warning: close failed: %v\n", err)
 			}
@@ -271,30 +319,46 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		}
 	}
 
-	// Record telemetry event for task start.
+	// Record task lifecycle telemetry. The collector is auto-constructed
+	// in New (audit A096), so these events fire on every run; task.end
+	// carries duration, success, and cost so Summary()/Format() output
+	// is meaningful. Readable via Orchestrator.Telemetry().
 	if o.cfg.Telemetry != nil {
+		runStart := time.Now()
 		o.cfg.Telemetry.Record(telemetry.Event{
-			Name: "task.start",
-			Tags: map[string]string{"task_type": o.cfg.TaskType, "repo": o.cfg.RepoRoot},
+			Name:     "task.start",
+			Category: "task",
+			Success:  true,
+			Tags:     map[string]string{"task_type": o.cfg.TaskType, "repo": o.cfg.RepoRoot},
 		})
 		defer func() {
 			o.cfg.Telemetry.Record(telemetry.Event{
-				Name: "task.end",
-				Tags: map[string]string{"task_type": o.cfg.TaskType},
+				Name:     "task.end",
+				Category: "task",
+				Duration: time.Since(runStart),
+				Success:  err == nil,
+				Cost:     res.TotalCostUSD,
+				Tags:     map[string]string{"task_type": o.cfg.TaskType},
 			})
 		}()
 	}
 
-	// Load cross-session knowledge if a memory store is provided.
-	if o.cfg.Memory != nil {
-		entries := o.cfg.Memory.Recall(o.cfg.Task, 5)
-		for _, e := range entries {
-			if o.cfg.Wisdom != nil {
-				o.cfg.Wisdom.Record(o.cfg.Task, wisdom.Learning{
-					Category:    wisdom.Gotcha,
-					Description: e.Content,
-				})
-			}
+	// Load cross-session knowledge if a memory store is provided. On
+	// governed runs the learnings are routed through the WisdomBridge
+	// (audit A037) so wisdom.learning.recorded bus events and
+	// wisdom_learning ledger nodes fire; the bridge wraps the SAME
+	// store, so prompt injection sees identical state either way.
+	if o.cfg.Memory != nil && o.cfg.Wisdom != nil {
+		recordLearning := o.cfg.Wisdom.Record
+		if o.governor != nil {
+			wb := bridge.NewWisdomBridgeWithStore(o.governor.Bus(), o.governor.Ledger(), o.cfg.Wisdom)
+			recordLearning = wb.Record
+		}
+		for _, e := range o.cfg.Memory.Recall(o.cfg.Task, 5) {
+			recordLearning(o.cfg.Task, wisdom.Learning{
+				Category:    wisdom.Gotcha,
+				Description: e.Content,
+			})
 		}
 	}
 
@@ -412,6 +476,26 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 				Model:    o.cfg.NativeModel,
 			}
 		}
+	}
+	// Bridge verification observability into the v2 governance bus +
+	// ledger on governed runs (audit A037): the workflow engine executes
+	// its own policy-filtered pipeline per attempt, so the bridge
+	// announces the run up front and publishes the final outcomes
+	// (verify.completed event + "verification" ledger node) when the
+	// workflow returns. Background context on the completion write: the
+	// run context may already be canceled on failure paths and the
+	// observability write should still land.
+	if o.governor != nil {
+		vb := bridge.NewVerifyBridge(o.governor.Bus(), o.governor.Ledger(), buildCmd, testCmd, lintCmd)
+		taskID := o.cfg.WorktreeName
+		if taskID == "" {
+			taskID = o.cfg.TaskType
+		}
+		missionID := o.governor.MissionID()
+		vb.PublishStarted(o.cfg.RepoRoot, taskID, missionID)
+		defer func() {
+			vb.PublishCompleted(context.Background(), taskID, missionID, res.Verification, err == nil)
+		}()
 	}
 	return wf.Run(ctx)
 }
@@ -543,17 +627,17 @@ func Doctor(claudeBin, codexBin string, showProviders bool) string {
 				if key == "" {
 					return "OPENROUTER_API_KEY not set", false
 				}
-				return "key configured", true
+				return "key configured (router-defined; not yet wired as execution runner)", true
 			}},
 			{"Direct API (Anthropic)", func() (string, bool) {
 				key := os.Getenv("ANTHROPIC_API_KEY")
 				if key == "" {
 					return "ANTHROPIC_API_KEY not set", false
 				}
-				return "key configured", true
+				return "key configured (router-defined; not yet wired as execution runner)", true
 			}},
 			{"Lint-only (fallback)", func() (string, bool) {
-				return "always available", true
+				return "router-defined; not yet wired as execution runner", true
 			}},
 		}
 

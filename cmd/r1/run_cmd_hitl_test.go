@@ -66,29 +66,21 @@ func TestHITLEndToEndRoundtrip(t *testing.T) {
 
 // TestHITLGovernanceTierTimeoutsDefault locks the timeout defaults
 // from spec-2 item 12: enterprise=15m, community=1h. Timer selection
-// is exercised in hitl_test.go; here we assert the run_cmd.go branch
-// that picks the right default.
+// is exercised in hitl_test.go; here we assert the real shared
+// resolver (hitlWaitCeiling, hitl_wiring.go) that sowCmd uses when
+// constructing the production hitl.Service (audit A032 — this test
+// previously mirrored a since-removed inline block in run_cmd.go).
 func TestHITLGovernanceTierTimeoutsDefault(t *testing.T) {
-	// Mirror the defaulting block in runCommandExitCode.
-	resolveTimeout := func(override time.Duration, tier string) time.Duration {
-		if override > 0 {
-			return override
-		}
-		if tier == "enterprise" {
-			return 15 * time.Minute
-		}
-		return 1 * time.Hour
-	}
-	if got := resolveTimeout(0, "enterprise"); got != 15*time.Minute {
+	if got := hitlWaitCeiling("enterprise", 0); got != 15*time.Minute {
 		t.Errorf("enterprise default=%v, want 15m", got)
 	}
-	if got := resolveTimeout(0, "community"); got != 1*time.Hour {
+	if got := hitlWaitCeiling("community", 0); got != 1*time.Hour {
 		t.Errorf("community default=%v, want 1h", got)
 	}
-	if got := resolveTimeout(0, ""); got != 1*time.Hour {
+	if got := hitlWaitCeiling("", 0); got != 1*time.Hour {
 		t.Errorf("empty tier default=%v, want 1h", got)
 	}
-	if got := resolveTimeout(5*time.Minute, "enterprise"); got != 5*time.Minute {
+	if got := hitlWaitCeiling("enterprise", 5*time.Minute); got != 5*time.Minute {
 		t.Errorf("override should win: got %v", got)
 	}
 }

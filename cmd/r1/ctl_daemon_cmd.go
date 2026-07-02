@@ -10,7 +10,7 @@ package main
 // daemon discovered via ~/.r1/daemon.json:
 //
 //   r1 ctl discover                   print the discovery file as JSON
-//   r1 ctl info                       hit /v1/queue/health
+//   r1 ctl info                       hit /v1/daemon/info
 //   r1 ctl sessions list              GET /v1/queue/tasks
 //   r1 ctl sessions get <id>          GET /v1/queue/tasks/get?id=...
 //   r1 ctl sessions start --title T --prompt P
@@ -24,7 +24,7 @@ package main
 //   r1 ctl tasks [--state S]          alias for sessions list (filter)
 //   r1 ctl pause                      POST /v1/queue/pause
 //   r1 ctl resume                     POST /v1/queue/resume
-//   r1 ctl shutdown                   POST /v1/queue/shutdown (POST /pause then exits)
+//   r1 ctl shutdown                   POST /v1/daemon/shutdown (404 → /v1/queue/pause)
 //
 // Auth path. The spec says peer-cred on the unix socket means no token
 // is required, but the current daemon HTTP listener is loopback TCP +
@@ -65,7 +65,9 @@ func runCtlDaemonCmd(args []string, stdout, stderr io.Writer) int {
 	case "discover":
 		return ctlDiscover(rest, stdout, stderr)
 	case "info":
-		return ctlGet("/v1/queue/health", rest, stdout, stderr)
+		// O1: /v1/daemon/info is mounted on the default serve mux (no
+		// --enable-queue-routes needed), unlike /v1/queue/health.
+		return ctlGet("/v1/daemon/info", rest, stdout, stderr)
 	case "sessions":
 		return ctlSessions(rest, stdout, stderr)
 	case "enqueue":
@@ -83,12 +85,12 @@ func runCtlDaemonCmd(args []string, stdout, stderr io.Writer) int {
 	case "resume":
 		return ctlPost("/v1/queue/resume", nil, rest, stdout, stderr)
 	case "shutdown":
-		// daemon.shutdown isn't exposed on the queue mux; pause is the
-		// closest non-destructive equivalent. Operators who need a
-		// hard-kill use `kill <pid>` with the PID from `r1 ctl
-		// discover`. This verb returns 0 + a hint when the daemon is
-		// reachable so scripts can tee the result.
-		return ctlPost("/v1/queue/pause", nil, rest, stdout, stderr)
+		// O1: real kill-switch. POST /v1/daemon/shutdown unwinds the
+		// serve loop (same signal as the daemon.shutdown RPC). Old
+		// daemons that predate that route answer 404; we fall back to the
+		// best-effort /v1/queue/pause so the verb degrades rather than
+		// erroring against them.
+		return ctlShutdown(rest, stdout, stderr)
 	case "help", "-h", "--help":
 		ctlDaemonUsage(stdout)
 		return 0
@@ -107,7 +109,7 @@ const ctlDaemonUsageText = `r1 ctl — operator control of the per-user r1 serve
 
 USAGE:
   r1 ctl discover                       Show discovery file as JSON.
-  r1 ctl info                           Health probe (GET /v1/queue/health).
+  r1 ctl info                           Daemon metadata (GET /v1/daemon/info).
   r1 ctl sessions list [--state S]      List queued tasks (= sessions).
   r1 ctl sessions get <id>              Show one task.
   r1 ctl sessions start --title T --prompt P [--priority N]
@@ -120,7 +122,7 @@ USAGE:
   r1 ctl tasks     [--state S]          alias for sessions list.
   r1 ctl pause                          Pause workers.
   r1 ctl resume                         Resume workers.
-  r1 ctl shutdown                       Pause workers (best-effort signal).
+  r1 ctl shutdown                       Stop the daemon (POST /v1/daemon/shutdown).
 
 DISCOVERY:
   r1 ctl reads ~/.r1/daemon.json (mode 0600 enforced) for the daemon's
@@ -130,11 +132,12 @@ DISCOVERY:
 // ---- transport ------------------------------------------------------
 
 // ctlTransport encapsulates the resolved daemon endpoint + bearer.
-// Today: loopback HTTP + Bearer. Future: unix-domain HTTP w/ peer-cred.
+// Two transports: unix-domain HTTP w/ peer-cred (preferred when the
+// daemon's control socket is alive) and loopback HTTP + Bearer.
 type ctlTransport struct {
 	BaseURL string // http://127.0.0.1:<port>
 	Token   string
-	Sock    string // unix socket path (informational; not used yet)
+	Sock    string // unix control socket path written by `r1 serve` (see pickClientAndURL)
 }
 
 // resolveTransport reads ~/.r1/daemon.json and returns the dial info.
@@ -313,6 +316,44 @@ func ctlPost(path string, payload any, extra []string, stdout, stderr io.Writer)
 	}
 	if code >= 400 {
 		fmt.Fprintf(stderr, "ctl %s: %d %s\n", path, code, strings.TrimSpace(string(out)))
+		return 1
+	}
+	fmt.Fprintln(stdout, prettyOrRaw(out))
+	return 0
+}
+
+// ctlShutdown is the O1 kill-switch. It POSTs /v1/daemon/shutdown —
+// the plain-HTTP route runServeLoop mounts on the default serve mux —
+// which unwinds the serve loop via the same signal as the
+// daemon.shutdown RPC. Old daemons predating that route answer 404; we
+// fall back to the best-effort /v1/queue/pause so the verb degrades
+// rather than erroring against them. Uses the same pickClientAndURL /
+// httpDoCtlVia transport as every other verb (unix peer-cred when the
+// control socket is alive, loopback + bearer otherwise).
+func ctlShutdown(extra []string, stdout, stderr io.Writer) int {
+	if len(extra) > 0 {
+		fmt.Fprintf(stderr, "ctl: unexpected args: %v\n", extra)
+		return 2
+	}
+	tx, err := resolveTransport()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	client, url, token := pickClientAndURL(tx, "/v1/daemon/shutdown")
+	out, code, err := httpDoCtlVia(client, "POST", url, token, nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "ctl shutdown: %v\n", err)
+		return 1
+	}
+	if code == http.StatusNotFound {
+		// Old daemon without the O1 route: degrade to a best-effort
+		// queue pause so scripts still get a non-error exit.
+		fmt.Fprintln(stderr, "ctl shutdown: daemon has no /v1/daemon/shutdown; falling back to /v1/queue/pause (best-effort)")
+		return ctlPost("/v1/queue/pause", nil, nil, stdout, stderr)
+	}
+	if code >= 400 {
+		fmt.Fprintf(stderr, "ctl shutdown: %d %s\n", code, strings.TrimSpace(string(out)))
 		return 1
 	}
 	fmt.Fprintln(stdout, prettyOrRaw(out))

@@ -109,6 +109,25 @@ func TestAutoLoadPolicyDiscovers(t *testing.T) {
 	}
 }
 
+// TestAutoLoadPolicyDiscoversStokePolicyYAML covers audit A017: ~10 CLI
+// help strings tell operators to create stoke.policy.yaml, but the
+// discovery list only had the .yml spelling — the documented file was
+// silently ignored and DefaultPolicy used instead.
+func TestAutoLoadPolicyDiscoversStokePolicyYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stoke.policy.yaml")
+	if err := os.WriteFile(path, []byte(DefaultPolicyYAML()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := AutoLoadPolicy(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Phases["execute"].BuiltinTools) == 0 {
+		t.Fatal("stoke.policy.yaml was not discovered (fell back to empty phases)")
+	}
+}
+
 func TestAutoLoadPolicyFallsBackToDefault(t *testing.T) {
 	dir := t.TempDir()
 	// No policy file exists

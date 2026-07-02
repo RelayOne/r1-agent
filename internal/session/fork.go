@@ -51,14 +51,21 @@ func (s *Store) ForkSession(parentID, branchName, description string) (*Fork, er
 		return nil, err
 	}
 
-	// Copy current session state to fork
+	// Copy current session state to fork. Errors must surface: a fork
+	// reported as created whose state file silently failed to write
+	// resumes from nothing later.
 	parentState, _ := s.LoadState()
 	if parentState != nil {
 		forkState := *parentState
 		forkState.PlanID = fork.ID
-		forkData, _ := json.MarshalIndent(&forkState, "", "  ")
+		forkData, err := json.MarshalIndent(&forkState, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("session: marshal fork state: %w", err)
+		}
 		statePath := filepath.Join(forksDir, fork.ID+"-state.json")
-		os.WriteFile(statePath, forkData, 0o600)
+		if err := os.WriteFile(statePath, forkData, 0o600); err != nil {
+			return nil, fmt.Errorf("session: write fork state: %w", err)
+		}
 	}
 
 	return fork, nil

@@ -153,12 +153,13 @@ Cancel + send are covered by R1D-1.4 and live in the Tauri-only layer
 | Descent state | 2 |
 | Lane control (§2.7) | 4 |
 | Daemon control (§2.8) | 2 |
-| **Total** | **17** |
+| Workdir binding (§2.9) | 1 |
+| **Total** | **18** |
 
 Tauri-only commands (§5) add 6 more verbs that do not round-trip to the
 Go subprocess: `session.send`, `session.cancel`, `skill.list`,
 `skill.get`, `app.popout_lane`, `app.open_folder_picker`. Grand total
-across the `invoke_handler` surface: **23**.
+across the `invoke_handler` surface: **24**.
 
 ### 2.7 Lane control (4)
 
@@ -178,6 +179,14 @@ serialisable value.
 | `session.lanes.unsubscribe` | `{ "subscription_id": string, "session_id"?: string }` | `{ "ok": true }` | `not_found` |
 | `session.lanes.kill` | `{ "session_id": string, "lane_id": string }` | `{ "killed_at": iso8601 }` | `not_found`, `conflict` |
 
+These names are canonical. On the `r1 serve` daemon dispatcher,
+`session.lanes.list` / `session.lanes.kill` are registered as aliases of
+the daemon's internal `lanes.list` / `lanes.kill` verbs (responses use
+the daemon shapes from `internal/server/jsonrpc/daemonapi.go` until the
+WS transport switch); `session.lanes.subscribe` /
+`session.lanes.unsubscribe` return `not_implemented` there because lane
+subscription is owned by the Rust host (audit A052/A029).
+
 ### 2.8 Daemon control (2)
 
 Added by spec `desktop-cortex-augmentation` §6.1. Reflects the
@@ -190,6 +199,22 @@ live `version` + `uptime_s`.
 |---|---|---|---|
 | `daemon.status` | `{}` | `{ "url": string, "mode": "external"\|"sidecar", "version": string, "uptime_s": integer }` | `not_found` |
 | `daemon.shutdown` | `{ "graceful"?: boolean (default true) }` | `{ "shutdown_at": iso8601 }` | `internal` |
+
+On the `r1 serve` daemon dispatcher `daemon.status` is registered as an
+alias of the daemon's internal `daemon.info` verb and returns the
+daemon-info shape until the WS transport switch (audit A029).
+
+### 2.9 Workdir binding (1)
+
+Added by spec `desktop-cortex-augmentation` §7. Binds a session to an
+absolute workdir (the daemon side maps it to `cmd.Dir`). Per §7 of the
+spec the Go handler MUST refuse with `conflict` while a tool call is in
+flight; until that real handler lands, the subprocess routes the verb
+and returns `not_implemented`.
+
+| Method | Params | Result | Errors |
+|---|---|---|---|
+| `session.set_workdir` | `{ "session_id": string, "workdir": string }` | `{ "ok": true, "workdir": string }` | `conflict`, `not_found` |
 
 ---
 

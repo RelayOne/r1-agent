@@ -5,12 +5,18 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/RelayOne/r1/internal/config"
 	"github.com/RelayOne/r1/internal/r1dir"
 	"gopkg.in/yaml.v3"
 )
 
 // writeOutput creates the .stoke/ directory, writes config.yaml, copies skill
-// files from the library, and writes the rationale document.
+// files from the library, writes the rationale document, and emits
+// r1.policy.yaml at the project root. The policy file is the artifact
+// downstream config loading (config.LoadPolicy / --policy discovery)
+// actually reads; config.yaml is the richer wizard-native representation
+// (audit A076: RunWizard previously emitted only config.yaml, which no
+// shipped code loads).
 func writeOutput(root string, r *WizardResult) error {
 	stokeDir := r1dir.JoinFor(root)
 	if err := os.MkdirAll(stokeDir, 0755); err != nil {
@@ -39,7 +45,85 @@ func writeOutput(root string, r *WizardResult) error {
 
 	// Write rationale document
 	rationalePath := filepath.Join(stokeDir, "wizard-rationale.md")
-	return os.WriteFile(rationalePath, []byte(renderDetailedRationale(r)), 0644) // #nosec G306 -- wizard-generated config consumed by user tooling; 0644 is appropriate.
+	if err := os.WriteFile(rationalePath, []byte(renderDetailedRationale(r)), 0644); err != nil { // #nosec G306 -- wizard-generated config consumed by user tooling; 0644 is appropriate.
+		return fmt.Errorf("write rationale: %w", err)
+	}
+
+	// Emit r1.policy.yaml at the project root. Reuses the legacy
+	// generator so the output stays loadable by config.LoadPolicy —
+	// the round-trip is enforced by TestGenerateYAMLRoundTripsThroughLoadPolicy
+	// and TestRunWizardEmitsLoadablePolicy.
+	lw := &Wizard{ProjectDir: root, Prefs: policyPreferences(root, r)}
+	policyPath := filepath.Join(root, "r1.policy.yaml")
+	if err := os.WriteFile(policyPath, []byte(lw.GenerateYAML()), 0644); err != nil { // #nosec G306 -- wizard-generated config consumed by user tooling; 0644 is appropriate.
+		return fmt.Errorf("write policy: %w", err)
+	}
+	return nil
+}
+
+// policyPreferences maps the modern WizardResult onto the legacy
+// Preferences shape so GenerateYAML — the single r1.policy.yaml
+// generator — renders one consistent policy artifact regardless of
+// which wizard flow produced the decisions (audit A076).
+func policyPreferences(root string, r *WizardResult) Preferences {
+	p := Preferences{
+		ProjectName:          r.Config.Project.Name,
+		PrimaryModel:         r.Config.Models.Architect,
+		ReviewModel:          r.Config.Models.Reviewer,
+		ModelStrategy:        r.Config.Models.Strategy,
+		SecurityPosture:      r.Config.Security.Posture,
+		DataSensitivity:      r.Config.Security.DataSensitivity,
+		ComplianceFrameworks: r.Config.Security.Compliance,
+		Infrastructure:       r.Config.Infrastructure.Providers,
+		DetectedDomains:      r.Config.Domains,
+		TeamSize:             r.Config.Team.Size,
+		OpenSource:           r.Config.Team.OpenSource,
+		ProviderPreference:   ProviderBestFit,
+	}
+
+	// Maturity stage → legacy scale tier (comment metadata only).
+	switch r.Config.Project.Stage {
+	case "prototype":
+		p.ScaleTier = ScalePrototype
+	case stageMVP:
+		p.ScaleTier = ScaleStartup
+	case "growth":
+		p.ScaleTier = ScaleGrowth
+	default:
+		p.ScaleTier = ScaleEnterprise
+	}
+
+	// Review mode → adversarial depth. This drives the parsed
+	// verification.cross_model_review gate (DepthMaximum ⇒ required).
+	switch r.Config.Quality.ReviewMode {
+	case "cross_model", "multi":
+		p.AdversarialDepth = DepthMaximum
+	default:
+		if r.Config.Quality.Verification == "light" {
+			p.AdversarialDepth = DepthLight
+		} else {
+			p.AdversarialDepth = DepthStandard
+		}
+	}
+
+	switch r.Config.Quality.CodeQuality {
+	case "relaxed":
+		p.PolishLevel = PolishShipIt
+	case "strict":
+		p.PolishLevel = PolishPerfectionist
+	default:
+		p.PolishLevel = PolishProduction
+	}
+
+	if r.Profile != nil {
+		p.GitStats.IsMonorepo = r.Profile.HasMonorepo
+	}
+
+	// Build/test/lint commands feed the parsed allowed_rules and
+	// verification gates of the emitted policy.
+	cmds := config.DetectCommands(root)
+	p.BuildCmd, p.TestCmd, p.LintCmd = cmds.Build, cmds.Test, cmds.Lint
+	return p
 }
 
 // copySkills copies skill files from library locations to the project .stoke/skills/.

@@ -226,7 +226,9 @@ func (t *localTransport) KillAll(ctx context.Context) error {
 	}
 	var errs []error
 	for _, l := range t.ws.Lanes() {
-		if l == nil || l.IsTerminal() {
+		// Snapshot for the status read: KillAll runs on the panel
+		// goroutine while lane owners may be transitioning concurrently.
+		if l == nil || l.Snapshot().IsTerminal() {
 			continue
 		}
 		if err := l.Kill("cancelled_by_operator"); err != nil {
@@ -257,11 +259,13 @@ func (t *localTransport) Pin(_ context.Context, laneID string, pinned bool) erro
 // snapshotFromCortex copies the cortex Lane fields into a LaneSnapshot.
 // The TUI carries fewer fields than the cortex Lane (no ParentID,
 // LobeName, etc.) — those are not surfaced in the panel render.
+// Snapshot (not Clone) because the panel reads lanes concurrently with
+// Transition/Kill writers; Snapshot copies under the workspace mutex.
 func snapshotFromCortex(l *cortex.Lane) LaneSnapshot {
 	if l == nil {
 		return LaneSnapshot{}
 	}
-	c := l.Clone()
+	c := l.Snapshot()
 	return LaneSnapshot{
 		ID:        c.ID,
 		Title:     c.Label,
@@ -398,14 +402,16 @@ func StatusToHub(s LaneStatus) hub.LaneStatus {
 //     LaneEvent envelopes onto out
 //   - replies $/pong to server $/ping notifications
 //
-// Kill / KillAll / Pin / List are routed as JSON-RPC requests over
-// the same connection (methods r1.lanes.kill, r1.lanes.killAll,
-// r1.lanes.pin, r1.lanes.list — matching the MCP tool names from
-// internal/mcp/lanes_schemas.go). The server-side WS handler does
-// not yet route these methods; the TUI client thus surfaces the
-// JSON-RPC -32601 reply as an error to the user. Wire format is
-// defined; wiring the server methods is owned by the r1d-server
-// build phase.
+// Kill / Pin / List are routed as JSON-RPC requests over the same
+// connection (methods r1.lanes.kill, r1.lanes.pin, r1.lanes.list —
+// matching the MCP tool names from internal/mcp/lanes_schemas.go).
+// KillAll is deliberately NOT a wire method: the lanes protocol ships
+// no r1.lanes.killAll RPC anywhere (MCP LaneToolNames lists only
+// list/subscribe/get/kill/pin), so kill-all is implemented client-side
+// as an iterated r1.lanes.kill over every non-terminal lane returned
+// by r1.lanes.list — matching localTransport.KillAll semantics (audit
+// A040/A073 killAll decision). Server-side routing of the three wire
+// methods is owned by the r1d server-wire phase (internal/server).
 type remoteTransport struct {
 	addr  string // host:port (no scheme)
 	token string // bearer for Sec-WebSocket-Protocol token slot
@@ -983,12 +989,32 @@ func (t *remoteTransport) Kill(ctx context.Context, laneID string) error {
 	return nil
 }
 
-// KillAll issues r1.lanes.killAll.
+// KillAll terminates every non-terminal lane by iterating r1.lanes.kill
+// over the r1.lanes.list snapshot. There is no r1.lanes.killAll wire
+// method (see the transport doc block above); this mirrors
+// localTransport.KillAll: errors are joined with errors.Join so the
+// operator sees every failure, and ctx cancellation aborts the sweep
+// early with the errors accumulated so far.
 func (t *remoteTransport) KillAll(ctx context.Context) error {
-	_, err := t.callRPC(ctx, "r1.lanes.killAll", map[string]any{
-		"reason": "cancelled_by_operator",
-	})
-	return err
+	snaps, err := t.List(ctx)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, s := range snaps {
+		if s.Status.IsTerminal() {
+			continue
+		}
+		if err := t.Kill(ctx, s.ID); err != nil {
+			errs = append(errs, fmt.Errorf("kill %s: %w", s.ID, err))
+		}
+		// Best-effort context check to bail out fast on cancellation,
+		// matching localTransport.KillAll.
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(errs, err)...)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Pin toggles the orthogonal pinned flag via r1.lanes.pin.

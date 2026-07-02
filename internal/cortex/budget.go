@@ -62,12 +62,15 @@ func (s *LobeSemaphore) Release() {
 //
 // All methods are safe for concurrent use; mu guards both counters.
 //
-// LobeRunner integration contract (spec item 21): once TASK-9's
-// LobeRunner is wired in lobe.go, its runOnce path consults this
-// tracker after a successful Acquire. When Exceeded() reports true the
-// runner Releases the slot and emits "cortex.lobe.budget_skipped"
-// rather than invoking the LLM. The wiring lives in lobe.go (TASK-9)
-// per the agreed split between the two tasks.
+// LobeRunner integration (spec item 21, wired by audit A061): Cortex.New
+// hands its tracker to every LobeRunner; runOnce consults it for
+// KindLLM lobes after a successful Acquire — when Exceeded() reports
+// true the runner returns early (the deferred Release frees the slot)
+// and emits EventCortexLobeBudgetSkipped instead of invoking the LLM.
+// Cortex.MidturnNote calls ResetRound before each round's TickRound
+// fan-out so the accumulator measures one round in isolation, and LLM
+// lobes receive the tracker via LobeInput.Budget so they can Charge
+// output tokens after each model call.
 type BudgetTracker struct {
 	mu                  sync.Mutex
 	mainOutputLastTurn  int

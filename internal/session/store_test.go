@@ -1,6 +1,8 @@
 package session
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -124,5 +126,30 @@ func TestLoadAttemptsMissing(t *testing.T) {
 	}
 	if attempts != nil {
 		t.Errorf("expected nil for missing task, got %d attempts", len(attempts))
+	}
+}
+
+// TestSaveAttemptRefusesToWipeCorruptHistory covers audit A085: an
+// unreadable/corrupt attempt-history file must abort SaveAttempt, not be
+// silently replaced with a fresh 1-element history (which reset attempt
+// numbering and erased the failure record retry escalation depends on).
+func TestSaveAttemptRefusesToWipeCorruptHistory(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	if err := s.SaveAttempt(Attempt{TaskID: "t1", Number: 1}); err != nil {
+		t.Fatal(err)
+	}
+	// Corrupt the history file (store roots under the r1dir layout).
+	histPath := filepath.Join(s.root, "history", "t1.json")
+	if err := os.WriteFile(histPath, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveAttempt(Attempt{TaskID: "t1", Number: 2}); err == nil {
+		t.Fatal("expected error on corrupt history, got silent overwrite")
+	}
+	// The corrupt file must still be there (not replaced with fresh history).
+	b, err := os.ReadFile(histPath)
+	if err != nil || string(b) != "{not json" {
+		t.Fatalf("history file replaced despite error: %q err=%v", b, err)
 	}
 }

@@ -40,6 +40,41 @@ const (
 	KindLLM
 )
 
+// RunStyle describes how a Lobe's Run participates in the superstep
+// Round barrier.
+//
+//   - RunStyleRound (the default): Run returns once per tick. The
+//     runner signals Round.Done after each Run, so the Lobe counts as
+//     a Round participant and MidturnNote waits on it.
+//   - RunStyleDaemon: Run blocks until ctx is cancelled (long-lived
+//     subscription drainers like walkeeper / rulecheck). Daemon Lobes
+//     are EXCLUDED from the Round barrier — counting them would stall
+//     every MidturnNote at the full RoundDeadline because their Run
+//     never returns (audit A010). Their runner invokes Run exactly
+//     once at Start instead of per-tick.
+type RunStyle int
+
+const (
+	RunStyleRound RunStyle = iota
+	RunStyleDaemon
+)
+
+// RunStyler is the optional interface a Lobe implements to declare a
+// non-default RunStyle. Lobes that do not implement it are treated as
+// RunStyleRound (per-tick Run, Round-barrier participant).
+type RunStyler interface {
+	RunStyle() RunStyle
+}
+
+// lobeRunStyle resolves the effective RunStyle for a Lobe: the value
+// declared via the optional RunStyler interface, else RunStyleRound.
+func lobeRunStyle(l Lobe) RunStyle {
+	if s, ok := l.(RunStyler); ok {
+		return s.RunStyle()
+	}
+	return RunStyleRound
+}
+
 // LobeInput is the read-only context handed to each Lobe per Round.
 type LobeInput struct {
 	Round     uint64
@@ -47,6 +82,14 @@ type LobeInput struct {
 	Workspace WorkspaceReader     // read-only Workspace handle
 	Provider  provider.Provider   // model client (Lobes use as needed)
 	Bus       *hub.Bus            // for emitting status events
+
+	// Budget is the shared per-round output-token cap (30% of the main
+	// agent's last turn; spec item 21). LLM Lobes MUST call
+	// Budget.Charge(id, usage) after each model invocation so the
+	// runner's Exceeded gate accumulates real consumption. Nil when the
+	// runner was constructed without a tracker (legacy tests).
+	// Deterministic Lobes may ignore it — they spend no model tokens.
+	Budget *BudgetTracker
 }
 
 // WorkspaceReader is the read-only subset Lobes get. Forces the contract
@@ -107,11 +150,46 @@ const lobeStopTimeout = 5 * time.Second
 // without blocking when the Lobe is mid-Run; if a tick is already
 // pending, additional ticks are coalesced (TASK-14 only requires
 // "begin one round" semantics, not exactly-N delivery).
+// EventCortexLobeBudgetSkipped is emitted (Custom: lobe_id, round,
+// budget) when a KindLLM runner skips its round because the shared
+// BudgetTracker reports the per-round 30% output cap is already
+// exhausted (spec item 21). Declared here rather than in internal/hub
+// so the cortex package owns its own telemetry vocabulary; hub.EventType
+// is an open string type.
+const EventCortexLobeBudgetSkipped hub.EventType = "cortex.lobe.budget_skipped"
+
 type LobeRunner struct {
 	lobe Lobe
 	ws   *Workspace
 	sem  *LobeSemaphore
 	bus  *hub.Bus
+
+	// tracker is the shared per-round output-token budget (spec item
+	// 21). Consulted by runOnce for KindLLM lobes AFTER a successful
+	// semaphore Acquire: when Exceeded() reports true the round is
+	// skipped (the deferred Release frees the slot) and
+	// cortex.lobe.budget_skipped is emitted. Nil disables the gate
+	// (legacy tests construct runners without a tracker).
+	tracker *BudgetTracker
+
+	// style caches lobeRunStyle(lobe) at construction time. Daemon
+	// runners invoke lobe.Run exactly once at Start (Run blocks until
+	// ctx is cancelled) and never consume ticks; round runners follow
+	// the tick-per-round protocol.
+	style RunStyle
+
+	// prov is the model client forwarded to Lobes via LobeInput.Provider.
+	// Set by Cortex.New via SetProvider; nil for tests that construct
+	// runners directly without a provider.
+	prov provider.Provider
+
+	// roundHistory holds the conversation history for the current round.
+	// Cortex.MidturnNote deep-copies the loop's messages once per round
+	// and stores the copy here (via SetRoundHistory) before TickRound;
+	// buildInput loads it into LobeInput.History. Atomic because the
+	// producer (MidturnNote, loop goroutine) and the consumer (runOnce,
+	// runner goroutine) race by design.
+	roundHistory atomic.Pointer[[]agentloop.Message]
 
 	// tick signals "Cortex has started a new round; please run once".
 	// Producers (TASK-14 Cortex.MidturnNote) send non-blockingly; the
@@ -145,19 +223,43 @@ type LobeRunner struct {
 }
 
 // NewLobeRunner constructs an unstarted LobeRunner bound to the given
-// Lobe, writable Workspace, semaphore, and event bus. bus may be nil
-// (events are silently dropped); ws may be nil only for tests that do
-// not exercise Publish. The returned runner is ready for exactly one
-// Start call.
-func NewLobeRunner(lobe Lobe, ws *Workspace, sem *LobeSemaphore, bus *hub.Bus) *LobeRunner {
+// Lobe, writable Workspace, semaphore, event bus, and per-round budget
+// tracker. bus may be nil (events are silently dropped); ws may be nil
+// only for tests that do not exercise Publish; tracker may be nil to
+// disable the per-round output-budget gate (Cortex.New always passes
+// its tracker so production LLM lobes are capped — spec item 21). The
+// returned runner is ready for exactly one Start call.
+func NewLobeRunner(lobe Lobe, ws *Workspace, sem *LobeSemaphore, bus *hub.Bus, tracker *BudgetTracker) *LobeRunner {
 	return &LobeRunner{
 		lobe:    lobe,
 		ws:      ws,
 		sem:     sem,
 		bus:     bus,
+		tracker: tracker,
+		style:   lobeRunStyle(lobe),
 		tick:    make(chan struct{}, 1),
 		stopped: make(chan struct{}),
 	}
+}
+
+// Style returns the runner's cached RunStyle (resolved from the Lobe's
+// optional RunStyler interface at construction time).
+func (r *LobeRunner) Style() RunStyle { return r.style }
+
+// SetProvider binds the model client forwarded to the Lobe via
+// LobeInput.Provider. Called by Cortex.New with cfg.Provider; safe to
+// leave unset (LobeInput.Provider stays nil — deterministic Lobes
+// never touch it). Not safe to call concurrently with runOnce; bind
+// once before Start, which Cortex.New does.
+func (r *LobeRunner) SetProvider(p provider.Provider) { r.prov = p }
+
+// SetRoundHistory stores the conversation history handed to the Lobe
+// on its next runOnce via LobeInput.History. Callers must pass a copy
+// they will not mutate afterwards — Cortex.MidturnNote deep-copies the
+// loop's messages once per round and shares that copy across runners
+// (Lobes hold History read-only per the LobeInput contract).
+func (r *LobeRunner) SetRoundHistory(history []agentloop.Message) {
+	r.roundHistory.Store(&history)
 }
 
 // Tick returns the runner's tick channel. Test callers send on this
@@ -226,6 +328,16 @@ func (r *LobeRunner) run(ctx context.Context) {
 		}
 	}()
 
+	// Daemon-style Lobes (walkeeper, rulecheck) block inside Run until
+	// ctx is cancelled: invoke Run exactly once at Start instead of
+	// per-tick. They never signal the Round barrier (Cortex.New skips
+	// SetRound for daemons), so a permanently-blocked Run cannot stall
+	// MidturnNote at the RoundDeadline (audit A010).
+	if r.style == RunStyleDaemon {
+		r.runOnce(ctx)
+		return
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -285,6 +397,18 @@ func (r *LobeRunner) runOnce(ctx context.Context) {
 		defer r.sem.Release()
 	}
 
+	// Per-round output budget gate (spec item 21, audit A061):
+	// consulted for KindLLM lobes AFTER a successful Acquire — the
+	// spec's Acquire-then-check ordering keeps slot accounting
+	// symmetrical (the deferred Release above frees the slot on this
+	// early return). Deterministic lobes are exempt: they spend no
+	// model output tokens. Note the tracker fails closed — with no
+	// main turn recorded yet the budget is 0 and Exceeded() is true.
+	if r.lobe.Kind() == KindLLM && r.tracker != nil && r.tracker.Exceeded() {
+		r.emitBudgetSkipped(roundID)
+		return
+	}
+
 	in := r.buildInput(ctx)
 	in.Round = roundID
 	_ = r.lobe.Run(ctx, in)
@@ -303,12 +427,19 @@ func (r *LobeRunner) signalDone(roundID uint64) {
 
 // buildInput constructs the per-round LobeInput. The Workspace is
 // wrapped in the read-only adapter so the Lobe cannot reach Publish
-// through a type assertion; History and Provider are populated by
-// TASK-14 wiring and are nil at this layer.
+// through a type assertion. History comes from the per-round stash
+// populated by Cortex.MidturnNote via SetRoundHistory (nil when no
+// round has fired yet, e.g. a daemon Lobe's Start-time Run); Provider
+// is the Cortex-level model client bound via SetProvider.
 func (r *LobeRunner) buildInput(ctx context.Context) LobeInput {
 	_ = ctx
 	in := LobeInput{
-		Bus: r.bus,
+		Bus:      r.bus,
+		Provider: r.prov,
+		Budget:   r.tracker,
+	}
+	if h := r.roundHistory.Load(); h != nil {
+		in.History = *h
 	}
 	if r.ws != nil {
 		in.Workspace = WorkspaceReaderFor(r.ws)
@@ -380,6 +511,24 @@ func (r *LobeRunner) emitStarted() {
 		Custom: map[string]any{
 			"lobe_id":   r.lobe.ID(),
 			"lobe_kind": r.lobe.Kind(),
+		},
+	})
+}
+
+// emitBudgetSkipped publishes a cortex.lobe.budget_skipped event when
+// the per-round output budget gate suppresses a KindLLM lobe's Run
+// (spec item 21). Safe with a nil bus. Only called with a non-nil
+// tracker (the gate short-circuits otherwise).
+func (r *LobeRunner) emitBudgetSkipped(roundID uint64) {
+	if r.bus == nil {
+		return
+	}
+	r.bus.EmitAsync(&hub.Event{
+		Type: EventCortexLobeBudgetSkipped,
+		Custom: map[string]any{
+			"lobe_id": r.lobe.ID(),
+			"round":   roundID,
+			"budget":  r.tracker.RoundOutputBudget(),
 		},
 	})
 }

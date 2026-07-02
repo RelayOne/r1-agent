@@ -9,7 +9,7 @@ Complete feature inventory for r1 as of 2026-05-15. Status reflects the merged s
 | Plan / execute / verify / review loop | One strong implementer + adversarial cross-model reviewer is more reliable than loose multi-agent consensus | Done | `internal/app/`, `internal/workflow/`, `internal/mission/`, `internal/verify/`, `internal/critic/`, `internal/convergence/` |
 | Adversarial review posture | Refuses to call work "done" without evidence; gates on AC + git state + tool-call log | Done | `internal/critic/`, `internal/convergence/`, `internal/engine/` |
 | Content-addressed evidence model | Every node has `sha256:<hex>` content ID; survives daemon restart via WAL replay | Done | `internal/ledger/`, `internal/bus/`, `internal/session/` |
-| Five-provider model fallback | Provider-agnostic; degrades from Claude → Codex → OpenRouter → direct API → lint-only | Done | `internal/model/`, `internal/subscriptions/` |
+| Model fallback (Claude → Codex wired) | Router defines five tiers but the workflow engine marks OpenRouter / direct API / Ember / lint-only unavailable as runners; automatic degradation today is Claude → Codex | Partial | `internal/model/`, `internal/subscriptions/`, `internal/workflow/` |
 | Cost-aware resolver + budget enforcement | Blocks turns when over-budget; per-task cost ticks journaled | Done | `internal/costtrack/`, `internal/model/CostAwareResolve` |
 | Anti-truncation enforcement | Refuses end-turn while plan items unchecked or truncation phrases emitted; layered machine-mechanical defense against LLM self-reduction | Done | `internal/antitrunc/`, `internal/agentloop/antitrunc.go`, `internal/supervisor/rules/antitrunc/`, `cmd/r1/antitrunc_cmd.go`, `docs/ANTI-TRUNCATION.md` |
 | Claude Code Stop-hook integration | `r1 antitrunc --hook-mode` emits the JSON envelope Claude Code's Stop hook expects; wires R1's 12-regex truncation catalog + plan-coverage check into any Claude Code workspace via `.claude/settings.json` | Done | `cmd/r1/antitrunc_cmd.go` `--hook-mode`/`--plan`/`--input` flags |
@@ -58,7 +58,7 @@ Complete feature inventory for r1 as of 2026-05-15. Status reflects the merged s
 | 250 ms coalesce | Single fan-in `chan laneTickMsg`; ≤10 Hz visible rerender | Done | `internal/tui/lanes/runProducer` |
 | Render-string cache | Diff-only repaint per lane | Done | `internal/tui/lanes/Model` |
 | Keybindings | `1`–`9` jump-to-lane, `tab`/`shift-tab` cycle, `j`/`k` move, `enter` focus, `esc` exit, `x`+`y` kill, `K` kill-all, `?` help | Done | `internal/tui/lanes/keymap` |
-| `--lanes` flag | Wired into `r1 chat-interactive` | Done | `cmd/r1/chat_interactive.go` |
+| `--lanes` flag | `r1 chat-interactive --lanes` mounts the panel around each plan/execute phase (`lanes.Mount` + `NewLocalTransport` on the session cortex workspace; shared hub bus reaches the native runner's cortex); explicit error with `--cortex=false` or no TTY | Done | `cmd/r1/chat_interactive_lanes.go`, `cmd/r1/chat_interactive_lanes_panel.go` |
 | 72 tests `-race` clean | Catches lane FSM regressions | Done | `internal/tui/lanes/*_test.go` |
 
 ## Web UI — Cursor 3 Glass (spec 6)
@@ -109,7 +109,7 @@ Complete feature inventory for r1 as of 2026-05-15. Status reflects the merged s
 | Auto-start option per OS | `tauri-plugin-autostart` | Done | `desktop/src-tauri/src/autostart.rs` |
 | Component sharing | npm workspace `packages/web-components/` (shared with web) | Done | `packages/web-components/` |
 | 110 cargo tests `-race` clean | Validates Rust host code | Done | `desktop/src-tauri/src/*_test.rs` |
-| 4 Playwright e2e | multi-session, lanes-streaming, popout-lane, daemon-discovery | Done | `desktop/tests/agent/*.spec.ts` |
+| 4 Playwright e2e | multi-session, lanes-streaming, popout-lane, daemon-discovery | Skipped (CI-2 — app has no test-mode driver surface; all four specs file-level `test.skip`; see `audit/desktop-e2e-truth-2026-06-12.md`) | `desktop/tests/e2e/*.spec.ts` |
 
 ## r1d Daemon — One Process, N Sessions (spec 5)
 
@@ -158,7 +158,7 @@ Complete feature inventory for r1 as of 2026-05-15. Status reflects the merged s
 | Layer 4: Supervisor rules | `truncation_phrase_detected`, `scope_underdelivery`, `subagent_summary_truncation` | Done | `internal/supervisor/rules/antitrunc/` |
 | Layer 5: agentloop wiring | Gate composes BEFORE all other end-turn hooks | Done | `internal/agentloop/antitrunc.go` |
 | Layer 6: post-commit git hook | Observes false-completion phrases in commit bodies; writes `audit/antitrunc/post-commit-<sha>.md` | Done | `scripts/git-hooks/post-commit-antitrunc.sh` |
-| Layer 7: CLI + MCP tool | `r1 antitrunc verify -n N` + `r1.antitrunc.verify` MCP tool; classifies commits Verified / Unverified / Lying; exits non-zero on lying | Done | `cmd/r1/antitrunc_cmd.go`, `internal/mcp/r1_server.go` |
+| Layer 7: CLI + MCP tool | `r1 antitrunc verify -n N` + `stoke_antitrunc_verify` MCP tool (canonical alias `r1_antitrunc_verify`); classifies commits Verified / Unverified / Lying; exits non-zero on lying | Done | `cmd/r1/antitrunc_cmd.go`, `internal/mcp/r1_server.go` |
 | `r1 antitrunc tail` | Streams audit/antitrunc/ in real time | Done | `cmd/r1/antitrunc_cmd.go` |
 | 1M-iteration soak | 0 FP / 0 FN / 499K TP at 16,891 iter/sec | Done | `internal/antitrunc/soak_extended_test.go` (build tag `soak`) |
 | Cortex-mission integration test | `TestMissionIntegration_GateRefusesAndForcesContinuation` end-to-end | Done | `internal/cortex/lobes/antitrunc/integration_test.go` |
@@ -339,7 +339,7 @@ Complete feature inventory for r1 as of 2026-05-15. Status reflects the merged s
 
 | Feature | Outcome | Status | Reference |
 |---|---|---|---|
-| `r1 antitrunc verify --hook-mode` flag (prereq) | Lets Claude Code's Stop hook ingest R1's anti-truncation findings as a structured JSON envelope. Exit code 2 when findings are present so the Stop hook blocks the agent's premature end_turn; exit 0 when clean. Two-day delta to `cmd/r1/antitrunc_cmd.go`. Unblocks the Claude-Code-with-R1-Stop-Hook leaderboard variant. | Scoped (ready, BUILD_ORDER 47) | `specs/antitrunc-hook-mode-flag.md` |
+| `r1 antitrunc verify --hook-mode` flag (prereq) | Lets Claude Code's Stop hook ingest R1's anti-truncation findings as a structured JSON envelope. Exit code 2 when findings are present so the Stop hook blocks the agent's premature end_turn; exit 0 when clean. Shipped as a small delta to `cmd/r1/antitrunc_cmd.go`; unblocked the Claude-Code-with-R1-Stop-Hook leaderboard variant. | Done (2026-05-13) | `specs/antitrunc-hook-mode-flag.md`, `cmd/r1/antitrunc_cmd.go` (`--hook-mode`/`--plan`/`--input`) |
 | TruthfulCompletion benchmark (A1) | A public, reproducible benchmark that turns the "R1 refuses to lie about completion" claim from rhetoric into a measured percentage. The runner, 8-dispatcher matrix, cross-vendor LLM judge, leaderboard renderer, and 5 seeded missions are shipped; checked-in monthly/PR configs exist, but live GCP automation is still the legacy nightly benchmark pair and the remaining 95-mission corpus still needs operator curation. | Partial (engineering shipped; corpus + trigger rollout incomplete) | `specs/truthful-completion-benchmark.md`, `internal/bench/agents/`, `cmd/r1-bench/`, `plans/corpus-100.md`, `services/cloudbuild-bench-truthful-completion-*.yaml` |
 
 ### Scoped — legacy (pre-2026-05-11)
@@ -357,10 +357,10 @@ Complete feature inventory for r1 as of 2026-05-15. Status reflects the merged s
 ### Potential — On Horizon
 - Marketing site with affiliate / SEO / CRO / attribution / retention stack — multi-week marketing-engineering effort; deferred until Tier A+B land.
 
-### Scoped 2026-06-03 — audit remediation (activation of built-but-unwired subsystems)
-Deep audit (audit/deep-audit-eval-runtime-2026-06-02.md) found several subsystems built and marked done but never wired into the live runtime. Already FIXED this cycle: FTS5 activated (72053d5f), cross-session memory bridge wired (72053d5f), vecindex "embeddings" relabeled as lexical (301068d6), governance first slice wired default-off (c5e5e787). Newly SCOPED, ready for /build:
-- governance-activation (specs/governance-activation.md) — finish wiring bus+ledger+supervisor into the mission path; emit the cross-model review verdict + write review.agree/dissent ledger nodes so the second-opinion trust gate becomes satisfiable; default-ON + --no-governance kill-switch.
-- cortex-activation (specs/cortex-activation.md) — wire *cortex.Cortex (4 deterministic lobes) into the native loop + chat REPL; default-ON + --no-cortex kill-switch; bounded RoundDeadline safety.
-- repomap-multilang (specs/repomap-multilang.md) — language-agnostic fallback ranker so the repo map is non-empty for non-Go repos.
-- cmd-r1-test-isolation (specs/cmd-r1-test-isolation.md) — make `go test ./cmd/r1` hermetic (no leaked serve daemons, no git in the real repo, no unix-socket-path overflow).
+### Done 2026-06-03 — audit remediation (activation of built-but-unwired subsystems)
+Deep audit (audit/deep-audit-eval-runtime-2026-06-02.md) found several subsystems built and marked done but never wired into the live runtime. Fixed earlier that cycle: FTS5 activated (72053d5f), cross-session memory bridge wired (72053d5f), vecindex "embeddings" relabeled as lexical (301068d6), governance first slice wired default-off (c5e5e787). The four activation specs scoped from that audit are all built (each spec opens with `STATUS: done`, `BUILD_COMPLETED: 2026-06-03`):
+- governance-activation (specs/governance-activation.md) — Done 2026-06-03. Governance is default-ON: the policy defaults `governance.enabled` to true when the block is absent (`internal/config/governance_default_test.go`), `internal/app/app.go` constructs `governance.New` in the run path, and `--no-governance` is the kill-switch (`cmd/r1/main.go`). This superseded the earlier default-off first slice from c5e5e787.
+- cortex-activation (specs/cortex-activation.md) — Done 2026-06-03. `--cortex` defaults true (`cmd/r1/main.go`) with the deterministic lobes wired in `internal/engine/native_runner.go`; `--no-cortex` is the kill-switch.
+- repomap-multilang (specs/repomap-multilang.md) — Done 2026-06-03 (8ed654f1, marked done 8225a060). Language-agnostic fallback ranker (`buildFromSymindex` in `internal/repomap/repomap.go`) so the repo map is non-empty for non-Go repos.
+- cmd-r1-test-isolation (specs/cmd-r1-test-isolation.md) — Done 2026-06-03 (188dd477). `go test ./cmd/r1` is hermetic (no leaked serve daemons, no git in the real repo, no unix-socket-path overflow).
 Resolved as intentional (no code): B5 CloudSwarm wire format, B7 operator-installed shell hooks. Operator action: B6 CLAUDE.md count corrections.

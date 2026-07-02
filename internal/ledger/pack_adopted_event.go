@@ -87,8 +87,9 @@ func VerifyPackAdoptedSignature(payload PackAdoptedPayload, pub ed25519.PublicKe
 
 // PersistPackAdopted writes a ledger Node of type "pack.adopted" for
 // the supplied payload. nodeID is the caller-supplied stable
-// identifier (typically content-addressed by the caller via
-// internal/contentid).
+// identifier, typically content-addressed by the caller via an inline
+// sha256 (e.g. cmd/r1's deriveAdoptNodeID with its "pack-adopted-"
+// prefix).
 //
 // Returns the Node written so callers can wire it into edges or
 // re-emit it on the bus.

@@ -154,16 +154,20 @@ func isKnownFalsePositive(f Finding) bool {
 		return true
 	}
 	// no-placeholder-code triggers on files that legitimately use the word "placeholder"
-	// in comments, documentation, or as constants/field names
+	// in comments, documentation, or as constants/field names.
+	// Per the policy above: exact files only, never directories, so new
+	// placeholder code anywhere else still fails the dogfood gate.
 	if f.Rule == "no-placeholder-code" {
-		// These packages use "placeholder" as a concept, not as leftover code
+		// These files use "placeholder" as a concept, not as leftover code
 		fpPaths := []string{
-			"internal/context/",      // masking.go uses "placeholder" to describe compaction strategy
-			"internal/hub/builtin/",  // honesty judge references placeholder detection patterns
-			"internal/ledger/nodes/", // decision node types reference placeholder fields
-			"internal/harness/",      // stance prompts reference placeholder patterns
-			"internal/taskstate/",    // failure codes include PLACEHOLDER_CODE
-			"cmd/r1/",             // references placeholder detection in scan output
+			"internal/context/masking.go",                // uses "placeholder" to describe compaction strategy
+			"internal/hub/builtin/honesty/confession.go", // confession judge references placeholder patterns
+			"internal/ledger/nodes/decision.go",          // decision node types reference placeholder fields
+			"internal/harness/stances/dev.go",            // stance prompt references placeholder patterns
+			"internal/harness/prompts/templates.go",      // prompt templates reference placeholder patterns
+			"cmd/r1/sow_spec_guard.go",                   // references placeholder detection in guard output
+			"cmd/r1/scan_repair_prompts.go",              // repair prompts instruct against placeholders
+			"cmd/r1/sow_native.go",                       // anti-pattern token lists include "placeholder"
 			// plan/ stubs-out anti-pattern checker and emits
 			// warning strings containing the word "placeholder"
 			// as part of user-facing guidance; they're content,
@@ -172,11 +176,11 @@ func isKnownFalsePositive(f Finding) bool {
 			"internal/plan/deliverable.go",
 			"internal/plan/externaldocs.go",
 			"internal/plan/phase_budget.go",
-			"internal/reviewereval/",
-			"internal/websearch/",
+			"internal/reviewereval/reviewereval.go", // review-eval corpus doc mentions placeholder class
+			"internal/websearch/websearch.go",       // search-result guidance mentions placeholders
 		}
 		for _, p := range fpPaths {
-			if strings.Contains(f.File, p) {
+			if strings.HasSuffix(f.File, p) {
 				return true
 			}
 		}

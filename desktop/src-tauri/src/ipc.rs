@@ -541,26 +541,144 @@ pub async fn daemon_install_command() -> IpcResult<String> {
     Ok(crate::discovery::install_command_for_host_os())
 }
 
+// ---------------------------------------------------------------------------
+// Discovery wizard verbs (audit/complete-systems-2026-07-01.md A033)
+//
+// discovery-wizard-mount.tsx invokes these three commands; before this
+// block landed none of them existed on the Rust side, so the wizard
+// was unreachable in Tauri builds and Reconnect could never succeed.
+// ---------------------------------------------------------------------------
+
+/// Map a typed `DiscoveryError` onto the structured IPC taxonomy so
+/// the TS `handleReconnect` catch block sees `{code, stoke_code,
+/// message}` instead of an opaque string.
+fn discovery_error_to_ipc(err: &crate::discovery::DiscoveryError) -> IpcError {
+    use crate::discovery::DiscoveryError as DE;
+    match err {
+        DE::NotFound => IpcError::not_found("daemon (no usable ~/.r1/daemon.json and sidecar unavailable)"),
+        DE::Refused | DE::BadHandshake(_) | DE::SidecarSpawn(_) => {
+            IpcError::internal(err.to_string())
+        }
+    }
+}
+
+/// `daemon_config_exists` — true when `~/.r1/daemon.json` is present
+/// and parseable. The discovery wizard shows itself only when this
+/// returns false (spec desktop-cortex-augmentation §5 lifecycle step
+/// 4). A present-but-corrupt file also reports false: the config is
+/// unusable, so the wizard's install/reconnect guidance applies.
+#[tauri::command]
+pub async fn daemon_config_exists() -> IpcResult<bool> {
+    Ok(crate::discovery::read_daemon_json().is_ok())
+}
+
+/// `daemon_reconnect` — re-run the discovery orchestration
+/// (`discovery::discover_or_spawn`) on user demand and publish the
+/// result into `DiscoveryState`, exactly as `main.rs setup_discovery`
+/// does at startup. Returns the refreshed snapshot on success;
+/// surfaces a structured IpcError on failure so the wizard can stay
+/// open with an actionable message.
+#[tauri::command]
+pub async fn daemon_reconnect(app: AppHandle) -> IpcResult<DaemonStatusSnapshot> {
+    use tauri::Manager;
+    {
+        let state: State<'_, DiscoveryState> = app.state();
+        state.mark_pending();
+    }
+    match crate::discovery::discover_or_spawn(&app).await {
+        Ok(handle) => {
+            let state: State<'_, DiscoveryState> = app.state();
+            state.set_handle(handle);
+            Ok(state.snapshot())
+        }
+        Err(err) => {
+            let state: State<'_, DiscoveryState> = app.state();
+            state.set_error(err.to_string());
+            Err(discovery_error_to_ipc(&err))
+        }
+    }
+}
+
+/// `daemon_accept_sidecar` — record that the user accepted the
+/// already-auto-spawned bundled sidecar (wizard "Use bundled"
+/// button). The sidecar keeps running either way; this stores the
+/// consent flag in `DiscoveryState` and returns the current transport
+/// mode label ("sidecar" / "external" / "pending" / "disconnected").
+#[tauri::command]
+pub async fn daemon_accept_sidecar(state: State<'_, DiscoveryState>) -> IpcResult<String> {
+    Ok(state.accept_sidecar())
+}
+
+/// Project a host-side discovery snapshot onto the pill's reconnect
+/// frame (audit A095 — frames are derived from real state, never
+/// hardcoded): live handle → Connected; probe in flight →
+/// Reconnecting (attempt 0, no scheduled retry — discovery probes
+/// once); probe failed → Offline with the real error; nothing
+/// attempted yet → Offline("daemon discovery not started").
+fn reconnect_status_from_snapshot(
+    snap: &DaemonStatusSnapshot,
+) -> crate::transport::ReconnectStatus {
+    use crate::transport::ReconnectStatus as RS;
+    if snap.connected {
+        RS::Connected
+    } else if snap.pending {
+        RS::Reconnecting {
+            attempt: 0,
+            next_in_ms: 0,
+        }
+    } else if let Some(err) = &snap.error {
+        RS::Offline {
+            reason: err.clone(),
+        }
+    } else {
+        RS::Offline {
+            reason: "daemon discovery not started".to_string(),
+        }
+    }
+}
+
 /// `transport_reconnect_status` — open a `tauri::ipc::Channel<ReconnectStatus>`
-/// the title-bar pill subscribes to. Currently emits a single
-/// `Connected` frame and idles; the real run-loop driver
-/// (`TransportHandle::run_with`) plugs into this channel once the
-/// daemon WS path is wired (audit/scan-rust-stubs.md item #5 / #10).
+/// the title-bar pill subscribes to (mountDaemonStatus in
+/// desktop/src/panels/daemon-status.ts). Sends the current
+/// DiscoveryState-derived frame immediately, then streams a frame on
+/// every state transition (500 ms watcher) until the WebView drops
+/// its end of the channel.
 ///
-/// Backed by `transport::ReconnectStatus`; the Channel handle is
-/// owned by the WebView side via the `subscribe<T>(channel)` Tauri 2
-/// pattern.
+/// The per-session SubprocessManager remains the live transport; when
+/// the shared daemon-WS run-loop lands it feeds this same channel
+/// shape (transport::ReconnectStatus) with real attempt/backoff
+/// numbers.
 #[tauri::command]
 pub async fn transport_reconnect_status(
     on_status: tauri::ipc::Channel<crate::transport::ReconnectStatus>,
+    state: State<'_, DiscoveryState>,
+    app: AppHandle,
 ) -> IpcResult<()> {
-    // Send the current best-effort status. Until the run-loop is wired
-    // to a real socket, we emit `Connected` because the per-session
-    // SubprocessManager is the live transport — no reconnect storms
-    // possible until that path migrates to the shared WS daemon.
+    let current = reconnect_status_from_snapshot(&state.snapshot());
     on_status
-        .send(crate::transport::ReconnectStatus::Connected)
+        .send(current.clone())
         .map_err(|e| IpcError::internal(format!("status channel send: {e}")))?;
+
+    // Watcher: poll the snapshot and forward transitions. Exits as
+    // soon as a send fails (WebView navigated away / window closed).
+    tauri::async_runtime::spawn(async move {
+        use tauri::Manager;
+        let mut last = current;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let snap = {
+                let s: State<'_, DiscoveryState> = app.state();
+                s.snapshot()
+            };
+            let next = reconnect_status_from_snapshot(&snap);
+            if next != last {
+                if on_status.send(next.clone()).is_err() {
+                    return;
+                }
+                last = next;
+            }
+        }
+    });
     Ok(())
 }
 
@@ -599,8 +717,13 @@ pub fn register_handlers() -> tauri::Builder<tauri::Wry> {
             // panicked on the missing-handler error before this
             // handler existed.
             daemon_install_command,
-            // Wired per audit/scan-rust-stubs.md item #5 — title-bar
-            // pill subscribes to a typed status Channel.
+            // Discovery wizard verbs (audit A033) — probe, reconnect,
+            // and accept-sidecar backing discovery-wizard-mount.tsx.
+            daemon_config_exists,
+            daemon_reconnect,
+            daemon_accept_sidecar,
+            // Title-bar pill status Channel; frames derived from
+            // DiscoveryState (audit A095).
             transport_reconnect_status,
         ])
 }
@@ -669,15 +792,18 @@ pub struct SessionLanesSubscribeResult {
 }
 
 /// `session.lanes.subscribe` — register a subscription. Forwards every
-/// `LaneEvent` the daemon emits for this session through the
-/// `tauri::ipc::Channel<LaneEvent>` the WebView passed in (`on_event`
-/// kwarg). The host-side LanesState owns the per-subscription
-/// forwarder so `session_lanes_unsubscribe` and host-side teardown
-/// (window close, daemon disconnect) can drop it deterministically.
+/// `LaneEvent` the daemon pushes for this session (lane.* stdout
+/// events routed via subprocess.rs → `LanesState::dispatch`) through
+/// the `tauri::ipc::Channel<LaneEvent>` the WebView passed in
+/// (`on_event` kwarg). The host-side LanesState owns the
+/// per-subscription forwarder so `session_lanes_unsubscribe` and
+/// host-side teardown (window close, daemon disconnect) can drop it
+/// deterministically.
 ///
-/// Wired per audit/scan-rust-stubs.md item #2: the previous body
-/// dropped the Channel handle, so no LaneEvent ever reached the
-/// WebView even though the verb returned a `subscription_id`.
+/// Wired per audit/scan-rust-stubs.md item #2 (Channel handle no
+/// longer dropped) + audit/complete-systems-2026-07-01.md A052 (the
+/// registered sink is now actually fed, and a daemon build without
+/// `session.lanes.subscribe` no longer aborts the subscription).
 #[tauri::command]
 pub async fn session_lanes_subscribe(
     params: SessionLanesSubscribeParams,
@@ -686,18 +812,32 @@ pub async fn session_lanes_subscribe(
     state: State<'_, crate::lanes::LanesState>,
 ) -> IpcResult<SessionLanesSubscribeResult> {
     // Step 1: round-trip to the daemon so it starts pushing lane
-    // events for this session over its existing event bus. The result
-    // carries the daemon-side subscription id; we use it as the
+    // events for this session over its existing event bus. When the
+    // daemon implements the verb, its subscription id becomes the
     // host-side registry key so unsubscribe routing works for both
-    // host-fast-path and daemon-side drops.
-    let val = mgr
+    // host-fast-path and daemon-side drops. Daemon builds that
+    // pre-date the verb (-32601 method_not_found / -32010
+    // not_implemented, e.g. today's `r1 desktop-rpc` dispatch) push
+    // lane.* events unsolicited over the session stdout stream, so we
+    // fall back to a host-generated id instead of failing the whole
+    // subscription (A052: the old hard failure made the frontend emit
+    // a synthetic `killed` event on every subscribe).
+    let result = match mgr
         .rpc_call(
             &params.session_id,
             "session.lanes.subscribe",
             serde_json::to_value(&params).unwrap_or(serde_json::json!({})),
         )
-        .await?;
-    let result: SessionLanesSubscribeResult = from_val(val)?;
+        .await
+    {
+        Ok(val) => from_val::<SessionLanesSubscribeResult>(val)?,
+        Err(err) if err.code == -32601 || err.code == -32010 => {
+            SessionLanesSubscribeResult {
+                subscription_id: format!("host-{}", uuid::Uuid::new_v4()),
+            }
+        }
+        Err(err) => return Err(err),
+    };
 
     // Step 2: register a host-side LaneSubscription that forwards
     // every LaneEvent emitted by the daemon's session bus to the
@@ -1012,6 +1152,26 @@ mod tests {
     }
 
     #[test]
+    fn discovery_error_maps_not_found_to_taxonomy() {
+        use crate::discovery::DiscoveryError;
+        let err = discovery_error_to_ipc(&DiscoveryError::NotFound);
+        assert_eq!(err.code, -32002);
+        assert_eq!(err.stoke_code, "not_found");
+    }
+
+    #[test]
+    fn discovery_error_maps_refused_and_spawn_to_internal_with_detail() {
+        use crate::discovery::DiscoveryError;
+        let refused = discovery_error_to_ipc(&DiscoveryError::Refused);
+        assert_eq!(refused.code, -32603);
+        assert!(refused.message.contains("refused"));
+
+        let spawn = discovery_error_to_ipc(&DiscoveryError::SidecarSpawn("no sidecar binary".into()));
+        assert_eq!(spawn.stoke_code, "internal");
+        assert!(spawn.message.contains("no sidecar binary"));
+    }
+
+    #[test]
     fn session_start_params_deserialise() {
         let raw = r#"{"prompt":"hello","skill_pack":"actium","budget_usd":1.5}"#;
         let p: SessionStartParams =
@@ -1050,6 +1210,72 @@ mod tests {
             serde_json::from_str(&json).expect("LedgerListEventsResult round-trips");
         assert_eq!(back.events.len(), 1);
         assert_eq!(back.next_cursor.as_deref(), Some("cursor-1"));
+    }
+
+    #[test]
+    fn reconnect_status_projection_covers_all_snapshot_shapes() {
+        use crate::transport::ReconnectStatus as RS;
+        let base = DaemonStatusSnapshot {
+            connected: false,
+            pending: false,
+            url: None,
+            mode: None,
+            error: None,
+            sidecar_accepted: false,
+        };
+
+        // Nothing attempted yet.
+        assert_eq!(
+            reconnect_status_from_snapshot(&base),
+            RS::Offline {
+                reason: "daemon discovery not started".into()
+            }
+        );
+
+        // Probe in flight.
+        let pending = DaemonStatusSnapshot {
+            pending: true,
+            ..base
+        };
+        assert_eq!(
+            reconnect_status_from_snapshot(&pending),
+            RS::Reconnecting {
+                attempt: 0,
+                next_in_ms: 0
+            }
+        );
+
+        // Probe failed: the REAL error string is surfaced.
+        let failed = DaemonStatusSnapshot {
+            error: Some("daemon refused connection".into()),
+            ..reconnect_snapshot_base()
+        };
+        assert_eq!(
+            reconnect_status_from_snapshot(&failed),
+            RS::Offline {
+                reason: "daemon refused connection".into()
+            }
+        );
+
+        // Connected wins over stale error text.
+        let connected = DaemonStatusSnapshot {
+            connected: true,
+            url: Some("ws://127.0.0.1:7777".into()),
+            mode: Some("external".into()),
+            ..reconnect_snapshot_base()
+        };
+        assert_eq!(reconnect_status_from_snapshot(&connected), RS::Connected);
+    }
+
+    fn reconnect_snapshot_base() -> DaemonStatusSnapshot {
+        DaemonStatusSnapshot {
+            connected: false,
+            pending: false,
+            url: None,
+            mode: None,
+            error: None,
+            sidecar_accepted: false,
+        }
     }
 
     #[test]

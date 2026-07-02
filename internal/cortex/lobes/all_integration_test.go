@@ -312,11 +312,11 @@ func newAllLobesFixture(t *testing.T, opts allLobesOptions) *allLobesFixture {
 // channels every Lobe needs to fire at least once.
 //
 // Why each Lobe needs explicit help:
-//   - memory-recall: LobeRunner.buildInput does NOT propagate History
-//     into LobeInput (the runner's per-round wiring landed without
-//     History support — see internal/cortex/lobe.go:buildInput). So
-//     the integration test calls MemoryRecallLobe.Run directly with a
-//     populated History to drive its publish path.
+//   - memory-recall: MidturnNote now propagates History into
+//     LobeInput (audit A010), but the runner-driven Run is async with
+//     respect to this loop. The test additionally calls
+//     MemoryRecallLobe.Run directly with a populated History so the
+//     recall + publish path fires deterministically before asserts.
 //   - wal-keeper: backpressure-drop counter must be non-zero before
 //     the ticker fires; ForceDroppedForTest pre-loads it.
 //   - rule-check: subscribes to supervisor.rule.fired on the durable
@@ -700,11 +700,14 @@ func TestAllLobes_SurviveDaemonRestart(t *testing.T) {
 // (no Note from the disabled Lobe; the others continue to fire).
 //
 // The fixture honors EnableFlags by skipping the constructor for any
-// Lobe whose flag is false. This mirrors the production wiring contract:
-// cmd/r1's cortex bootstrap reads config.CortexConfig.Lobes.<name>.Enabled
-// and conditionally appends the Lobe to cortex.Config.Lobes — disabled
-// Lobes never enter the Cortex's runner list, so their Run is never
-// invoked.
+// Lobe whose flag is false. This mirrors the production wiring in
+// cmd/r1/mcp_serve_runtime.go buildCortexBackend (audit A057), which
+// reads config.CortexConfig.LobeEnabled(<id>, true) and conditionally
+// appends the Lobe to cortex.Config.Lobes — disabled Lobes never enter
+// the Cortex's runner list, so their Run is never invoked. NOTE: the
+// native-loop construction site (internal/engine
+// buildDeterministicCortex) does not yet consult the policy; per-lobe
+// gating there is deferred per specs/cortex-activation.md ITEM 7.
 func TestAllLobes_HonorEnableFlags(t *testing.T) {
 	t.Parallel()
 

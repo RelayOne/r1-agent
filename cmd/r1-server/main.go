@@ -18,7 +18,8 @@
 //     with 10MB rotation
 //
 // RS-2 items 2 (datadir) and 3 (DB schema) live in datadir.go + db.go.
-// RS-3 (scanner + event tailer) will be added in a follow-up commit.
+// RS-3 (instance scanner + per-session event tailer + ledger loader)
+// lives in scanner.go and is started from run().
 package main
 
 import (

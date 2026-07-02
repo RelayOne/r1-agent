@@ -28,12 +28,17 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,10 +46,12 @@ import (
 	"github.com/RelayOne/r1/internal/daemon"
 	"github.com/RelayOne/r1/internal/daemondisco"
 	"github.com/RelayOne/r1/internal/daemonlock"
+	"github.com/RelayOne/r1/internal/mcp"
 	"github.com/RelayOne/r1/internal/r1env"
 	"github.com/RelayOne/r1/internal/server"
 	"github.com/RelayOne/r1/internal/server/jsonrpc"
 	"github.com/RelayOne/r1/internal/server/sessionhub"
+	"github.com/RelayOne/r1/internal/server/sse"
 	"github.com/RelayOne/r1/internal/server/ws"
 )
 
@@ -320,17 +327,17 @@ func runServeLoop(opts serveOptions) {
 			// concurrent shutdown RPCs coalesces into one signal; the
 			// serve loop reads it and unwinds.
 			//
-			// shutdownAckDelay gives the WS layer a brief window to flush
-			// the daemon.shutdown response back to the caller before the
-			// listener tears down. Without this delay the handler can
-			// return success, the serve loop can fire on shutdownReqCh,
-			// and the listener can close before the dispatcher's
-			// conn.WriteResponse completes — clients then see a closed
-			// connection rather than the success envelope. Found by
-			// codex review of commit 671ed37c (P1).
-			const shutdownAckDelay = 100 * time.Millisecond
+			// daemonShutdownAckDelay (package const) gives the WS layer a
+			// brief window to flush the daemon.shutdown response back to
+			// the caller before the listener tears down. Without this
+			// delay the handler can return success, the serve loop can
+			// fire on shutdownReqCh, and the listener can close before the
+			// dispatcher's conn.WriteResponse completes — clients then see
+			// a closed connection rather than the success envelope. Found
+			// by codex review of commit 671ed37c (P1). The plain-HTTP
+			// /v1/daemon/shutdown route (O1) reuses the same delay.
 			rpcHandler.SetShutdownFunc(func(graceSeconds int) {
-				time.Sleep(shutdownAckDelay)
+				time.Sleep(daemonShutdownAckDelay)
 				select {
 				case shutdownReqCh <- graceSeconds:
 				default:
@@ -350,11 +357,105 @@ func runServeLoop(opts serveOptions) {
 			wsHandler := &ws.Handler{Dispatcher: disp, Token: opts.Token}
 			muxAlias.Handle("/v1/rpc", wsHandler)
 			fmt.Fprintf(os.Stderr, "JSON-RPC over WS mounted at /v1/rpc\n")
+
+			// Plain-HTTP daemon control plane (O1): the real
+			// daemon.shutdown signal used to be reachable only over the
+			// /v1/rpc WebSocket, which no CLI client dials, and the
+			// queue-mux control verbs are gated behind
+			// --enable-queue-routes. Mount POST /v1/daemon/shutdown and
+			// GET /v1/daemon/info on the shared mux so `r1 ctl
+			// shutdown`/`info` reach a real transport against a default
+			// `r1 serve`. shutdown reuses the SAME shutdownReqCh
+			// non-blocking send as the daemon.shutdown RPC callback above.
+			mountDaemonControlRoutes(muxAlias, rpcHandler.DaemonInfo, shutdownReqCh, opts.Token)
+			fmt.Fprintf(os.Stderr, "daemon control mounted at POST /v1/daemon/shutdown + GET /v1/daemon/info\n")
+
+			// Session event journals + subscribe replay (audit A069).
+			// Sessions created via session.start get a journal-first
+			// event pipe; subscribers (WS $/event, SSE, web bridge)
+			// replay from `~/.r1/journals/<id>.jsonl` then go live.
+			if jd, jerr := serveJournalDir(); jerr != nil {
+				fmt.Fprintf(os.Stderr, "warn: session journals disabled: %v\n", jerr)
+			} else {
+				hub.SetJournalDir(jd)
+				rpcHandler.SetJournalPathFn(func(sessionID string) string {
+					return filepath.Join(jd, sessionID+".jsonl")
+				})
+			}
+
+			// Web chat surface (audit A008): POST /auth/ws-ticket
+			// mints short-lived WS tokens (bearer-authenticated), and
+			// /ws serves the typed-frame bridge the embedded SPA
+			// dials (web/src/lib/api/r1d.ts default wsUrl).
+			tickets := server.NewWSTicketStore(server.DefaultWSTicketTTL)
+			var ticketHandler http.Handler = tickets.Handler()
+			if opts.Token != "" {
+				ticketHandler = server.RequireBearer(opts.Token)(ticketHandler)
+			}
+			muxAlias.Handle("/auth/ws-ticket", ticketHandler)
+
+			daemonToken := opts.Token
+			webWS := &ws.WebHandler{
+				API: rpcHandler,
+				ValidateToken: func(tok string) bool {
+					if daemonToken == "" {
+						return true // dev mode: no bearer configured
+					}
+					if len(tok) == len(daemonToken) &&
+						subtle.ConstantTimeCompare([]byte(tok), []byte(daemonToken)) == 1 {
+						return true
+					}
+					return tickets.Validate(tok)
+				},
+			}
+			muxAlias.Handle("/ws", webWS)
+			fmt.Fprintf(os.Stderr, "web chat WS mounted at /ws (+ POST /auth/ws-ticket)\n")
+
+			// Read-only SSE bridge (audit A069; specs/r1d-server.md
+			// Phase E item 33). AttachAuthFromQuery runs BEFORE
+			// requireBearer so browser EventSource clients can pass
+			// ?token= (the middleware split in auth_middleware.go was
+			// designed for exactly this).
+			muxAlias.Handle("GET /v1/sessions/{id}/sse", buildSessionSSEHandler(rpcHandler, opts.Token))
+			fmt.Fprintf(os.Stderr, "session SSE mounted at /v1/sessions/{id}/sse\n")
+
+			// Lane control over the lanes WS (audit A040): route
+			// r1.lanes.list/kill/pin (+ killAll as iterated kill) by
+			// delegating to the MCP lane tool semantics against each
+			// session's cortex workspace, resolved at call time.
+			srv.WithLanes(&server.LanesWiring{Tools: newHubLanesTools(hub)})
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "r1 serve listening on %s\n", opts.Addr)
-	fmt.Fprintf(os.Stderr, "dashboard: http://%s/\n", opts.Addr)
+	// Phase C (specs/r1d-server.md items 14-16, audit A031): bind the
+	// per-user unix control socket unless --no-unix. It serves the
+	// SAME mux as the TCP listener; auth on this transport is the
+	// kernel peer-cred check (peerCredListener in serve_ipc.go)
+	// instead of the bearer token. A bind failure is non-fatal when
+	// TCP remains available, but fatal under --no-tcp — the daemon
+	// would otherwise serve nothing.
+	unixLn, ipcErr := bindUnixControl(opts.NoUnix)
+	if ipcErr != nil {
+		if opts.NoTCP {
+			fatal("serve: --no-tcp requires the unix control socket, which failed to bind: %v", ipcErr)
+		}
+		fmt.Fprintf(os.Stderr, "warn: unix control socket not bound: %v\n", ipcErr)
+	}
+	sockPath := ""
+	if unixLn != nil {
+		sockPath = unixLn.Path
+		defer unixLn.Close()
+	}
+
+	if opts.NoTCP {
+		fmt.Fprintf(os.Stderr, "r1 serve listening on unix socket only (--no-tcp)\n")
+	} else {
+		fmt.Fprintf(os.Stderr, "r1 serve listening on %s\n", opts.Addr)
+		fmt.Fprintf(os.Stderr, "dashboard: http://%s/\n", opts.Addr)
+	}
+	if sockPath != "" {
+		fmt.Fprintf(os.Stderr, "control socket: %s\n", sockPath)
+	}
 
 	// Write the discovery file so external clients (`r1 ctl`, the
 	// desktop app, headless test harnesses) can find this daemon.
@@ -362,7 +463,9 @@ func runServeLoop(opts serveOptions) {
 	// (tmp + rename). Failure here is non-fatal — the dashboard +
 	// JSON-RPC endpoints still work for clients that already know the
 	// port; it just means `r1 ctl` won't be able to auto-discover.
-	if discPath, derr := daemondisco.WriteDiscovery(os.Getpid(), "", port, opts.Token, version); derr != nil {
+	// The socket path activates r1 ctl's unixSocketAlive/dialUnix
+	// branch (ctl_daemon_cmd.go pickClientAndURL).
+	if discPath, derr := daemondisco.WriteDiscovery(os.Getpid(), sockPath, port, opts.Token, version); derr != nil {
 		fmt.Fprintf(os.Stderr, "warn: discovery file not written: %v\n", derr)
 	} else {
 		fmt.Fprintf(os.Stderr, "discovery file: %s\n", discPath)
@@ -371,8 +474,14 @@ func runServeLoop(opts serveOptions) {
 	sigCtx, sigCancel := signalContext(context.Background())
 	defer sigCancel()
 
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.ListenAndServe() }()
+	errCh := make(chan error, 2)
+	if !opts.NoTCP {
+		go func() { errCh <- srv.ListenAndServe() }()
+	}
+	if unixLn != nil {
+		unixSrv := newUnixControlServer(srv.Handler(), opts.Token)
+		go func() { errCh <- unixSrv.Serve(&peerCredListener{Listener: unixLn}) }()
+	}
 
 	select {
 	case <-sigCtx.Done():
@@ -416,3 +525,176 @@ func portFromAddr(addr string) int {
 	return p
 }
 
+// daemonShutdownAckDelay gives the response layer a brief window to
+// flush the shutdown ack before the serve loop tears the listener down.
+// Shared by the daemon.shutdown RPC callback (SetShutdownFunc) and the
+// plain-HTTP POST /v1/daemon/shutdown route (O1).
+const daemonShutdownAckDelay = 100 * time.Millisecond
+
+// daemonInfoFunc reports daemon metadata for GET /v1/daemon/info. In
+// runServeLoop this is rpcHandler.DaemonInfo; tests pass a stub.
+type daemonInfoFunc func(context.Context) (jsonrpc.DaemonInfoResponse, error)
+
+// mountDaemonControlRoutes wires the plain-HTTP daemon control plane
+// (O1) onto the shared serve mux: POST /v1/daemon/shutdown and GET
+// /v1/daemon/info.
+//
+// Before O1 the real daemon.shutdown signal was reachable ONLY over the
+// /v1/rpc WebSocket (which no CLI client dials), and every queue-backed
+// ctl verb 404s against a default `r1 serve` because MountDaemonQueue is
+// gated behind --enable-queue-routes. These two plain routes give
+// `r1 ctl shutdown`/`info` a reachable transport with no extra flags.
+//
+// Auth: both routes are wrapped with RequireBearer(token). On the
+// loopback TCP listener the CLI supplies the bearer from daemon.json; on
+// the unix control socket the caller sends no bearer but the peer-cred
+// check authenticates the connection and unixControlHandler injects the
+// bearer before dispatch — so a single RequireBearer wrap is correct for
+// both transports.
+//
+// shutdown reuses the SAME non-blocking send into shutdownReqCh that the
+// daemon.shutdown RPC callback uses, so the serve loop's select unwinds
+// identically whichever surface the operator hits. The signal fires
+// AFTER the ack flushes (daemonShutdownAckDelay) so the caller observes
+// the success envelope before the listener closes.
+func mountDaemonControlRoutes(mux *http.ServeMux, info daemonInfoFunc, shutdownReqCh chan<- int, token string) {
+	var shutdownH http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			GraceSeconds int `json:"grace_seconds"`
+		}
+		// Tolerate an empty body (curl -X POST with no payload); bound
+		// the read so a hostile client cannot stream unbounded JSON.
+		if r.Body != nil {
+			_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"accepted_at":   time.Now().UTC().Format(time.RFC3339Nano),
+			"grace_seconds": req.GraceSeconds,
+		})
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		go func(grace int) {
+			time.Sleep(daemonShutdownAckDelay)
+			select {
+			case shutdownReqCh <- grace:
+			default:
+				// channel already has a pending signal; drop.
+			}
+		}(req.GraceSeconds)
+	})
+	var infoH http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v, err := info(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(v)
+	})
+	if token != "" {
+		shutdownH = server.RequireBearer(token)(shutdownH)
+		infoH = server.RequireBearer(token)(infoH)
+	}
+	mux.Handle("POST /v1/daemon/shutdown", shutdownH)
+	mux.Handle("GET /v1/daemon/info", infoH)
+}
+
+
+// serveJournalDir resolves and creates `~/.r1/journals` (or
+// `$R1_HOME/journals` in sandboxes), the per-session event journal
+// directory the subscribe replay path reads (audit A069).
+func serveJournalDir() (string, error) {
+	dir := os.Getenv("R1_HOME")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home: %w", err)
+		}
+		dir = filepath.Join(home, ".r1")
+	}
+	jd := filepath.Join(dir, "journals")
+	if err := os.MkdirAll(jd, 0o700); err != nil {
+		return "", fmt.Errorf("mkdir %s: %w", jd, err)
+	}
+	return jd, nil
+}
+
+// buildSessionSSEHandler assembles the GET /v1/sessions/{id}/sse
+// middleware chain (audit A069): sse.AttachAuthFromQuery promotes
+// ?token= into the Authorization header BEFORE requireBearer runs, so
+// browser EventSource clients (which cannot set headers) authenticate
+// with the same bearer CLI clients use. The Subscribe binding is the
+// shared fanout engine: journal replay from since_seq / Last-Event-ID,
+// then live events, per the replay-before-live contract.
+func buildSessionSSEHandler(rpcHandler *jsonrpc.HubHandler, token string) http.Handler {
+	var inner http.Handler = &sse.Handler{
+		Subscribe:            rpcHandler.SubscribeSessionWithSink,
+		SessionIDFromRequest: sse.PathSessionID,
+		FilterFromRequest:    sse.QueryFilter,
+	}
+	if token != "" {
+		inner = server.RequireBearer(token)(inner)
+	}
+	return sse.AttachAuthFromQuery(inner)
+}
+
+// hubLanesTools adapts the multi-session SessionHub to
+// server.LaneToolInvoker (audit A040). The MCP lane tools
+// (internal/mcp/lanes_server.go) are written against a single
+// session's cortex workspace; the daemon hosts N sessions, so this
+// adapter resolves the session named by args["session_id"] at call
+// time, casts its Workspace to mcp.LanesBackend (*cortex.Workspace
+// satisfies it), and delegates to a per-session LanesServer. Sessions
+// without a cortex workspace — every session until the workspace
+// attach glue (audit A073/A041) lands — get an honest not_found
+// envelope instead of -32601.
+type hubLanesTools struct {
+	hub     *sessionhub.SessionHub
+	mu      sync.Mutex
+	servers map[string]*mcp.LanesServer
+}
+
+func newHubLanesTools(hub *sessionhub.SessionHub) *hubLanesTools {
+	return &hubLanesTools{hub: hub, servers: map[string]*mcp.LanesServer{}}
+}
+
+// laneToolErrorEnvelope builds the spec §7 error envelope shape the
+// WS route unwraps (matching mcp.LanesServer.envelopeError).
+func laneToolErrorEnvelope(code, msg string) string {
+	b, _ := json.Marshal(map[string]any{
+		"ok":            false,
+		"error_code":    code,
+		"error_message": msg,
+	})
+	return string(b)
+}
+
+// HandleToolCall implements server.LaneToolInvoker.
+func (t *hubLanesTools) HandleToolCall(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
+	sid, _ := args["session_id"].(string)
+	if sid == "" {
+		return laneToolErrorEnvelope("internal", "session_id is required"), nil
+	}
+	sess, err := t.hub.Get(sid)
+	if err != nil {
+		t.mu.Lock()
+		delete(t.servers, sid)
+		t.mu.Unlock()
+		return laneToolErrorEnvelope("not_found", fmt.Sprintf("session %q not found", sid)), nil
+	}
+	backend, ok := sess.Workspace.(mcp.LanesBackend)
+	if !ok || backend == nil {
+		return laneToolErrorEnvelope("not_found",
+			fmt.Sprintf("session %q has no cortex workspace (lanes unavailable)", sid)), nil
+	}
+	t.mu.Lock()
+	ls := t.servers[sid]
+	if ls == nil {
+		ls = mcp.NewLanesServer(backend, nil)
+		t.servers[sid] = ls
+	}
+	t.mu.Unlock()
+	return ls.HandleToolCall(ctx, toolName, args)
+}

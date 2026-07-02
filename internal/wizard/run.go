@@ -58,7 +58,9 @@ type DetailedRationale struct {
 }
 
 // RunWizard executes the wizard with the given options, returning a structured result.
-// This is the modern entrypoint for the wizard system.
+// This is the modern entrypoint for the wizard system, wired to `r1 init`
+// (default → ModeAuto, --auto → ModeYes; --interactive routes to the legacy
+// question wizard instead — audit A076).
 func RunWizard(ctx context.Context, opts Opts) (*WizardResult, error) {
 	if opts.ProjectRoot == "" {
 		opts.ProjectRoot = "."
@@ -106,8 +108,10 @@ func RunWizard(ctx context.Context, opts Opts) (*WizardResult, error) {
 			return nil, err
 		}
 	case ModeInteractive:
-		// Fall through to proposal for now; interactive mode uses the
-		// existing Wizard struct for full question flow
+		// The full question flow lives in the legacy Wizard struct; `r1
+		// init --interactive` routes there directly (cmd/r1 initCmd).
+		// Callers reaching RunWizard with ModeInteractive get the
+		// proposal-confirmation flow.
 		if err := presentProposal(opts, result); err != nil {
 			return nil, err
 		}

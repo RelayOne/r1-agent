@@ -578,10 +578,13 @@ func TestSummaryFormat(t *testing.T) {
 
 func TestCleanSummary(t *testing.T) {
 	v := NewValidator()
-	report := v.Validate("m-1", []FileInput{{
-		Path:    "clean.go",
-		Content: []byte("package clean\n"),
-	}})
+	// A source file alone is no longer "clean": the missing-test-file
+	// cross-file gate (A060) fires when no _test.go accompanies it, so
+	// the clean fixture ships with its test file.
+	report := v.Validate("m-1", []FileInput{
+		{Path: "clean.go", Content: []byte("package clean\n")},
+		{Path: "clean_test.go", Content: []byte("package clean\n")},
+	})
 	if !strings.Contains(report.Summary, "converged") {
 		t.Errorf("clean summary should say converged: %q", report.Summary)
 	}

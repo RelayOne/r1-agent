@@ -22,6 +22,14 @@ Per SOW C5, this is a parity adapter — no new capabilities beyond what GH
 Actions already exposes. Bitbucket Cloud is the primary target; Bitbucket Data
 Center (self-hosted) is a documented fallback where the REST surface diverges.
 
+> Delivery status (audit A056, 2026-07-02): (1) the template generator and
+> (3) the `r1 cicd` generator wiring shipped with C5; (2) the REST runtime
+> client was delivered as a library but stayed unwired until
+> `r1 cicd trigger|status|logs --provider bitbucket` landed
+> (cmd/r1/cicd_cmd.go). Trigger/status/logs are now CLI-reachable; the PR
+> comment + auto-review surface (comment.go / reviewer.go) remains
+> library-only with no CLI verb.
+
 ## Stack & Versions
 
 - Go 1.22+ (matches existing adapters).

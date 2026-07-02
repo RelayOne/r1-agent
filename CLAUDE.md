@@ -10,13 +10,13 @@ go vet ./...
 
 These three commands are the CI gate.
 
-## Package map (183 internal + 1 cmd + 10 bench)
+## Package map (180 internal dirs / 259 Go packages + 11 cmd binaries + 11 bench packages)
 
 ```
-cmd/r1/main.go                    20 commands. --roi, --sqlite, --interactive, --specexec flags.
+cmd/r1/main.go                    71 subcommands (see r1 --help). --roi, --sqlite, --interactive, --specexec flags.
+cmd/ (10 more binaries)           r1-bench, r1-server, r1-mcp, r1-gateway, r1-a2a, r1-acp, r1-skill-compile, chat-probe, critique-compare, heroa-e2e
 
 --- V2 GOVERNANCE ---
-contentid/                         Content-addressed ID generation (SHA256, 16 prefixes)
 stokerr/                           Structured error taxonomy (10 error codes)
 ledger/                            Append-only content-addressed graph (nodes, edges, filesystem + SQLite)
 ledger/nodes/                      52 node type structs with NodeTyper interface
@@ -41,9 +41,7 @@ cortex/lobes/                      6 v1 Lobes — memoryrecall, walkeeper, rulec
 cortex/lobes/antitrunc/            Anti-truncation Lobe — critical Notes on truncation phrases / scope underdelivery (spec 9)
 cortex/lanes/                      Lane lifecycle + 6 event types (created/status/delta/cost/note/killed) (spec 3)
 harness/                           Stance lifecycle: spawn/pause/resume/terminate (11 templates)
-harness/models/                    Model provider interface and mock for stance workers
 harness/prompts/                   System prompt templates per stance role
-harness/stances/                   Stance definitions (CTO, Dev, Reviewer, PO) with system prompts
 harness/tools/                     Tool authorization model for stance workers
 snapshot/                          Protected baseline manifest (file paths + content hashes)
 wizard/                            First-time config with presets (minimal/balanced/strict)
@@ -150,7 +148,6 @@ context/                           Three-tier context budget, progressive compac
 
 --- INFRASTRUCTURE ---
 agentmsg/                          Inter-agent communication protocol
-dispatch/                          Three-tier message dispatch queue
 logging/                           Structured leveled logging (Task, Attempt, Cost helpers)
 metrics/                           Thread-safe counters and performance metrics
 telemetry/                         Structured metrics collection
@@ -192,7 +189,7 @@ preflight/                         Pre-flight workspace assertions
 12. Retry: compare BEFORE overwriting `lastFailure`. Copy phase, don't mutate. Clean worktree per retry.
 13. `BaseCommit` captured at worktree creation for `diff BaseCommit..HEAD`
 14. Worktree cleanup: `--force` + `os.RemoveAll` fallback + `worktree prune`
-15. `model.Resolve()` walks Primary -> FallbackChain (Claude -> Codex -> OpenRouter -> API -> lint-only)
+15. `model.Resolve()` walks Primary -> FallbackChain. Wired execution runners today: Claude -> Codex (Native); OpenRouter/DirectAPI/Ember/lint-only are router-defined but `isAvailable()` returns false for them (not yet wired as workflow runners)
 16. Enforcer hooks installed in every worktree via `hooks.Install()`
 17. Event-driven reminders fire during tool use (context >60%, error 3x, test write, etc.)
 18. ROI filter removes low-value tasks before execution

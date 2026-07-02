@@ -6,6 +6,11 @@
 // must come from a different vendor than the agent under test.
 //
 // Spec: specs/truthful-completion-benchmark.md §T5 (items 42-46).
+//
+// Subcommand: `r1-bench reviewereval` runs the S-U-017 cross-model
+// review FP/FN measurement harness (internal/reviewereval); see
+// reviewereval.go. All other invocations use the flat-flag run mode
+// below.
 package main
 
 import (
@@ -75,6 +80,13 @@ func parseFlags(args []string) (*cliFlags, error) {
 }
 
 func run() error {
+	// Subcommand dispatch (S-U-017): `r1-bench reviewereval ...` runs
+	// the cross-model review measurement harness. Everything else
+	// keeps the original flat-flag surface.
+	if len(os.Args) > 1 && os.Args[1] == "reviewereval" {
+		return runReviewerEval(os.Args[2:])
+	}
+
 	f, err := parseFlags(os.Args[1:])
 	if err != nil {
 		return err

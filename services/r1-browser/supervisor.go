@@ -145,7 +145,9 @@ func verifyBearer(r *http.Request) bool {
 	if len(parts) != 3 {
 		// Allow non-JWT bearer tokens in dev (e.g., the StubMinter
 		// case used by integration tests). The IAM check upstream
-		// still gates production traffic.
+		// still gates production traffic. R1_BROWSER_DEV_ANY_BEARER
+		// is dev/integration-test-only and must never be set in
+		// production.
 		return os.Getenv("R1_BROWSER_DEV_ANY_BEARER") != ""
 	}
 	return true

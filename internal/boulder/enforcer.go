@@ -80,6 +80,9 @@ func DefaultConfig() Config {
 }
 
 // NudgeFunc is called when the enforcer wants to re-engage an idle agent.
+// It is invoked WITHOUT the enforcer lock held, so implementations may
+// safely call back into the Enforcer (e.g. RecordActivity via an OnEvent
+// wrapper).
 // Returns true if the nudge was delivered successfully.
 type NudgeFunc func(taskID, message string) bool
 
@@ -160,27 +163,30 @@ func (e *Enforcer) RecordActivity() {
 // Returns the number of nudges sent. Call this periodically.
 func (e *Enforcer) Scan(now time.Time, nudge NudgeFunc) int {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	// Throttle scans
 	if now.Sub(e.lastScan) < e.cfg.ScanInterval {
+		e.mu.Unlock()
 		return 0
 	}
 	e.lastScan = now
 
 	// Check if we're in extended pause
 	if !e.state.PausedUntil.IsZero() && now.Before(e.state.PausedUntil) {
+		e.mu.Unlock()
 		return 0
 	}
 
 	// Not idle yet?
 	if !e.state.LastActivity.IsZero() && now.Sub(e.state.LastActivity) < e.cfg.IdleTimeout {
+		e.mu.Unlock()
 		return 0
 	}
 
 	// Find incomplete tasks
 	incomplete := e.incompleteTasks()
 	if len(incomplete) == 0 {
+		e.mu.Unlock()
 		return 0
 	}
 
@@ -206,7 +212,12 @@ func (e *Enforcer) Scan(now time.Time, nudge NudgeFunc) int {
 		msg := fmt.Sprintf("Task %q (ID: %s) is still incomplete. Status: %s. Please continue working on it.",
 			task.Description, task.ID, task.Status)
 
+		// The callback re-enters the Enforcer in production (workflow
+		// wraps OnEvent to call RecordActivity), so it must run without
+		// the non-reentrant mutex held.
+		e.mu.Unlock()
 		delivered := nudge(task.ID, msg)
+		e.mu.Lock()
 
 		e.state.Nudges = append(e.state.Nudges, NudgeRecord{
 			TaskID:  task.ID,
@@ -228,6 +239,7 @@ func (e *Enforcer) Scan(now time.Time, nudge NudgeFunc) int {
 	}
 
 	e.saveState()
+	e.mu.Unlock()
 	return sent
 }
 

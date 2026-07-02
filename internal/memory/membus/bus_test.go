@@ -35,6 +35,11 @@ func newTestBus(t *testing.T) *Bus {
 	if err != nil {
 		t.Fatalf("NewBus: %v", err)
 	}
+	// Stop the writer goroutine BEFORE db.Close/TempDir cleanup (LIFO):
+	// an un-stopped writer can recreate WAL/SHM files mid-RemoveAll,
+	// failing tests with "TempDir RemoveAll cleanup: directory not
+	// empty" (flake caught by the full-suite gate, 2026-07-01).
+	t.Cleanup(func() { _ = b.Close() })
 	return b
 }
 

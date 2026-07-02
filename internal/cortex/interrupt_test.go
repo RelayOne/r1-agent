@@ -349,3 +349,107 @@ func TestRunTurnWithInterruptViaProvider(t *testing.T) {
 		t.Errorf("public path: err = %v, want errWatchdogIdle", err)
 	}
 }
+
+// TestDecodeChatContent exercises the three-tier decode in
+// decodeChatContent (audit A062: the old converter discarded every
+// payload). Tier 1: typed content-block arrays survive intact. Tier 2:
+// bare JSON strings become a single text block. Tier 3: malformed JSON
+// falls back to a raw-text block so no bytes are ever dropped.
+func TestDecodeChatContent(t *testing.T) {
+	t.Parallel()
+
+	t.Run("typed blocks survive", func(t *testing.T) {
+		raw := []byte(`[{"type":"text","text":"hello"},{"type":"tool_use","id":"tu_1","name":"Read","input":{"path":"a.go"}}]`)
+		blocks := decodeChatContent(raw)
+		if len(blocks) != 2 {
+			t.Fatalf("len(blocks) = %d, want 2", len(blocks))
+		}
+		if blocks[0].Type != "text" || blocks[0].Text != "hello" {
+			t.Errorf("block 0 = %+v, want text/hello", blocks[0])
+		}
+		if blocks[1].Type != "tool_use" || blocks[1].Name != "Read" {
+			t.Errorf("block 1 = %+v, want tool_use/Read", blocks[1])
+		}
+	})
+
+	t.Run("bare string becomes text block", func(t *testing.T) {
+		blocks := decodeChatContent([]byte(`"fix the auth bug"`))
+		if len(blocks) != 1 || blocks[0].Type != blockTypeText || blocks[0].Text != "fix the auth bug" {
+			t.Fatalf("blocks = %+v, want single text block 'fix the auth bug'", blocks)
+		}
+	})
+
+	t.Run("malformed JSON preserved verbatim", func(t *testing.T) {
+		blocks := decodeChatContent([]byte(`{not json`))
+		if len(blocks) != 1 || blocks[0].Type != blockTypeText || blocks[0].Text != "{not json" {
+			t.Fatalf("blocks = %+v, want single raw-text block", blocks)
+		}
+	})
+
+	t.Run("empty payload stays empty", func(t *testing.T) {
+		if blocks := decodeChatContent(nil); blocks != nil {
+			t.Fatalf("blocks = %+v, want nil", blocks)
+		}
+	})
+}
+
+// TestRunTurnWithInterruptPreservesCommittedContent is the regression
+// test the audit demanded: content fed in via req.Messages MUST
+// survive into the committed history that RunTurnWithInterrupt
+// returns. The old chatMessagesToAgentloop built role-only messages
+// (`_ = m.Content`), so replaying the returned slice would 400 on
+// empty content blocks. We drive the interrupt path (hangProvider +
+// pre-loaded InterruptPayload) and assert both a string-form and a
+// blocks-form history message arrive intact, followed by the
+// synthetic user message.
+func TestRunTurnWithInterruptPreservesCommittedContent(t *testing.T) {
+	t.Parallel()
+
+	hp := &hangProvider{done: make(chan struct{})}
+	defer close(hp.done)
+
+	interruptCh := make(chan InterruptPayload, 1)
+	interruptCh <- InterruptPayload{Source: "user", Severity: "warn", Reason: "changed my mind"}
+
+	req := provider.ChatRequest{
+		Model: "claude-haiku-4-5",
+		Messages: []provider.ChatMessage{
+			{Role: "user", Content: []byte(`"fix the auth bug"`)},
+			{Role: "assistant", Content: []byte(`[{"type":"text","text":"on it"}]`)},
+			{Role: "user", Content: []byte(`"thanks"`)},
+		},
+	}
+
+	msgs, reason, err := RunTurnWithInterrupt(context.Background(), hp, req, interruptCh, 5*time.Second)
+	if err != nil {
+		t.Fatalf("RunTurnWithInterrupt: %v", err)
+	}
+	if reason != StopInterrupted {
+		t.Fatalf("reason = %q, want %q", reason, StopInterrupted)
+	}
+	if len(msgs) != 4 {
+		t.Fatalf("len(msgs) = %d, want 4 (3 committed + synthetic user)", len(msgs))
+	}
+	// String-form content survived.
+	if len(msgs[0].Content) != 1 || msgs[0].Content[0].Text != "fix the auth bug" {
+		t.Errorf("msgs[0].Content = %+v, want text 'fix the auth bug'", msgs[0].Content)
+	}
+	// Blocks-form content survived.
+	if len(msgs[1].Content) != 1 || msgs[1].Content[0].Type != "text" || msgs[1].Content[0].Text != "on it" {
+		t.Errorf("msgs[1].Content = %+v, want text 'on it'", msgs[1].Content)
+	}
+	if len(msgs[2].Content) != 1 || msgs[2].Content[0].Text != "thanks" {
+		t.Errorf("msgs[2].Content = %+v, want text 'thanks'", msgs[2].Content)
+	}
+	// Every committed message must be API-valid: non-empty content.
+	for i, m := range msgs {
+		if len(m.Content) == 0 {
+			t.Errorf("msgs[%d] has empty Content — committed history is not API-valid", i)
+		}
+	}
+	// The synthetic user message terminates the slice.
+	last := msgs[len(msgs)-1]
+	if last.Role != "user" || !strings.Contains(last.Content[0].Text, "changed my mind") {
+		t.Errorf("last message = %+v, want synthetic user interrupt", last)
+	}
+}

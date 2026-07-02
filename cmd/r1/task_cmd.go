@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/RelayOne/r1/internal/deploy"
 	"github.com/RelayOne/r1/internal/executor"
+	"github.com/RelayOne/r1/internal/research"
 	"github.com/RelayOne/r1/internal/router"
 )
 
@@ -18,23 +20,28 @@ import (
 // Track B Task 19. It classifies natural-language input via the
 // router and, when a registered executor exists, hands off to it.
 //
-// TaskCode now dispatches end-to-end through the SOW/ship pipeline
-// via the CodeExecutor.ExecuteHook wired in buildDefaultTaskRouter.
-// Other task types remain scaffolding pending Tasks 20-24.
+// TaskCode dispatches end-to-end through the SOW/ship pipeline via
+// the CodeExecutor.ExecuteHook wired in buildDefaultTaskRouter.
+// Research / browser / deploy / delegate route through the real
+// executors landed in Tasks 20-22 + work-stoke TASK 2 (audit A051).
 //
 // Exit codes:
 //
-//	0 — success (classification-only mode, or successful Code dispatch)
+//	0 — success (classification-only mode, or a successful dispatch)
 //	1 — usage error (empty input, bad flag) or executor-returned error
-//	2 — classified but no executor registered or scaffolding-only type
+//	2 — classified but no executor registered (chat), or the executor
+//	    reported ExecutorNotWiredError (e.g. interactive browser
+//	    without the stoke_rod backend)
 func taskCmd(args []string) {
 	code := runTaskCmd(args, os.Stdout, os.Stderr, buildDefaultTaskRouter())
 	os.Exit(code)
 }
 
 // buildDefaultTaskRouter assembles the production router with all
-// current executors registered. Tests construct their own router
-// and call runTaskCmd directly.
+// current executors registered — the same constructors agent-serve
+// uses (buildExecutorRegistry in agent_serve_cmd.go), so `r1 task`
+// and the HTTP surface dispatch identical pipelines. Tests construct
+// their own router and call runTaskCmd directly.
 func buildDefaultTaskRouter() *router.Router {
 	r := router.New()
 	// LINT-ALLOW chdir-cli-entry: r1 task subcommand; cwd captured once and embedded in the CodeExecutor as repoRoot, never re-read at dispatch time.
@@ -42,9 +49,20 @@ func buildDefaultTaskRouter() *router.Router {
 	codeExec := executor.NewCodeExecutor(repoRoot)
 	codeExec.ExecuteHook = defaultCodeExecuteHook(repoRoot)
 	r.Register(executor.TaskCode, codeExec)
-	r.Register(executor.TaskResearch, &executor.ResearchExecutor{})
-	r.Register(executor.TaskBrowser, &executor.BrowserExecutor{})
-	r.Register(executor.TaskDeploy, &executor.DeployExecutor{})
+	// Real HTTP fetcher — same wiring as `r1 research` (research_cmd.go).
+	// A zero-value ResearchExecutor has a nil Fetcher and fails every
+	// Execute with "no Fetcher configured" (audit A051).
+	r.Register(executor.TaskResearch, executor.NewResearchExecutor(research.NewHTTPFetcher()))
+	r.Register(executor.TaskBrowser, executor.NewBrowserExecutor())
+	// ProviderFly is the deploy default (deploy.Deploy applies the same
+	// fallback for ProviderUnknown); constructing with it makes Execute
+	// surface actionable adapter errors (missing app name) instead of
+	// "unknown provider unknown" from the registry lookup.
+	r.Register(executor.TaskDeploy, executor.NewDeployExecutor(deploy.DeployConfig{Provider: deploy.ProviderFly}))
+	// DelegateExecutor has no production backend at the CLI yet
+	// (Hirer / Delegator / Submitter / Delivery are operator config);
+	// the zero value surfaces targeted "configure X" errors from
+	// Execute rather than a scaffolding banner.
 	r.Register(executor.TaskDelegate, &executor.DelegateExecutor{})
 	return r
 }
@@ -177,51 +195,51 @@ func runTaskCmd(args []string, stdout, stderr io.Writer, r *router.Router) int {
 	if err != nil {
 		if errors.Is(err, router.ErrNoExecutor) {
 			fmt.Fprintf(stderr, "r1 task: classified as %s but no executor is registered\n", dispatchedType.String())
+			if dispatchedType == executor.TaskChat {
+				fmt.Fprintf(stderr, "hint: run `r1 chat` to start a conversation.\n")
+			}
 			return 2
 		}
 		fmt.Fprintf(stderr, "r1 task: %v\n", err)
 		return 1
 	}
 
-	// TaskCode is wired end-to-end through the SOW/ship pipeline via
-	// the CodeExecutor.ExecuteHook installed by buildDefaultTaskRouter.
-	// Hand the input to Execute and report the deliverable.
+	// Every registered executor dispatches for real (audit A051):
+	// TaskCode routes through the SOW/ship pipeline via the
+	// CodeExecutor.ExecuteHook; research / browser / deploy /
+	// delegate route through the pipelines landed in Tasks 20-22 +
+	// work-stoke TASK 2. Exit 2 is reserved for executors reporting
+	// ExecutorNotWiredError (a genuinely unwired sub-path, e.g.
+	// interactive browser without the stoke_rod backend).
+	label := ""
 	if dispatchedType == executor.TaskCode {
-		fmt.Fprintf(stdout, "task classified as %s; routing to %T (SOW/ship pipeline).\n", dispatchedType.String(), e)
-		plan := executor.Plan{
-			Task: executor.Task{
-				Description: input,
-				TaskType:    dispatchedType,
-			},
-			Query: input,
-		}
-		deliverable, execErr := e.Execute(context.Background(), plan, executor.EffortStandard)
-		if execErr != nil {
-			fmt.Fprintf(stderr, "r1 task: %v\n", execErr)
-			return 1
-		}
-		if deliverable != nil {
-			fmt.Fprintf(stdout, "deliverable: %s\n", deliverable.Summary())
-		}
-		return 0
+		label = " (SOW/ship pipeline)"
 	}
-
-	// Non-Code task types remain scaffolding until Tasks 20-24 land.
-	// Print the classification + a pointer to the existing CLI entry
-	// point and exit 2 so callers (CI, the chat dispatcher) can tell
-	// "wired but no real executor" apart from "succeeded".
-	fmt.Fprintf(stdout, "task classified as %s; routing to %T — direct dispatch not yet wired.\n", dispatchedType.String(), e)
-	switch dispatchedType {
-	case executor.TaskChat:
-		fmt.Fprintf(stdout, "hint: run `r1 chat` to start a conversation.\n")
-	case executor.TaskDeploy:
-		fmt.Fprintf(stdout, "hint: run `r1 deploy --provider fly --app <name>` to run the fly.io deploy pipeline.\n")
-	case executor.TaskUnknown, executor.TaskResearch, executor.TaskBrowser, executor.TaskDelegate:
-		fmt.Fprintf(stdout, "hint: this executor is scaffolding; real pipeline lands in a follow-up Track B task.\n")
-	default:
-		fmt.Fprintf(stdout, "hint: this executor is scaffolding; real pipeline lands in a follow-up Track B task.\n")
+	fmt.Fprintf(stdout, "task classified as %s; routing to %T%s.\n", dispatchedType.String(), e, label)
+	plan := executor.Plan{
+		Task: executor.Task{
+			Description: input,
+			TaskType:    dispatchedType,
+		},
+		Query: input,
 	}
-	return 2
+	deliverable, execErr := e.Execute(context.Background(), plan, executor.EffortStandard)
+	if execErr != nil {
+		var notWired *executor.ExecutorNotWiredError
+		if errors.As(execErr, &notWired) {
+			fmt.Fprintf(stdout, "hint: %v\n", notWired)
+			return 2
+		}
+		fmt.Fprintf(stderr, "r1 task: %v\n", execErr)
+		if dispatchedType == executor.TaskDeploy {
+			fmt.Fprintf(stderr, "hint: `r1 deploy --provider fly --app <name>` runs the deploy pipeline with explicit config.\n")
+		}
+		return 1
+	}
+	if deliverable != nil {
+		fmt.Fprintf(stdout, "deliverable: %s\n", deliverable.Summary())
+	}
+	return 0
 }
 
 // parseTaskType maps a user-supplied --type flag value to the

@@ -7,6 +7,13 @@
 //
 // T-R1P-020: Multi-language LSP integration.
 //
+// Shipped consumer: the verify pipeline's opt-in LSP diagnostics step
+// (internal/verify/lspdiag.go, enabled via R1_LSP_DIAGNOSTICS=1 — default
+// off) launches this client per changed-file language after edits and
+// fails verification on Error-severity diagnostics (audit A067).
+// Completions and hovers remain library-only surface with no shipped
+// caller yet.
+//
 // Public surface:
 //
 //	c, err := client.LaunchGo(rootDir)            // or LaunchPython, LaunchTypeScript, LaunchRust

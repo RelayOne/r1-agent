@@ -378,15 +378,26 @@ func TestConcurrentSearchAndAdd(t *testing.T) {
 		wg.Add(2)
 		go func(n int) {
 			defer wg.Done()
-			s.Add(&Entry{ID: fmt.Sprintf("new-%d", n), Topic: "test", Query: "q", Content: "new content"})
+			if err := s.Add(&Entry{ID: fmt.Sprintf("new-%d", n), Topic: "test", Query: "q", Content: "new content"}); err != nil {
+				t.Errorf("concurrent Add %d: %v", n, err)
+			}
 		}(i)
 		go func() {
 			defer wg.Done()
-			s.Search("testing", 5)
+			if _, err := s.Search("testing", 5); err != nil {
+				t.Errorf("concurrent Search: %v", err)
+			}
 		}()
 	}
 	wg.Wait()
-	// Just verify no panics or deadlocks
+	// All adds must be durable and retrievable afterwards (audit A091 —
+	// the old body ignored every error and asserted nothing).
+	for i := 0; i < 10; i++ {
+		id := fmt.Sprintf("new-%d", i)
+		if _, err := s.Get(id); err != nil {
+			t.Errorf("entry %s missing after concurrent add: %v", id, err)
+		}
+	}
 }
 
 // --- Edge Cases ---

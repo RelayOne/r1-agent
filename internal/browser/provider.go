@@ -30,7 +30,9 @@ import (
 // Provider is the executor-facing browser contract. Local rod,
 // Browserless, and the in-house Cloud Run service all satisfy it.
 // Selection happens at construction time from config; see
-// PickProvider in cmd/r1/browse_cmd.go for the dispatch.
+// PickProvider in internal/browser/pick for the dispatch (the
+// factory lives in a subpackage because the remote implementations
+// import this package — a factory here would be an import cycle).
 type Provider interface {
 	// Open allocates a new incognito Session. The returned Session
 	// is single-tenant — per-session client-state is invisible to

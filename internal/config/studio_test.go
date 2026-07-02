@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -258,4 +260,68 @@ func TestStudioConfig_JSONRoundTrip(t *testing.T) {
 	if back.Transport != "stdio-mcp" || back.HTTP.BaseURL != "https://a.b" || back.StdioMCP.Command[1] != "pkg" || back.LLM.DefaultModel != "m" {
 		t.Errorf("round trip lost fields: %+v", back)
 	}
+}
+
+// TestLoadStudioConfig covers the resolver added for audit A039: file
+// decode from <r1dir>/studio.json, env overlay, validation, and the
+// missing-file / empty-root defaults.
+func TestLoadStudioConfig(t *testing.T) {
+	t.Run("empty root yields defaults", func(t *testing.T) {
+		cfg, err := LoadStudioConfig("")
+		if err != nil {
+			t.Fatalf("LoadStudioConfig(\"\"): %v", err)
+		}
+		if cfg.Enabled {
+			t.Error("default config must be disabled")
+		}
+	})
+
+	t.Run("missing file is not an error", func(t *testing.T) {
+		cfg, err := LoadStudioConfig(t.TempDir())
+		if err != nil {
+			t.Fatalf("LoadStudioConfig on repo without studio.json: %v", err)
+		}
+		if cfg.Enabled {
+			t.Error("absent file must leave the pack disabled")
+		}
+	})
+
+	t.Run("file decode plus env overlay", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, ".r1")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := `{"enabled": true, "transport": "http", "http": {"base_url": "https://file.example"}}`
+		if err := os.WriteFile(filepath.Join(dir, StudioConfigFileName), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("R1_ACTIUM_STUDIO_BASE_URL", "https://env.example")
+
+		cfg, err := LoadStudioConfig(root)
+		if err != nil {
+			t.Fatalf("LoadStudioConfig: %v", err)
+		}
+		if !cfg.Enabled {
+			t.Error("file enabled=true not honored")
+		}
+		if cfg.HTTP.BaseURL != "https://env.example" {
+			t.Errorf("BaseURL = %q, want env overlay to win over file", cfg.HTTP.BaseURL)
+		}
+	})
+
+	t.Run("invalid enabled config errors", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, ".r1")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := `{"enabled": true, "transport": "http"}` // no base_url
+		if err := os.WriteFile(filepath.Join(dir, StudioConfigFileName), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadStudioConfig(root); err == nil {
+			t.Error("enabled http config without base_url must fail validation")
+		}
+	})
 }

@@ -9,7 +9,8 @@
 // This test is deliberately gated behind `//go:build e2e` so the
 // default `go test ./...` lane stays fast (no browser, no npm,
 // no playwright install). It runs in the release-rehearsal CI
-// lane only — see cloudbuild.yaml's e2e step.
+// lane only — see the repo-root TestGraph3kFPS invocation in
+// services/cloudbuild-e2e.yaml's e2e-test step (audit A050).
 //
 // Mechanics:
 //
@@ -78,10 +79,19 @@ func TestGraph3kFPS(t *testing.T) {
 		t.Fatalf("go build r1-server: %v", err)
 	}
 
+	// Seed the 3000-node fixture session into a hermetic data dir;
+	// the server reads R1_DATA_DIR (datadir.go), so the fixture is
+	// what /session/e2e-fixture/graph hydrates from
+	// (graph_e2e_fixture.go, audit A050).
+	dataDir := filepath.Join(tmp, "data")
+	if err := seedGraphFixture(dataDir, e2eFixtureSessionID, e2eFixtureNodes); err != nil {
+		t.Fatalf("seed graph fixture: %v", err)
+	}
+
 	// Spawn the server. Address is selected by the OS (port 0); the
 	// runner reads R1_SERVER_BASE_URL from its env so dynamic ports
 	// flow through cleanly.
-	addr := startServer(t, bin)
+	addr := startServer(t, bin, dataDir)
 	t.Logf("r1-server up at %s", addr)
 
 	// Exec the runner. Timeout = duration + 30s slack.
@@ -143,13 +153,14 @@ func itoa(n int) string {
 	return string(out)
 }
 
-// startServer launches r1-server on an ephemeral port and waits
-// up to 10s for /healthz to come back 200. Returns the base URL.
-// Stops the process via t.Cleanup.
-func startServer(t *testing.T, bin string) string {
+// startServer launches r1-server on an ephemeral port, pointed at
+// the given (pre-seeded) data dir, and waits up to 10s for the
+// listen announcement. Returns the base URL. Stops the process via
+// t.Cleanup.
+func startServer(t *testing.T, bin, dataDir string) string {
 	t.Helper()
 	cmd := exec.Command(bin, "--addr", "127.0.0.1:0", "--ui-v2", "1")
-	cmd.Env = append(os.Environ(), "R1_SERVER_UI_V2=1")
+	cmd.Env = append(os.Environ(), "R1_SERVER_UI_V2=1", "R1_DATA_DIR="+dataDir)
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	cmd.Stdout = stdout

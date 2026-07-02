@@ -12,15 +12,24 @@ import (
 
 // WisdomBridge wraps a wisdom.Store and emits bus events when learnings are recorded.
 type WisdomBridge struct {
-	store  *wisdom.Store
+	store  wisdom.Recorder
 	bus    *bus.Bus
 	ledger *ledger.Ledger
 }
 
 // NewWisdomBridge creates a WisdomBridge backed by a fresh wisdom.Store.
 func NewWisdomBridge(b *bus.Bus, l *ledger.Ledger) *WisdomBridge {
+	return NewWisdomBridgeWithStore(b, l, wisdom.NewStore())
+}
+
+// NewWisdomBridgeWithStore creates a WisdomBridge wrapping an existing
+// wisdom.Store (audit A037): the app orchestrator routes its recall-path
+// learnings through the bridge while the same store keeps serving prompt
+// injection, so wisdom.learning.recorded events and wisdom_learning
+// ledger nodes fire without forking the learning state.
+func NewWisdomBridgeWithStore(b *bus.Bus, l *ledger.Ledger, store wisdom.Recorder) *WisdomBridge {
 	return &WisdomBridge{
-		store:  wisdom.NewStore(),
+		store:  store,
 		bus:    b,
 		ledger: l,
 	}

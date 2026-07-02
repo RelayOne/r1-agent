@@ -7,7 +7,9 @@ import (
 	"github.com/RelayOne/r1/internal/concern/sections"
 )
 
-// All returns every registered template keyed by name.
+// All returns every registered template keyed by name — 12 templates
+// across the 9 role files in this package (dev, reviewer, and judge
+// register both faces), not 9 templates as older docs claimed.
 func All() map[string]concern.Template {
 	return map[string]concern.Template{
 		"dev_implementing_ticket": DevImplementingTicket(),

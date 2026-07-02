@@ -1,8 +1,17 @@
 // Package bridge wires v1 runtime components into the v2 bus and ledger.
 //
 // Each bridge adapter wraps a v1 component, publishes bus events for
-// observability, and writes ledger nodes for persistence. The supervisor's
-// rules subscribe to these events for governance enforcement.
+// observability, and writes ledger nodes for persistence. Events land on
+// the durable governance bus (inspectable via the cmd/r1 eventlog / ops
+// commands, and available for supervisor rules to pattern-match); ledger
+// nodes populate the governance graph.
+//
+// Wiring status (audit A037/A055): VerifyBridge and WisdomBridge are
+// constructed by the app orchestrator on governed runs
+// (internal/app.Orchestrator.Run); CostBridge usage flows through the
+// governance Governor's cost path (internal/governance.onCost).
+// AuditBridge has no default production construction site yet — callers
+// that produce audit.AuditReports construct it explicitly.
 //
 // # CostBridge
 //

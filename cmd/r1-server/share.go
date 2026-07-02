@@ -18,8 +18,9 @@
 // (chain-tier snapshot loader + share.html htmx template) is part of
 // the larger v2 retrofit and is not in this file.
 //
-// Hash validation: chain root hashes are SHA256 hex per the ledger
-// spec (contentid package). We accept 8–64 lowercase hex chars to
+// Hash validation: chain root hashes are SHA256 hex per the ledger's
+// chain hashing scheme (sha256 hex — see internal/ledger computeID and
+// the chain tiers). We accept 8–64 lowercase hex chars to
 // allow both short prefixes (debug/share UX) and full digests; bad
 // shapes get 400 not 404 so the reason is unambiguous to clients.
 package main

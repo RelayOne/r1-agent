@@ -17,12 +17,18 @@
 //     so the corpus is code-reviewable and operator-extensible.
 //   - A grader that takes a reviewer's verdict (Accept / Reject) and
 //     computes FP / FN / precision / recall against the case's label.
-//   - A pair-runner that, given a (builder provider, reviewer provider),
-//     runs every case through both and emits a tabular result set.
+//   - A pair-runner (RunPair, runpair.go) that, for a (builder,
+//     reviewer) pairing, has the reviewer judge every labeled case and
+//     emits a scored PairResult. The corpus files are the builder's
+//     pre-baked output; the builder model is recorded for attribution,
+//     not re-invoked, so ground-truth labels stay valid across runs.
+//     Executed via the `r1-bench reviewereval` subcommand.
 //
 // What this package explicitly is not:
-//   - The corpus itself. The corpus is intentionally a data artifact
-//     that lives under corpus/ and evolves independently of this code.
+//   - The corpus itself. The corpus is a data artifact that evolves
+//     independently of this code; a seed lives in this package's
+//     corpus/ directory (flat *.json Case files — NOT the repo-root
+//     corpus/, which is the incompatible r1-bench task format).
 //   - A replacement for the in-run per-task reviewer. This harness
 //     is for measurement; the production reviewer path is unchanged.
 //   - An online A/B. Evaluations are deliberately offline so results
@@ -158,6 +164,7 @@ func Grade(cases []Case, decisions []Decision) Confusion {
 }
 
 // PairResult is the full record of a (builder, reviewer) evaluation.
+// Populated by RunPair (runpair.go).
 type PairResult struct {
 	BuilderModel  string
 	ReviewerModel string
@@ -166,6 +173,10 @@ type PairResult struct {
 	Recall        float64
 	Accuracy      float64
 	Decisions     []Decision
+	// Skipped lists case IDs whose review call failed or whose reply
+	// was undecidable; they are absent from Decisions and do not
+	// affect the score (Grade treats them as neutral).
+	Skipped []string
 }
 
 // Report renders pair results as a human-readable table. Intended for

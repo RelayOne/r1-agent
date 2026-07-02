@@ -1,7 +1,9 @@
-// Package harness is the runtime layer that creates worker stances when the
-// supervisor's hooks call for spawning. It handles model selection, system
-// prompt construction, session initialization, pause/resume, tool
-// authorization, and stance lifecycle.
+// Package harness is the runtime layer that creates and executes worker
+// stances when the supervisor's hooks call for spawning. SpawnStance handles
+// model selection, system prompt construction, and session initialization;
+// StanceRunner (runner.go) drives the execution loop — Provider.Chat turns,
+// tool authorization, between-turn pause checkpoints, and token/cost
+// accounting.
 package harness
 
 import (
@@ -14,9 +16,11 @@ import (
 
 	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/concern"
+	ctemplates "github.com/RelayOne/r1/internal/concern/templates"
 	"github.com/RelayOne/r1/internal/harness/prompts"
 	htools "github.com/RelayOne/r1/internal/harness/tools"
 	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/sharedmem"
 )
 
 // Config holds mission-level harness configuration.
@@ -37,20 +41,48 @@ type Harness struct {
 	stances map[string]*StanceSession
 	mu      sync.RWMutex
 	seq     uint64 // monotonic stance counter
+
+	// memInner is the concrete backing store (needed for reducer
+	// registration, which is not on the Store interface); mem is the
+	// namespace-scoped view stances collaborate through. Together they
+	// activate STOKE-017 shared-memory blocks for concurrent stances —
+	// see sharedmem.go (audit A070).
+	memInner *sharedmem.MemoryStore
+	mem      *sharedmem.NamespacedStore
 }
 
 // New creates a Harness wired to the given ledger, bus, and concern builder.
 func New(cfg Config, l *ledger.Ledger, b *bus.Bus, cb *concern.Builder) *Harness {
+	inner := sharedmem.NewMemoryStore()
 	return &Harness{
-		config:  cfg,
-		ledger:  l,
-		bus:     b,
-		concern: cb,
-		stances: make(map[string]*StanceSession),
+		config:   cfg,
+		ledger:   l,
+		bus:      b,
+		concern:  cb,
+		stances:  make(map[string]*StanceSession),
+		memInner: inner,
+		mem:      sharedmem.NewNamespacedStore(inner, nil),
 	}
 }
 
-// SpawnStance creates and initializes a new worker stance.
+// NewWithRoleTemplates creates a Harness whose concern Builder carries the
+// full role-template registry (internal/concern/templates). This is the
+// production stance-spawn path (audit A099/A100): every SpawnStance call
+// selects the registered template matching the requested role/face — e.g.
+// cto/reviewing resolves templates.CTOSnapshotConsultation — and projects
+// its ledger-backed sections into the stance's concern field. Callers that
+// need a trimmed registry (like bench's deliberately section-less fixtures)
+// build their own concern.Builder and use New instead.
+func NewWithRoleTemplates(cfg Config, l *ledger.Ledger, b *bus.Bus) *Harness {
+	cb := concern.NewBuilder(l, b)
+	ctemplates.RegisterAll(cb)
+	return New(cfg, l, b, cb)
+}
+
+// SpawnStance creates and initializes a new worker stance. It prepares the
+// session (concern field, system prompt, model, authorized tools) and
+// publishes worker.spawned; execution is driven separately via
+// NewStanceRunner(...).Run on the returned handle's ID.
 func (h *Harness) SpawnStance(ctx context.Context, req SpawnRequest) (*StanceHandle, error) {
 	// 1. Validate request.
 	if req.Role == "" {

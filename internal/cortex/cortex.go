@@ -112,6 +112,15 @@ type Cortex struct {
 	tracker   *BudgetTracker
 	runners   []*LobeRunner
 
+	// roundRunners is the subset of runners whose Lobes participate in
+	// the Round barrier (RunStyleRound). Daemon-style Lobes (walkeeper,
+	// rulecheck) block inside Run until ctx cancellation, so counting
+	// them as Round participants would stall every MidturnNote at the
+	// full RoundDeadline (audit A010). Same registration order as
+	// runners; index alignment with cfg.Lobes is NOT guaranteed here —
+	// use runners for LobeStatus-style walks.
+	roundRunners []*LobeRunner
+
 	// Lifecycle state owned by Start/Stop (TASK-13).
 	//
 	// ctx/cancel are captured at Start: every spawned goroutine (the
@@ -229,23 +238,39 @@ func New(cfg Config) (*Cortex, error) {
 	r := NewRound()
 
 	runners := make([]*LobeRunner, 0, len(cfg.Lobes))
+	roundRunners := make([]*LobeRunner, 0, len(cfg.Lobes))
 	for _, l := range cfg.Lobes {
-		runner := NewLobeRunner(l, ws, sem, cfg.EventBus)
-		// Wire the Round barrier so each runner reports completion
-		// via Round.Done(roundID, lobeID) from runOnce, letting
-		// Cortex.MidturnNote (TASK-14) wait on the per-round barrier.
-		runner.SetRound(r)
+		// The shared tracker gives every runner the per-round output
+		// budget gate (spec item 21): KindLLM runners consult
+		// Exceeded() after Acquire and skip the round (emitting
+		// cortex.lobe.budget_skipped) once the 30% cap is spent.
+		runner := NewLobeRunner(l, ws, sem, cfg.EventBus, tracker)
+		// Forward the Cortex-level model client so LobeInput.Provider
+		// reaches Lobes that need it (LLM Lobes; deterministic Lobes
+		// ignore it).
+		runner.SetProvider(cfg.Provider)
+		// Wire the Round barrier so each round-style runner reports
+		// completion via Round.Done(roundID, lobeID) from runOnce,
+		// letting Cortex.MidturnNote (TASK-14) wait on the per-round
+		// barrier. Daemon-style Lobes are excluded: their Run blocks
+		// until ctx cancellation, so they can never signal Done — the
+		// runner starts them once at Start instead (audit A010).
+		if runner.Style() == RunStyleRound {
+			runner.SetRound(r)
+			roundRunners = append(roundRunners, runner)
+		}
 		runners = append(runners, runner)
 	}
 
 	return &Cortex{
-		cfg:       cfg,
-		workspace: ws,
-		round:     r,
-		router:    router,
-		sem:       sem,
-		tracker:   tracker,
-		runners:   runners,
+		cfg:          cfg,
+		workspace:    ws,
+		round:        r,
+		router:       router,
+		sem:          sem,
+		tracker:      tracker,
+		runners:      runners,
+		roundRunners: roundRunners,
 	}, nil
 }
 
@@ -259,8 +284,11 @@ func (c *Cortex) Workspace() *Workspace { return c.workspace }
 // spec interface in §"Cortex — the bundle".
 func (c *Cortex) Spotlight() *Spotlight { return c.workspace.Spotlight() }
 
-// Router returns the mid-turn input Router. Exposed so the chat REPL
-// (cmd/r1) can call Route directly without reaching through Config.
+// Router returns the mid-turn input Router. The chat REPL (cmd/r1
+// chat-interactive) routes mid-turn user input through
+// Cortex.OnUserInputMidTurn (userinput.go), which wraps Route and
+// enacts the decision; this accessor remains for tests and callers
+// that need the raw Route decision without side effects.
 func (c *Cortex) Router() *Router { return c.router }
 
 // Tracker returns the BudgetTracker. Exposed so the hub.Bus subscriber
@@ -504,29 +532,34 @@ var _ agentloop.CortexHook = (*Cortex)(nil)
 // The dance, per spec item 14:
 //
 //  1. Allocate a fresh round id from the monotonic counter.
-//  2. Open the Round with len(c.runners) expected participants. With
-//     zero runners we skip the dance entirely and return "" — Round.Open
-//     would still close the done channel immediately, but tests and
-//     callers expect a fast no-op when no Lobes are registered.
-//  3. Stamp Workspace.SetRound so every Note Published during this
+//  2. Deep-copy messages once and stash the copy on every round-style
+//     runner via SetRoundHistory so buildInput can populate
+//     LobeInput.History (memoryrecall / antitrunc consume it).
+//  3. Open the Round with len(c.roundRunners) expected participants —
+//     daemon-style Lobes are excluded because their Run never returns
+//     (audit A010). With zero runners we skip the dance entirely and
+//     return "" — Round.Open would still close the done channel
+//     immediately, but tests and callers expect a fast no-op when no
+//     Lobes are registered.
+//  4. Stamp Workspace.SetRound so every Note Published during this
 //     round carries roundID. (Note.Round drives Drain filtering.)
-//  4. Tick every LobeRunner with TickRound(roundID). The runner stamps
-//     currentRoundID and signals its tick channel. After each lobe.Run
-//     returns, the runner calls Round.Done(roundID, lobeID).
-//  5. Wait on the Round barrier with cfg.RoundDeadline. Per spec
+//  5. Tick every round-style LobeRunner with TickRound(roundID). The
+//     runner stamps currentRoundID and signals its tick channel. After
+//     each lobe.Run returns, the runner calls Round.Done(roundID, lobeID).
+//  6. Wait on the Round barrier with cfg.RoundDeadline. Per spec
 //     gotcha #6, slow Lobes are NOT cancelled — their Notes simply land
 //     on a future round. ErrRoundDeadlineExceeded therefore proceeds to
 //     drain whatever has arrived; ctx errors do the same so a cancelled
 //     parent does not leave the supervisor with a stale block.
-//  6. Drain Notes for this round from the Workspace. Drain returns
+//  7. Drain Notes for this round from the Workspace. Drain returns
 //     everything with Round >= roundID; we filter to exactly roundID
 //     defensively in case a future round has already produced Notes
 //     (shouldn't happen given the synchronous shape, but cheap guard).
-//  7. Sort by Severity desc (Critical > Warning > Advice > Info), with
+//  8. Sort by Severity desc (Critical > Warning > Advice > Info), with
 //     EmittedAt asc as the tiebreaker so within a severity bucket the
 //     reader sees Notes in the order they fired.
-//  8. Close the Round so subsequent ids strictly advance.
-//  9. Format. Empty result returns "" so the caller's hook composer
+//  9. Close the Round so subsequent ids strictly advance.
+//  10. Format. Empty result returns "" so the caller's hook composer
 //     does not inject a leading "[CORTEX NOTES — round N]\n" with no
 //     bullets underneath.
 //
@@ -538,8 +571,7 @@ var _ agentloop.CortexHook = (*Cortex)(nil)
 //
 // where the per-line fields are Severity, LobeID, Title.
 func (c *Cortex) MidturnNote(messages []agentloop.Message, turn int) string {
-	_ = messages // history payload not consumed at this layer; reserved for future per-round LobeInput wiring.
-	_ = turn     // turn number not used yet; surfaces in the agentloop.MidturnCheckFn signature for parity.
+	_ = turn // turn number not used yet; surfaces in the agentloop.MidturnCheckFn signature for parity.
 
 	// No runners → no round to drive. Skipping the Open call avoids a
 	// trivial (immediately-closed) Round entry in the bookkeeping maps
@@ -550,10 +582,33 @@ func (c *Cortex) MidturnNote(messages []agentloop.Message, turn int) string {
 
 	roundID := c.roundCounter.Add(1)
 
-	c.round.Open(roundID, len(c.runners))
+	// Zero the per-round Lobe output accumulator BEFORE the TickRound
+	// fan-out so the 30% cap measures this round in isolation (spec
+	// item 21, audit A061). The budget itself (30% of the main agent's
+	// last output turn) is untouched — RecordMainTurn keeps feeding it
+	// from the EventModelPostCall subscriber registered in Start.
+	if c.tracker != nil {
+		c.tracker.ResetRound()
+	}
+
+	// Deep-copy the conversation once per round and hand the same copy
+	// to every round-style runner. The copy insulates Lobes (which may
+	// still be reading past the RoundDeadline — slow Lobes are never
+	// cancelled) from the agentloop mutating its live message slice
+	// (append, compaction). Lobes hold History read-only per the
+	// LobeInput contract, so sharing one copy across runners is safe.
+	history := deepCopyMessages(messages)
+
+	// Daemon-style runners are excluded from the barrier count: their
+	// Run blocks until ctx cancellation and can never signal Done, so
+	// counting them would burn the full RoundDeadline on every midturn
+	// check (audit A010). Their Notes still surface here — they publish
+	// asynchronously into the shared Workspace and Drain picks them up.
+	c.round.Open(roundID, len(c.roundRunners))
 	c.workspace.SetRound(roundID)
 
-	for _, r := range c.runners {
+	for _, r := range c.roundRunners {
+		r.SetRoundHistory(history)
 		r.TickRound(roundID)
 	}
 
@@ -578,15 +633,11 @@ func (c *Cortex) MidturnNote(messages []agentloop.Message, turn int) string {
 
 	notes, _ := c.workspace.Drain(roundID)
 
-	// Defensive filter: Drain returns Round >= roundID; restrict to
-	// exactly roundID so a future round's Notes (shouldn't exist yet,
-	// but cheap guard) never pollute this round's block.
-	rn := make([]Note, 0, len(notes))
-	for _, n := range notes {
-		if n.Round == roundID {
-			rn = append(rn, n)
-		}
-	}
+	// No round filter: Drain's index cursor already guarantees
+	// exactly-once delivery, and late Notes from earlier rounds (slow
+	// lobes past the RoundDeadline) must surface HERE — the old
+	// exactly-roundID filter discarded them forever (audit A019).
+	rn := notes
 
 	sort.SliceStable(rn, func(i, j int) bool {
 		ri, rj := severityRank(rn[i].Severity), severityRank(rn[j].Severity)
@@ -608,6 +659,36 @@ func (c *Cortex) MidturnNote(messages []agentloop.Message, turn int) string {
 		fmt.Fprintf(&b, "- [%s] %s: %s\n", n.Severity, n.LobeID, n.Title)
 	}
 	return b.String()
+}
+
+// deepCopyMessages clones the agentloop message history so Lobes can
+// keep reading it after MidturnNote returns without racing the loop's
+// live slice. Content slices are copied per message and tool-input
+// json.RawMessage byte slices are duplicated; strings are immutable in
+// Go so the block's text fields need no further copying. Returns nil
+// for empty input so History stays nil-comparable in tests.
+func deepCopyMessages(messages []agentloop.Message) []agentloop.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	out := make([]agentloop.Message, len(messages))
+	for i, m := range messages {
+		cm := m
+		if len(m.Content) > 0 {
+			blocks := make([]agentloop.ContentBlock, len(m.Content))
+			copy(blocks, m.Content)
+			for j := range blocks {
+				if len(blocks[j].Input) > 0 {
+					in := make([]byte, len(blocks[j].Input))
+					copy(in, blocks[j].Input)
+					blocks[j].Input = in
+				}
+			}
+			cm.Content = blocks
+		}
+		out[i] = cm
+	}
+	return out
 }
 
 // PreEndTurnGate returns a non-empty string when there are unresolved

@@ -222,6 +222,13 @@ impl SubprocessManager {
                 match serde_json::from_str::<RpcResponse>(&line) {
                     Ok(resp) => {
                         if let Some(ev) = &resp.event {
+                            // lane.* events additionally feed the host-side
+                            // LanesState forwarders so every subscribed
+                            // WebView Channel receives a typed LaneEvent
+                            // (audit/complete-systems-2026-07-01.md A052).
+                            if ev.starts_with("lane.") {
+                                route_lane_event(&app_clone, ev, &resp).await;
+                            }
                             // Server-pushed event — emit to WebView.
                             forward_event(&app_clone, ev, &resp);
                         } else if let Some(id) = &resp.id {
@@ -424,6 +431,43 @@ impl SubprocessManager {
     /// Return the first active session id, or None if no sessions exist.
     pub async fn first_session_id(&self) -> Option<String> {
         self.state.lock().await.sessions.keys().next().cloned()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Route daemon lane.* events into the host-side lane forwarders.
+// ---------------------------------------------------------------------------
+
+/// Convert a daemon-pushed `lane.*` stdout event into a typed
+/// `lanes::LaneEvent` and dispatch it to every registered
+/// `LaneSubscription` whose session matches. This is the production
+/// feeder for `LaneSubscription::ingest`
+/// (audit/complete-systems-2026-07-01.md A052): without it the
+/// per-subscription `tauri::ipc::Channel<LaneEvent>` never saw an
+/// event. Subscriptions whose Channel send fails are deregistered by
+/// `LanesState::dispatch`.
+async fn route_lane_event(app: &AppHandle, event_name: &str, resp: &RpcResponse) {
+    use tauri::Manager;
+    // try_state: the state is always managed in main.rs; be defensive
+    // for any embedding (e.g. future test harness) that skips it.
+    let Some(state) = app.try_state::<crate::lanes::LanesState>() else {
+        return;
+    };
+    match crate::lanes::lane_event_from_wire(
+        event_name,
+        resp.session_id.as_deref(),
+        resp.payload.as_ref(),
+    ) {
+        Some(ev) => {
+            state.dispatch(ev).await;
+        }
+        None => {
+            eprintln!(
+                "[r1-desktop] dropping malformed lane event {event_name} \
+                 (session {})",
+                resp.session_id.as_deref().unwrap_or("?")
+            );
+        }
     }
 }
 

@@ -50,6 +50,12 @@ struct DiscoveryInner {
     /// On failure we surface the error string to the UI without
     /// keeping the typed `DiscoveryError` (Send + 'static gymnastics).
     error: Option<String>,
+    /// True once the user explicitly accepted the auto-spawned sidecar
+    /// via the discovery wizard's "Use bundled" affordance
+    /// (`daemon_accept_sidecar` verb). Purely informational — the
+    /// sidecar keeps running either way; the flag records consent so
+    /// the wizard is not re-shown for the same run.
+    sidecar_accepted: bool,
 }
 
 impl DiscoveryState {
@@ -59,6 +65,7 @@ impl DiscoveryState {
                 handle: None,
                 pending: false,
                 error: None,
+                sidecar_accepted: false,
             }),
         }
     }
@@ -87,6 +94,18 @@ impl DiscoveryState {
         g.pending = false;
     }
 
+    /// Record that the user explicitly accepted the auto-spawned
+    /// sidecar (discovery wizard "Use bundled" button →
+    /// `daemon_accept_sidecar` verb). Returns the current transport
+    /// mode label so the caller can render it: "sidecar" / "external"
+    /// when connected, "pending" while discovery is still probing,
+    /// "disconnected" otherwise.
+    pub fn accept_sidecar(&self) -> String {
+        let mut g = self.inner.lock().expect("DiscoveryState poisoned");
+        g.sidecar_accepted = true;
+        mode_label(&g)
+    }
+
     /// Read a snapshot for the IPC verb. The DaemonHandle isn't
     /// `Clone`-able (it owns a CommandChild) so we project it into a
     /// JSON-friendly summary instead.
@@ -102,6 +121,7 @@ impl DiscoveryState {
             url: g.handle.as_ref().map(|h| h.url.clone()),
             mode: mode.map(str::to_owned),
             error: g.error.clone(),
+            sidecar_accepted: g.sidecar_accepted,
         }
     }
 
@@ -111,7 +131,7 @@ impl DiscoveryState {
     /// session subprocess path. Uses the transport module's
     /// canonical URL builder so the encoding is identical to the one
     /// the runtime path emits.
-    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: invoked by the future transport run-loop
+    #[allow(dead_code)] // deferred daemon-WS migration helper; unit-tested, no production caller yet (A095)
     pub fn connect_url(&self, last_event_id: Option<&str>) -> Option<String> {
         let g = self.inner.lock().expect("DiscoveryState poisoned");
         g.handle
@@ -122,7 +142,7 @@ impl DiscoveryState {
     /// Default reconnect backoff policy. Pulled from the transport
     /// module so the daemon-discovery path uses the same schedule the
     /// per-session forwarder uses (250 ms → 16 s cap).
-    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: read by the future transport run-loop
+    #[allow(dead_code)] // deferred daemon-WS migration helper; unit-tested, no production caller yet (A095)
     pub fn backoff_policy() -> BackoffPolicy {
         BackoffPolicy::r1_default()
     }
@@ -150,6 +170,23 @@ pub struct DaemonStatusSnapshot {
     /// Error string from the most recent discovery attempt, if it
     /// failed. Cleared on the next successful attempt.
     pub error: Option<String>,
+    /// True once the user accepted the bundled sidecar via the
+    /// discovery wizard (`daemon_accept_sidecar`).
+    pub sidecar_accepted: bool,
+}
+
+/// Project the current transport mode onto a stable label string.
+/// "sidecar" / "external" when a handle is live, "pending" while the
+/// discovery task is still probing, "disconnected" otherwise.
+fn mode_label(g: &DiscoveryInner) -> String {
+    match g.handle.as_ref() {
+        Some(h) => match h.mode {
+            TransportMode::External => "external".to_string(),
+            TransportMode::Sidecar => "sidecar".to_string(),
+        },
+        None if g.pending => "pending".to_string(),
+        None => "disconnected".to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -250,5 +287,30 @@ mod tests {
     fn backoff_policy_matches_transport_default() {
         let p = DiscoveryState::backoff_policy();
         assert_eq!(p, BackoffPolicy::r1_default());
+    }
+
+    #[test]
+    fn accept_sidecar_sets_flag_and_reports_disconnected_when_empty() {
+        let s = DiscoveryState::new();
+        assert!(!s.snapshot().sidecar_accepted);
+        let mode = s.accept_sidecar();
+        assert_eq!(mode, "disconnected");
+        assert!(s.snapshot().sidecar_accepted);
+    }
+
+    #[test]
+    fn accept_sidecar_reports_pending_while_probing() {
+        let s = DiscoveryState::new();
+        s.mark_pending();
+        assert_eq!(s.accept_sidecar(), "pending");
+    }
+
+    #[test]
+    fn accept_sidecar_reports_live_mode() {
+        let s = DiscoveryState::new();
+        s.set_handle(fake_handle("ws://127.0.0.1:7777", "t", TransportMode::Sidecar));
+        assert_eq!(s.accept_sidecar(), "sidecar");
+        s.set_handle(fake_handle("ws://127.0.0.1:7777", "t", TransportMode::External));
+        assert_eq!(s.accept_sidecar(), "external");
     }
 }

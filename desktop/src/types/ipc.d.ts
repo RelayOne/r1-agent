@@ -534,16 +534,24 @@ export interface SkillInvokeResult {
 // Settings: providers / vault / governance (§R1D-7)
 // ---------------------------------------------------------------------
 
-/** Configured-provider status surfaced in the Providers section. */
-export type ProviderStatus = "configured" | "needs_key";
+/**
+ * Configured-provider status surfaced in the Providers section.
+ * Derived from locally stored onboarding state, never fabricated
+ * (audit A086): "configured" = a local API-key slot exists for the
+ * provider; "needs_key" = no local key stored; "not_probed" =
+ * keyless local endpoint (e.g. Ollama) whose reachability is never
+ * probed by this build.
+ */
+export type ProviderStatus = "configured" | "needs_key" | "not_probed";
 
 /**
  * Single provider row rendered in the R1D-7.2 Providers section.
  * `id` is stable (e.g. "claude", "openai"); `name` is human-readable;
  * `endpoint` is the base URL the client hits; `model` is the default
- * model identifier for this provider; `is_default` flips true for the
- * one provider the session composer pre-selects; `status` drives the
- * pill chip ("configured" = ready, "needs_key" = missing vault entry).
+ * model identifier for this provider; `is_default` flips true only
+ * for the provider the user actually chose in onboarding; `status`
+ * drives the pill chip (see ProviderStatus — derived from local
+ * onboarding state, endpoints are never probed).
  */
 export interface ProviderRow {
   id: string;
@@ -660,10 +668,15 @@ export type ServerEvent =
 // ---------------------------------------------------------------------
 
 /**
- * Every Tauri command name exposed by the Rust host. 11 round-trip to
- * the Go subprocess; 4 are Tauri-only (§5). The `session_list` verb is
- * a WebView-level convenience that maps onto cached session summaries
- * once multi-session lands in R1D-2.4.
+ * Method names accepted by `invokeStub`. Most are registered in the
+ * Rust host's `generate_handler!` (ipc.rs) and round-trip to the Go
+ * subprocess or run host-side.
+ *
+ * NOT registered by the Rust host in this build (audit A035):
+ * `session_list`, `session_tree`, and `descent_evidence`. In a real
+ * Tauri WebView these reject with an unknown-command error; callers
+ * must catch and render a truthful unavailable state (sow-tree.ts
+ * does). They stay in the union so the dev-stub path type-checks.
  */
 export type InvokeMethod =
   // Session control
@@ -682,8 +695,10 @@ export type InvokeMethod =
   // Descent
   | "descent_current_tier"
   | "descent_tier_history"
+  // UNREGISTERED in ipc.rs — rejects in a real Tauri WebView.
   | "descent_evidence"
-  // SOW drill-down (R1D-3.1 / R1D-3.2)
+  // SOW drill-down (R1D-3.1 / R1D-3.2).
+  // UNREGISTERED in ipc.rs — rejects in a real Tauri WebView.
   | "session_tree"
   // Tauri-only
   | "session_send"
@@ -696,7 +711,14 @@ export type InvokeMethod =
   // Daemon liveness probe (R1D settings panel)
   | "daemon_status"
   | "daemon_install_command"
-  // WebView convenience (cached in Rust host; not a JSON-RPC verb)
+  // Discovery wizard (spec §5 step 4 / audit A033) — registered in
+  // ipc.rs: config presence probe, user-triggered rediscovery, and
+  // bundled-sidecar acceptance.
+  | "daemon_config_exists"
+  | "daemon_reconnect"
+  | "daemon_accept_sidecar"
+  // WebView convenience — UNREGISTERED in ipc.rs (no cached session
+  // summary command exists yet); rejects in a real Tauri WebView.
   | "session_list";
 
 // ---------------------------------------------------------------------

@@ -125,7 +125,8 @@ open http://127.0.0.1:7777/
 r1 chat --interactive
 
 # Desktop (Tauri 2)
-r1 desktop      # if installed; or open the platform-specific bundle
+# Open the installed R1 Desktop app (platform bundle); it connects to the
+# daemon or spawns `r1 desktop-rpc` — there is no `r1 desktop` subcommand
 ```
 
 ### Authentication for connecting UIs
@@ -209,6 +210,7 @@ gcloud secrets versions add r1-prod-shared-DATABASE_URL \
 us-central1-docker.pkg.dev/relayone-488319/r1/r1-coord-api:<sha>      # 3.2 MB
 us-central1-docker.pkg.dev/relayone-488319/r1/r1-docs:<sha>           # 4.3 MB
 us-central1-docker.pkg.dev/relayone-488319/r1/r1-downloads-cdn:<sha>  # 7.0 MB
+us-central1-docker.pkg.dev/relayone-488319/r1/r1-admin:<sha>
 ```
 
 All distroless static (`gcr.io/distroless/static-debian12:nonroot`). Multi-stage builds; no glibc; no shell.
@@ -297,7 +299,7 @@ TAG=$(git rev-parse --short HEAD) ./services/deploy.sh prod
 TAG=$(git rev-parse --short HEAD) ./services/deploy.sh all   # all 3 envs sequentially
 ```
 
-The script runs `gcloud run deploy` for each of the 3 services × N envs, then smoke-checks `/livez` on each deployed service.
+The script runs `gcloud run deploy` for each of the 4 services (r1-coord-api, r1-docs, r1-downloads-cdn, r1-admin) × N envs, then smoke-checks `/livez` on each deployed service.
 
 ---
 
@@ -331,11 +333,11 @@ GET /v1/version  — version + env
 GET /            — service metadata
 ```
 
-Smoke-check all 9 services:
+Smoke-check all 12 services:
 
 ```bash
 for ENV in dev staging prod; do
-  for SVC in r1-coord-api r1-docs r1-downloads-cdn; do
+  for SVC in r1-coord-api r1-docs r1-downloads-cdn r1-admin; do
     URL=$(gcloud run services describe $SVC-$ENV --region=us-central1 --format='value(status.url)')
     CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$URL/livez")
     printf "%-30s %s %s\n" "$SVC-$ENV" "$CODE" "$URL"
@@ -343,7 +345,7 @@ for ENV in dev staging prod; do
 done
 ```
 
-Expected: 9 × `200`.
+Expected: 12 × `200`.
 
 ### Logs
 
@@ -500,7 +502,7 @@ done
 
 # 5. Build + push images
 TAG=$(git rev-parse --short HEAD)
-for SVC in r1-coord-api r1-docs r1-downloads-cdn; do
+for SVC in r1-coord-api r1-docs r1-downloads-cdn r1-admin; do
   gcloud builds submit services/$SVC \
     --tag=us-central1-docker.pkg.dev/$PROJECT/r1/$SVC:$TAG \
     --machine-type=e2-medium --timeout=600
@@ -523,9 +525,11 @@ for ENV in prod staging dev; do
     --domain=api$SUB.r1.run --region=us-central1
   gcloud beta run domain-mappings create --service=r1-downloads-cdn-$ENV \
     --domain=downloads$SUB.r1.run --region=us-central1
+  gcloud beta run domain-mappings create --service=r1-admin-$ENV \
+    --domain=admin$SUB.r1.run --region=us-central1
 done
 
-# 9. Add 9 CNAMEs to Cloudflare (ghs.googlehosted.com., proxy OFF)
+# 9. Add 12 CNAMEs to Cloudflare (ghs.googlehosted.com., proxy OFF)
 
 # 10. Wire deploy triggers
 ./services/scripts/setup-cloudbuild-triggers.sh
@@ -535,14 +539,14 @@ done
 
 # 12. Final smoke
 for ENV in dev staging prod; do
-  for SVC in r1-coord-api r1-docs r1-downloads-cdn; do
+  for SVC in r1-coord-api r1-docs r1-downloads-cdn r1-admin; do
     URL=$(gcloud run services describe $SVC-$ENV --region=us-central1 --format='value(status.url)')
     curl -sSf "$URL/livez" >/dev/null && echo "$SVC-$ENV OK" || echo "$SVC-$ENV FAIL"
   done
 done
 ```
 
-Expected: 9 × OK.
+Expected: 12 × OK.
 
 ---
 
@@ -564,7 +568,7 @@ The lane runs in **three modes**, all firing the same `services/cloudbuild-e2e.y
 
 1. `golang:1.25` — `go build -mod=vendor` produces a fresh `r1-server` binary.
 2. `node:22.13-bookworm-slim` — `npm install` + `npx playwright install --with-deps chromium`.
-3. `golang:1.25` — `go test -tags=e2e ./cmd/r1-server/e2e/...` exercises the full Playwright + axe flow with `R1_SERVER_UI_V2=1` + `R1_SERVER_SHARE_ENABLED=1`.
+3. `golang:1.25` — `go test -tags=e2e ./cmd/r1-server/e2e/...` exercises the full Playwright + axe flow with `R1_SERVER_UI_V2=1` + `R1_SERVER_SHARE_ENABLED=1` (the server ignores `R1_SERVER_UI_V2` post-Spec-D; the e2e harness uses it as its opt-in run/skip gate).
 4. `cloud-sdk:slim` — publishes the rehearsal result back to GitHub via Cloud Build's native commit-status integration.
 
 Both Cloud Build triggers run under the BYOSA service account `cloud-build-byosa@relayone-488319.iam.gserviceaccount.com`. The `r1-agent-e2e-rehearsal-main` trigger is path-filtered to `cmd/r1-server/**`, `internal/server/**`, `web/**`, and `services/cloudbuild-e2e.yaml` (changes anywhere else don't fire the rehearsal — keeps build minutes proportional to risk).
@@ -584,7 +588,7 @@ cd cmd/r1-server/e2e
 R1_SERVER_UI_V2=1 R1_SERVER_SHARE_ENABLED=1 go test -tags=e2e ./...
 ```
 
-Prerequisite: `cd web && npx playwright install --with-deps chromium` (one-time).
+Prerequisite: `cd web && npx playwright install --with-deps chromium` (one-time). `R1_SERVER_UI_V2=1` is the harness's opt-in run/skip gate — the suite skips without it; the server itself ignores the variable post-Spec-D.
 
 ### Setting up the triggers (one-time)
 
@@ -611,11 +615,10 @@ The `GCP_SA_JSON` repo secret must hold a JSON service-account key with `roles/c
 
 ## Tracebundle v2 export — operator notes
 
-`GET /api/session/{id}/export.tracebundle` produces a portable per-session audit artifact (chain nodes + edges + content + canonical-signed manifest with `chain_root_hash`). V2-flag-gated: returns `404` unless `R1_SERVER_UI_V2=1` is set on the `r1-server` process.
+`GET /api/session/{id}/export.tracebundle` produces a portable per-session audit artifact (chain nodes + edges + content + canonical-signed manifest with `chain_root_hash`). The route is always registered post-Spec-D (D-UI2-7 removed the `R1_SERVER_UI_V2` toggle) and sits behind the same bearer middleware as the rest of the `/api/*` surface; the only remaining flag is `R1_SERVER_SHARE_ENABLED`, which gates the separate `/share/*` surface.
 
 Operational considerations:
 
-- **Set `R1_SERVER_UI_V2=1`** as a Cloud Run env var (or local env when running `r1-server` standalone) to enable the export route. The flag also enables the v2 web UI.
 - **Bundle size** scales with session length. Expect a few hundred KB for a typical mission, MB-range for long-running multi-day sessions. Stream with `--output` rather than `-O` so curl doesn't buffer in memory.
 - **Distributing the bundle**: gzip first (`tracebundle` is a JSON-shaped archive; gzip ratios are typically 4-6×), then attach to a ticket / share via cloud storage. Recipients verify with the canonical manifest body (`ledger.CanonicalManifestSignBody`) plus the operator-published public key.
 - **Redacted content**: the bundle preserves the redaction structure — chain-tier metadata is present, content tier is empty, and the per-node `<store-root>/redactions/<nodeID>.ndjson` log is included. `Store.RedactionsForVerified` is the read path the dashboard uses; downstream auditors run the same `VerifyRecord` check against the public key.
@@ -634,7 +637,7 @@ Operational considerations:
 - Auto-deploy yaml + ops scripts shipped
 - `cloudbuild.yaml` CI gate (build + test + vet + race + chdir-lint + view-without-api + antitrunc verify)
 - **Release-rehearsal CI** (PR #170): Cloud Build triggers `r1-agent-e2e-rehearsal-main` (push-to-main) + `r1-agent-e2e-rehearsal-tag` (`^v.*$`) + manual GitHub Actions workflow (`e2e-rehearsal-manual.yml`). Idempotent setup via `scripts/setup-cloudbuild-e2e-trigger.sh`.
-- **Tracebundle v2 export route** (PR #171): `GET /api/session/{id}/export.tracebundle` v2-flag-gated; per-session filtered chain + edges + canonical-signed manifest with `chain_root_hash`. Production source at `cmd/r1-server/tracebundle_source.go`.
+- **Tracebundle v2 export route** (PR #171): `GET /api/session/{id}/export.tracebundle` always-on post-Spec-D (D-UI2-7 removed the `R1_SERVER_UI_V2` gate); per-session filtered chain + edges + canonical-signed manifest with `chain_root_hash`. Production source at `cmd/r1-server/tracebundle_source.go`.
 - **Signed redaction events** (PR #169): ed25519 keypair persisted at `<store-root>/redactions/sign-{priv,pub}.pem`; `Store.RedactionsForVerified` returns per-entry `Verified` flag for the dashboard side panel.
 
 ### In Progress

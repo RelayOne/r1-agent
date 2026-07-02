@@ -131,6 +131,9 @@ type Memory struct {
 
 // SQLiteStore is the persistent wisdom store backed by SQLite with WAL mode.
 // It satisfies the same API as Store for drop-in replacement.
+// Compile-time proof that the persistent store satisfies Recorder.
+var _ Recorder = (*SQLiteStore)(nil)
+
 type SQLiteStore struct {
 	db     *sql.DB
 	mu     sync.Mutex

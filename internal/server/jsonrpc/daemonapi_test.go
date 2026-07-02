@@ -26,6 +26,8 @@ type fakeDaemon struct {
 	subReq  SessionSubscribeRequest
 	subResp SessionSubscribeResponse
 
+	interruptReq SessionInterruptRequest
+
 	listReq LanesListRequest
 	listOut LanesListResponse
 
@@ -63,6 +65,13 @@ func (f *fakeDaemon) DaemonSessionSend(ctx context.Context, req SessionSendReque
 	defer f.mu.Unlock()
 	f.sendReq = req
 	return f.sendResp, nil
+}
+
+func (f *fakeDaemon) DaemonSessionInterrupt(ctx context.Context, req SessionInterruptRequest) (SessionInterruptResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.interruptReq = req
+	return SessionInterruptResponse{InterruptedAt: "2026-05-02T02:00:00Z", WasRunning: true}, nil
 }
 
 func (f *fakeDaemon) DaemonSessionSubscribe(ctx context.Context, req SessionSubscribeRequest) (SessionSubscribeResponse, error) {
@@ -281,4 +290,73 @@ func TestRegisterDaemonAPI_PanicsOnNil(t *testing.T) {
 		}
 	}()
 	RegisterDaemonAPI(NewDispatcher(), nil)
+}
+
+// TestDaemonAPI_CanonicalAliases_RouteToRealBacking (audit A029)
+// verifies the IPC-CONTRACT §2.7/§2.8 canonical verb names — the exact
+// strings the Tauri host sends — resolve to the same DaemonAPI methods
+// as the daemon's internal names instead of -32601 method_not_found.
+func TestDaemonAPI_CanonicalAliases_RouteToRealBacking(t *testing.T) {
+	fd := &fakeDaemon{
+		listOut: LanesListResponse{Lanes: []LaneSummary{
+			{LaneID: "lane-9", Kind: "main", Status: "running", StartedAt: "t"},
+		}},
+		info: DaemonInfoResponse{PID: 4242, Version: "v-test", SessionCount: 1},
+	}
+	d := NewDispatcher()
+	RegisterDaemonAPI(d, fd)
+
+	out := dispatchOK(t, d, `{"jsonrpc":"2.0","id":1,"method":"session.lanes.list","params":{"session_id":"s-9"}}`)
+	if !strings.Contains(string(out), `"lane-9"`) {
+		t.Fatalf("session.lanes.list alias missing lane: %s", out)
+	}
+	if fd.listReq.SessionID != "s-9" {
+		t.Fatalf("alias did not route params: %+v", fd.listReq)
+	}
+
+	out = dispatchOK(t, d, `{"jsonrpc":"2.0","id":2,"method":"session.lanes.kill","params":{"session_id":"s-9","lane_id":"lane-9"}}`)
+	if !strings.Contains(string(out), `"killed_at"`) {
+		t.Fatalf("session.lanes.kill alias missing killed_at: %s", out)
+	}
+	if fd.killReq.LaneID != "lane-9" {
+		t.Fatalf("kill alias did not route params: %+v", fd.killReq)
+	}
+
+	out = dispatchOK(t, d, `{"jsonrpc":"2.0","id":3,"method":"daemon.status","params":{}}`)
+	if !strings.Contains(string(out), `"pid":4242`) {
+		t.Fatalf("daemon.status alias missing daemon info: %s", out)
+	}
+}
+
+// TestDaemonAPI_UnbackedCanonicalVerbs_NotImplemented (audit A029)
+// verifies canonical verbs with no daemon backing yet return the
+// scaffold's -32010 not_implemented degradation — never -32601.
+func TestDaemonAPI_UnbackedCanonicalVerbs_NotImplemented(t *testing.T) {
+	d := NewDispatcher()
+	RegisterDaemonAPI(d, &fakeDaemon{})
+
+	for _, method := range []string{
+		"session.lanes.subscribe",
+		"session.lanes.unsubscribe",
+		"session.set_workdir",
+	} {
+		req, err := DecodeRequest([]byte(
+			`{"jsonrpc":"2.0","id":1,"method":"` + method + `","params":{"session_id":"s-1"}}`))
+		if err != nil {
+			t.Fatalf("%s: decode: %v", method, err)
+		}
+		resp := d.Dispatch(context.Background(), req)
+		if resp == nil || resp.Error == nil {
+			t.Fatalf("%s: expected error response, got %+v", method, resp)
+		}
+		if resp.Error.Code == CodeMethodNotFound {
+			t.Fatalf("%s: got -32601 method_not_found; want -32010 not_implemented", method)
+		}
+		if resp.Error.Code != CodeNotImplemented {
+			t.Fatalf("%s: code: got %d want %d", method, resp.Error.Code, CodeNotImplemented)
+		}
+		if resp.Error.Data["stoke_code"] != "not_implemented" {
+			t.Fatalf("%s: stoke_code: got %v", method, resp.Error.Data["stoke_code"])
+		}
+	}
 }

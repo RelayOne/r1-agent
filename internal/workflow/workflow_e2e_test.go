@@ -223,12 +223,24 @@ func TestE2EWorkflowWisdomAccumulates(t *testing.T) {
 		RunnerOverride: mock,
 	}
 
-	// This will fail because the review rejects, but wisdom should be recorded
+	// This will fail because the review rejects; Engine.Run records a
+	// wisdom Gotcha on every verification failure when Wisdom is wired
+	// (workflow.go failure path), so the accumulation is assertable —
+	// the old body discarded the result entirely (audit A049).
 	_, _ = wf.Run(context.Background())
 
-	// Wisdom should have recorded something from the failure
 	learnings := ws.Learnings()
-	// Even if no wisdom gotcha was recorded (depends on path), the test
-	// verifies the workflow doesn't panic with wisdom wired in.
-	_ = learnings
+	if len(learnings) == 0 {
+		t.Fatal("no wisdom recorded on the review-rejection path")
+	}
+	foundGotcha := false
+	for _, l := range learnings {
+		if l.Category == wisdom.Gotcha {
+			foundGotcha = true
+			break
+		}
+	}
+	if !foundGotcha {
+		t.Errorf("expected a Gotcha learning from the failed review, got %+v", learnings)
+	}
 }

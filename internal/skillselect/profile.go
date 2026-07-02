@@ -1,3 +1,9 @@
+// Package skillselect auto-detects a repository's technology stack from its
+// file structure and maps detected technologies to relevant skills.
+//
+// DetectProfile builds a RepoProfile from file presence, manifests,
+// lockfiles, and config files; MatchSkills ranks skill names against
+// that profile.
 package skillselect
 
 import (
@@ -11,7 +17,7 @@ import (
 )
 
 // RepoProfile is the enriched technology profile of a repository.
-// It extends StackInfo with additional fields for message queues, protocols,
+// It captures languages, frameworks, databases, message queues, protocols,
 // build tools, package managers, test frameworks, CI platforms, and confidence.
 type RepoProfile struct {
 	Languages       []string           `json:"languages"`
@@ -29,19 +35,6 @@ type RepoProfile struct {
 	HasDocker       bool               `json:"has_docker"`
 	HasCI           bool               `json:"has_ci"`
 	Confidence      map[string]float64 `json:"confidence"`
-}
-
-// ToStackInfo converts a RepoProfile to the simpler StackInfo for backward compatibility.
-func (p *RepoProfile) ToStackInfo() *StackInfo {
-	infra := make([]string, len(p.InfraTools))
-	copy(infra, p.InfraTools)
-	return &StackInfo{
-		Languages:      p.Languages,
-		Frameworks:     p.Frameworks,
-		Databases:      p.Databases,
-		CloudProviders: p.CloudProviders,
-		Infra:          infra,
-	}
 }
 
 // Tags returns a deduplicated sorted list of all detected technologies.

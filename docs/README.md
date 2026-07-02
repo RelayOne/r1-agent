@@ -120,7 +120,7 @@ r1 serve --install                    # install per-OS service unit (launchd / s
 
 ```bash
 r1 mcp serve --print-tools            # 38-tool catalog across 10 categories (sessions, lanes, cortex,
-                                      # mission, worktree, bus, verify, TUI, web, anti-trunc)
+                                      # mission, worktree, bus, verify, TUI, web, cli)
 r1 mcp serve --markdown               # docs/AGENTIC-API.md generator
 ```
 
@@ -148,7 +148,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 ### Mission runtime
 - **Plan / execute / verify / review loop** with cross-model reviewer gating. One strong implementer per task plus an adversarial reviewer is more reliable than loose multi-agent consensus. — `internal/app/`, `internal/workflow/`, `internal/mission/`, `internal/verify/`, `internal/critic/`, `internal/convergence/`. **Status: Done.**
 - **Content-addressed ledger + WAL-backed event bus + STOKE envelope.** Every node has a `sha256:<hex>` content ID; every event survives daemon restart. — `internal/ledger/`, `internal/bus/`. **Status: Done.**
-- **Five-provider model fallback** (Claude → Codex → OpenRouter → direct API → lint-only) with subscription pool, circuit breaker, OAuth poller, cost-aware resolver. — `internal/model/`, `internal/subscriptions/`. **Status: Done.**
+- **Model fallback + subscription pool.** Automatic fallback today resolves Claude → Codex (the wired execution runners); OpenRouter / direct API / Ember / lint-only are defined in `internal/model/` routing but not yet wired as workflow runners (`isAvailable` hardcodes them unavailable). Subscription pool, circuit breaker, OAuth poller, cost-aware resolver are live. — `internal/model/`, `internal/subscriptions/`. **Status: Partial — Claude/Codex Done; remaining tiers Scoped.**
 
 ### Cortex — parallel cognition (specs 1, 2)
 - **MemoryRecallLobe** (deterministic) surfaces top-3 prior memory + wisdom hits as `info` Notes per round.
@@ -183,7 +183,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 - **Status: Done.** — `internal/server/`, `internal/daemonlock/`, `internal/daemondisco/`, `internal/serviceunit/`.
 
 ### Agentic test harness — every UI action is a tool (spec 8)
-- **38-tool MCP catalog** across 10 categories (sessions, lanes, cortex, mission, worktree, bus, verify, TUI, web, anti-trunc). **Status: Done.**
+- **38-tool MCP catalog** across 10 categories (sessions, lanes, cortex, mission, worktree, bus, verify, TUI, web, cli). **Status: Done.**
 - **Slack-style envelope** + `internal/stokerr/` 10-code error taxonomy at every wire boundary. No raw Go errors leak.
 - **TUI shim** (`internal/tui/teatest_shim.go`) drives Bubble Tea via MCP without a terminal emulator. Synthetic `A11yEmitter` + JSONPath evaluator for structural assertions.
 - **Gherkin-flavored markdown** (`*.agent.feature.md`) parsed + dispatched by `tools/agent-feature-runner/`. 8 seed feature fixtures across all 10 categories.
@@ -199,7 +199,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 - **Layer 4**: supervisor rules (`internal/supervisor/rules/antitrunc/`) — `truncation_phrase_detected`, `scope_underdelivery`, `subagent_summary_truncation`.
 - **Layer 5**: agentloop wiring (`internal/agentloop/antitrunc.go`) — gate composes BEFORE all other end-turn hooks.
 - **Layer 6**: post-commit git hook (`scripts/git-hooks/post-commit-antitrunc.sh`) — observes false-completion phrases in commit bodies.
-- **Layer 7**: CLI + MCP tool (`r1 antitrunc verify`, `r1.antitrunc.verify`) — cross-checks recent commit "task N done" claims against the actual checklist; exits non-zero on `lying_count > 0`.
+- **Layer 7**: CLI + MCP tool (`r1 antitrunc verify`, MCP tool `stoke_antitrunc_verify` / canonical alias `r1_antitrunc_verify`) — cross-checks recent commit "task N done" claims against the actual checklist; exits non-zero on `lying_count > 0`.
 - **Soak**: 1,000,000-iteration soak run shows 0 false positives, 0 false negatives, 499K true positives at 16,891 iter/sec.
 - **Status: Done.** Full guide: [`docs/ANTI-TRUNCATION.md`](docs/ANTI-TRUNCATION.md).
 
@@ -222,7 +222,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 - **Status: Done** — `internal/ledger/store_session_test.go` covers per-session filter, chain-root determinism, empty-session edge cases, and canonical-manifest stability.
 
 ### Release-rehearsal E2E lane (final sweep)
-- **Cloud Build trigger pair** (`services/cloudbuild-e2e-trigger.yaml`): `r1-agent-e2e-rehearsal-main` fires on every push to `main` (post-deploy verification); `r1-agent-e2e-rehearsal-tag` fires on `^v.*$` tags (release gate — red blocks tag promotion). Both call `services/cloudbuild-e2e.yaml`, which builds `r1-server`, installs Playwright + chromium, runs `go test -tags=e2e ./cmd/r1-server/e2e/...` with `R1_SERVER_SHARE_ENABLED=1` (Spec D removed the prior paired `R1_SERVER_UI_V2=1`), and posts the green/red commit status.
+- **Cloud Build trigger pair** (`services/cloudbuild-e2e-trigger.yaml`): `r1-agent-e2e-rehearsal-main` fires on every push to `main` (post-deploy verification); `r1-agent-e2e-rehearsal-tag` fires on `^v.*$` tags (release gate — red blocks tag promotion). Both call `services/cloudbuild-e2e.yaml`, which builds `r1-server`, installs Playwright + chromium, runs `go test -tags=e2e ./cmd/r1-server/e2e/...` with `R1_SERVER_UI_V2=1 R1_SERVER_SHARE_ENABLED=1` (the server ignores `R1_SERVER_UI_V2` post-Spec-D, but the e2e harness still uses it as its opt-in run/skip gate — without it the suite skips and the pipeline would post false green), and posts the green/red commit status.
 - **Manual GitHub Actions workflow** (`.github/workflows/e2e-rehearsal-manual.yml`): operator clicks Run-workflow, picks a branch, the runner authenticates to GCP via `secrets.GCP_SA_JSON` and calls `gcloud builds triggers run r1-agent-e2e-rehearsal-main --branch=$BRANCH`. The workflow summary links straight to the Cloud Build console.
 - **One-time setup** is `scripts/setup-cloudbuild-e2e-trigger.sh` (idempotent — re-running updates triggers in place).
 - **Status: Done.** Full operations details: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §Release-rehearsal lane.
@@ -254,7 +254,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 | Specs 1-9 (cortex / lanes / multi-surface / agentic / anti-trunc) | **Done — merged to main** | Specs 6/7/8/9 + r1.run SaaS shipped via PRs #128 / #143 / #150 / #151. |
 | 12 Cloud Run SaaS surfaces (4 services × 3 envs) | **Live — 12/12 HTTPS-200 on /livez** | dev/staging/prod for r1-coord-api, r1-docs, r1-downloads-cdn, r1-admin. All r1.run subdomains resolve. |
 | Cloud SQL (r1-{prod,staging,dev}-pg, POSTGRES_16) | **Live** | All RUNNABLE; DSN secrets in Secret Manager + bound via `--add-cloudsql-instances`. |
-| `go build`/`vet`/`test` | **All green** | 245 packages green; sequential test suite passes; race-detector clean on the bus. |
+| `go build`/`vet`/`test` | **All green** | Full `go list ./...` set green (281 packages at last count); sequential test suite passes; race-detector clean on the bus. |
 | Web + desktop + web-components vitest | **All green** | 295 tests pass (web 212 + components 19 + desktop 64). React 19 + jsdom 26 stack. |
 | JWT login + RelayOne MSP SSO | **Done — Path A Go reimpl** | `services/r1-coord-api/internal/auth/{jwt,sso,middleware}.go`; HS256 + RS256; OIDC code flow. |
 | Admin panel (admin.r1.run) | **Partial** | `services/r1-admin/main.go` — live hosted surface; operator JWT verification and runtime summary are real, but major business/session/user data sections are still partial. |
@@ -270,7 +270,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 | Doc | Audience | What it covers |
 |---|---|---|
 | [`docs/README.md`](docs/README.md) | Everyone | Mirror of this file. |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Engineers | Tech stack, repo map (175 packages), system components, data models, API surface, infrastructure, testing architecture. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Engineers | Tech stack, repo map (251 internal packages), system components, data models, API surface, infrastructure, testing architecture. |
 | [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) | Anyone | User journey, technical walkthrough, key technical decisions. |
 | [`docs/FEATURE-MAP.md`](docs/FEATURE-MAP.md) | PMs / decision-makers | Feature inventory grouped by area, status (Done / In-Progress / Scoped / Scoping / Potential). |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | DevOps | Prerequisites, env vars, build, deploy, infrastructure, monitoring, rollback. |
@@ -294,7 +294,7 @@ make lint-views                             # spec 8 UI-without-API gate
 r1 antitrunc verify -n 20                   # spec 9 false-completion gate
 ```
 
-These commands are the gate. They must be green on every PR. CI also runs `-race`, `golangci-lint` (advisory), `govulncheck`, `gosec`, and `make check-pkg-count`.
+These commands are the gate. They must be green on every PR. CI also runs `-race`, `golangci-lint` (advisory), `govulncheck`, and `gosec`. `make check-pkg-count` is a local drift guard (not wired into CI); run it when adding or removing internal packages.
 
 ## Environments
 
@@ -323,7 +323,7 @@ After PR #128 merges:
 # 2. Wire 3 Cloud Build triggers (one per env)
 ./services/scripts/setup-cloudbuild-triggers.sh
 
-# 3. Add the 9 CNAMEs to Cloudflare (see plans/HANDOFF-deploy-state.md)
+# 3. Verify the 12 CNAMEs in Cloudflare (already live; see the CNAME table in docs/DEPLOYMENT.md)
 # 4. Set real values on the 6 r1-{env}-shared-{DATABASE_URL,ANTHROPIC_API_KEY} secrets
 # 5. Smoke-check live: curl https://platform.r1.run/livez ; curl https://api.r1.run/v1/version
 ```

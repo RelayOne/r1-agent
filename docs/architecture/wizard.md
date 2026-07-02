@@ -2,7 +2,18 @@
 
 ## Overview
 
-The wizard (`internal/wizard/`) runs `r1 init` to generate a project-specific `.stoke/config.yaml` with quality gates, model selection, security rules, and skill configuration scaled to the project's maturity stage.
+The wizard (`internal/wizard/`) runs `r1 init` to generate project configuration scaled to the project's maturity stage: `r1.policy.yaml` at the project root (the artifact `config.LoadPolicy` and `--policy` discovery read) plus a wizard-native `config.yaml` and rationale under the r1 dir (`.r1/` or legacy `.stoke/`).
+
+## CLI Wiring (`r1 init`)
+
+| Invocation | Route |
+|------------|-------|
+| `r1 init [dir]` | `wizard.RunWizard` in `ModeAuto` — detect, show proposal, confirm |
+| `r1 init --auto` / `-a` | `wizard.RunWizard` in `ModeYes` — accept all defaults, CI-safe |
+| `r1 init --interactive` / `-i` | Legacy question wizard (`wizard.New(...).Run()`) — full prompt flow |
+| `r1 init --research` | Adds the AI research-convergence pass; requires a resolvable model provider (`ANTHROPIC_API_KEY`, LiteLLM env/discovery) and errors out otherwise |
+
+The planned `r1 wizard` command name is taken by the skill-authoring wizard, so all routing lives under `r1 init`.
 
 ## Maturity Classification
 
@@ -29,10 +40,10 @@ Composite score maps to stages:
 
 | Mode | Behavior |
 |------|----------|
-| `auto` | Detect profile, apply defaults, skip confirmation |
-| `interactive` | Full prompts for each section |
+| `auto` | Detect profile, apply defaults, show proposal, confirm (EOF/empty stdin accepts) |
+| `interactive` | Reached via `--interactive`, which routes to the legacy question wizard instead of `RunWizard`; `ModeInteractive` inside `RunWizard` falls back to the proposal flow |
 | `hybrid` | Auto-detect, show proposal, user confirms/modifies |
-| `yes` | Like auto, CI-safe (no stdin) |
+| `yes` | Accept all defaults, CI-safe (no prompts) |
 
 ## Config Types
 
@@ -66,9 +77,12 @@ wizard.RunWizard(ctx, Opts{Provider: anthropicProvider})
 
 `writeOutput()` produces:
 
-1. `.stoke/config.yaml` — generated via `yaml.v3` with struct tags
-2. `.stoke/wizard-rationale.md` — includes maturity assessment breakdown, field-level decisions with confidence scores
-3. `.stoke/skills/` — copies selected skills from `~/.stoke/skills/` library
+1. `r1.policy.yaml` (project root) — mapped from the wizard result via `policyPreferences` + the legacy `GenerateYAML` generator, guaranteed loadable by `config.LoadPolicy`; this is what downstream config loading reads
+2. `<r1dir>/config.yaml` — wizard-native representation, generated via `yaml.v3` with struct tags
+3. `<r1dir>/wizard-rationale.md` — includes maturity assessment breakdown, field-level decisions with confidence scores
+4. `<r1dir>/skills/` — copies selected skills from the home skills library
+
+`<r1dir>` is `.r1/` (or legacy `.stoke/` when it already exists), resolved by `internal/r1dir`.
 
 ## Key Decisions
 

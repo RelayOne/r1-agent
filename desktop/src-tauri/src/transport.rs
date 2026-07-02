@@ -1,46 +1,30 @@
 // SPDX-License-Identifier: MIT
 //
-// R1 Desktop WS transport — wraps tauri-plugin-websocket.
+// R1 Desktop transport policy primitives.
 //
-// NOTE: the run-loop wiring to a real socket is still pending the
-// multi-session daemon revision (current shipping design uses a
-// per-session subprocess). The policy layer (BackoffPolicy,
-// LastEventId, lifecycle event taxonomy, reconnect_status Channel
-// driver) is wired through the `transport_reconnect_status` Tauri
-// verb so the title-bar pill renders the correct state once the
-// run-loop fires events into it.
+// The desktop currently ships with the per-session SubprocessManager
+// (subprocess.rs) as its ONLY live transport. The shared daemon-WS
+// run-loop this module once scaffolded is deferred until the
+// multi-session daemon revision; per
+// audit/complete-systems-2026-07-01.md A095 the mutually-dormant
+// scaffolding (TransportHandle, run_with, ConnectOutcome,
+// LifecycleEvent, LifecycleRx/FrameRx, InboundFrame, LastEventId,
+// jitter) was deleted instead of accumulating dead_code markers.
+// What remains is small and real:
 //
-// Implements spec desktop-cortex-augmentation §6 + the reconnect /
-// Last-Event-ID handshake contract from docs/decisions/index.md D-S6
-// (RT-R1D-DAEMON). Responsibilities:
-//
-//   * Connect to a `DaemonHandle` (url + token from discovery.rs)
-//   * Auto-reconnect with exponential backoff: 250 ms, 500 ms, 1 s,
-//     2 s, 4 s, 8 s, 16 s cap, with ±20% jitter to break thundering
-//     herd between multiple desktop instances.
-//   * Track `last_event_id` from the server's events; on reconnect
-//     send it as the `Last-Event-ID` query string so the daemon can
-//     replay the gap.
-//   * Emit a typed lifecycle stream (`Connecting`, `Up`, `Down`,
-//     `Reconnecting`, `Replaying`) so the DaemonStatus banner can
-//     render the right colour without sniffing internal state.
-//
-// This module is the upper half of the lane subscription pipeline;
-// the lower half (per-session forwarder + Channel<LaneEvent>) lives
-// in lanes.rs (item 17). Frames received here are parsed once and
-// fanned out to whichever subscriber is responsible.
-//
-// The actual WebSocket I/O is delegated to `tokio_tungstenite` via
-// `tauri-plugin-websocket`'s embedded client; we own the policy layer
-// (backoff, replay handshake, lifecycle events) and stay agnostic of
-// the underlying socket.
+//   * `BackoffPolicy` — deterministic reconnect schedule
+//     (250 ms → 16 s cap) shared with discovery_state.rs.
+//   * `build_connect_url` — canonical ws URL builder (token +
+//     Last-Event-ID query fallback) used by
+//     `DiscoveryState::connect_url`.
+//   * `ReconnectStatus` — the typed frame the
+//     `transport_reconnect_status` verb (ipc.rs) streams to the
+//     title-bar pill; frames are derived from the live
+//     DiscoveryState, never hardcoded.
 
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, Mutex};
 
 // ---------------------------------------------------------------------------
 // Backoff schedule (spec §16: 250 ms → 16 s cap)
@@ -69,6 +53,7 @@ impl BackoffPolicy {
     /// Compute the delay for the n-th reconnect attempt (n == 0 is
     /// the first retry after the initial connect failure). Saturates
     /// at `self.max`.
+    #[allow(dead_code)] // deferred daemon-WS migration helper; unit-tested, no production caller yet (A095)
     pub fn delay_for_attempt(&self, n: u32) -> Duration {
         // Use saturating arithmetic — pow(32) overflows fast otherwise.
         let factor = self.factor.max(1);
@@ -81,99 +66,6 @@ impl BackoffPolicy {
             d = doubled;
         }
         d
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Lifecycle events (spec §5 banner state)
-// ---------------------------------------------------------------------------
-
-/// What the transport is currently doing. The DaemonStatus banner
-/// maps these one-to-one onto its colour palette (green / blue /
-/// yellow / red).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum LifecycleEvent {
-    /// First connect attempt before any frame received.
-    Connecting { url: String },
-    /// Handshake complete. `replayed_from` carries the last_event_id
-    /// the server replayed from on this reconnect (None on first connect).
-    Up {
-        url: String,
-        replayed_from: Option<String>,
-    },
-    /// Socket closed. `will_retry` is false only when the caller
-    /// explicitly requested shutdown.
-    Down {
-        url: String,
-        reason: String,
-        will_retry: bool,
-    },
-    /// Between attempts. `attempt` is 0-based, `next_in_ms` is the
-    /// jittered delay until the next try.
-    Reconnecting {
-        url: String,
-        attempt: u32,
-        next_in_ms: u64,
-    },
-}
-
-// ---------------------------------------------------------------------------
-// Wire frames
-// ---------------------------------------------------------------------------
-
-/// One inbound message off the WS. Either a JSON-RPC response (id
-/// keyed) or a server-pushed event (event keyed). `last_event_id`
-/// is captured from a sidecar header in the daemon's event envelope
-/// when present so the transport can replay on reconnect.
-#[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)] // audit/scan-rust-stubs.md #10: fields read by future frame router
-pub struct InboundFrame {
-    #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default)]
-    pub event: Option<String>,
-    #[serde(default)]
-    pub last_event_id: Option<String>,
-    #[serde(flatten)]
-    pub rest: serde_json::Map<String, serde_json::Value>,
-}
-
-// ---------------------------------------------------------------------------
-// Last-Event-ID tracker
-// ---------------------------------------------------------------------------
-
-/// Keeps the most recent server-supplied event id so reconnects can
-/// hand it back to the daemon. `try_update` is monotonic — out-of-
-/// order frames don't rewind the cursor.
-#[derive(Debug, Default)]
-pub struct LastEventId {
-    inner: Mutex<Option<String>>,
-}
-
-impl LastEventId {
-    pub fn new() -> Self {
-        Self {
-            inner: Mutex::new(None),
-        }
-    }
-
-    pub async fn get(&self) -> Option<String> {
-        self.inner.lock().await.clone()
-    }
-
-    /// Update only if the new id is strictly greater (by string
-    /// comparison — daemon ids are zero-padded ULIDs per
-    /// specs/r1-server.md so lexical = chronological).
-    pub async fn try_update(&self, candidate: &str) -> bool {
-        let mut guard = self.inner.lock().await;
-        match guard.as_deref() {
-            Some(current) if current >= candidate => false,
-            _ => {
-                *guard = Some(candidate.to_string());
-                true
-            }
-        }
     }
 }
 
@@ -220,257 +112,26 @@ fn urlencode(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Reconnect status (audit/scan-rust-stubs.md item #5)
+// Reconnect status (transport_reconnect_status verb payload)
 // ---------------------------------------------------------------------------
 
-/// Compact status surface the title-bar pill subscribes to via a
-/// `tauri::ipc::Channel<ReconnectStatus>`. The lifecycle event stream
-/// carries the full taxonomy; this is the projection-friendly view
-/// the WebView pill renders directly.
+/// Compact status frame the title-bar pill subscribes to via a
+/// `tauri::ipc::Channel<ReconnectStatus>`. ipc.rs derives every frame
+/// from the live `DiscoveryState` snapshot (audit A095): a connected
+/// DaemonHandle maps to `Connected`, an in-flight discovery probe to
+/// `Reconnecting`, and a failed probe to `Offline` with the real
+/// error string. TS mirror: `ReconnectStatusFrame` in
+/// desktop/src/panels/daemon-status.ts.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ReconnectStatus {
-    /// Live socket; lane events flowing.
+    /// Daemon attached (external or sidecar).
     Connected,
-    /// Backoff window — `attempt` is the 0-based reconnect counter.
+    /// Probe/backoff window — `attempt` is the 0-based counter.
     Reconnecting { attempt: u32, next_in_ms: u64 },
-    /// Caller-requested shutdown (`shutdown()` flipped the flag) or
-    /// retry budget exhausted. The pill renders red until the user
-    /// triggers Settings → "Reconnect daemon".
+    /// Discovery failed or never started. The pill renders red until
+    /// the user triggers Settings → "Reconnect daemon" / the wizard.
     Offline { reason: String },
-}
-
-impl ReconnectStatus {
-    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: invoked by run_with
-    pub fn from_lifecycle(ev: &LifecycleEvent) -> Self {
-        match ev {
-            LifecycleEvent::Connecting { .. } => ReconnectStatus::Reconnecting {
-                attempt: 0,
-                next_in_ms: 0,
-            },
-            LifecycleEvent::Up { .. } => ReconnectStatus::Connected,
-            LifecycleEvent::Reconnecting {
-                attempt,
-                next_in_ms,
-                ..
-            } => ReconnectStatus::Reconnecting {
-                attempt: *attempt,
-                next_in_ms: *next_in_ms,
-            },
-            LifecycleEvent::Down {
-                reason, will_retry, ..
-            } => {
-                if *will_retry {
-                    ReconnectStatus::Reconnecting {
-                        attempt: 0,
-                        next_in_ms: 0,
-                    }
-                } else {
-                    ReconnectStatus::Offline {
-                        reason: reason.clone(),
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// TransportHandle — caller-facing state
-// ---------------------------------------------------------------------------
-
-/// Lifecycle channel rx the consumer drives the banner from.
-#[allow(dead_code)] // audit/scan-rust-stubs.md #10: returned by run_with(), pending wire-up
-pub type LifecycleRx = mpsc::Receiver<LifecycleEvent>;
-
-/// Inbound frame channel rx the lanes/IPC layer drives from.
-#[allow(dead_code)] // audit/scan-rust-stubs.md #10: returned by run_with(), pending wire-up
-pub type FrameRx = mpsc::Receiver<InboundFrame>;
-
-/// One connect attempt's outcome. The closure passed into
-/// `TransportHandle::run_with` returns this so the run-loop knows
-/// whether to retry, replay-from a Last-Event-ID, or surface a hard
-/// fault to the caller.
-#[derive(Debug)]
-#[allow(dead_code)] // audit/scan-rust-stubs.md #10: consumed by run_with
-pub enum ConnectOutcome {
-    /// Connected, served traffic, then the socket closed cleanly with
-    /// `last_event_id` as the most recent observed cursor (None if no
-    /// events arrived).
-    Closed { last_event_id: Option<String> },
-    /// Connect attempt failed before the handshake completed.
-    Failed { reason: String },
-}
-
-/// Owns the run-loop's stop flag plus the cursor and policy. Cloneable
-/// so the lanes layer can share the cursor without holding the
-/// run-loop's join handle.
-#[derive(Clone)]
-#[allow(dead_code)] // audit/scan-rust-stubs.md #10: constructed from future setup() hook
-pub struct TransportHandle {
-    pub last_event_id: Arc<LastEventId>,
-    pub policy: BackoffPolicy,
-    stop: Arc<AtomicBool>,
-}
-
-impl TransportHandle {
-    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: constructed from future setup() hook
-    pub fn new(policy: BackoffPolicy) -> Self {
-        Self {
-            last_event_id: Arc::new(LastEventId::new()),
-            policy,
-            stop: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// Signal the run-loop to stop after the current attempt.
-    /// `lifecycle_rx` will see a final `Down { will_retry: false }`.
-    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: invoked from app shutdown handler
-    pub fn shutdown(&self) {
-        self.stop.store(true, AtomicOrdering::SeqCst);
-    }
-
-    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: read by run_with's outer guard
-    pub fn is_shutdown(&self) -> bool {
-        self.stop.load(AtomicOrdering::SeqCst)
-    }
-
-    /// Drive the reconnect run-loop. `connect` is called once per
-    /// attempt; on each `ConnectOutcome::Closed` we update the
-    /// `last_event_id` cursor and back off before reconnecting.
-    /// Lifecycle events are emitted to `lifecycle_tx` for the banner;
-    /// projection-friendly status frames go to `status_tx` (typically
-    /// a `tauri::ipc::Channel<ReconnectStatus>` adapter held by the
-    /// title-bar pill).
-    ///
-    /// Wired per audit/scan-rust-stubs.md item #5: previously the
-    /// run-loop did not exist, so on daemon disconnect there was no
-    /// backoff and no Last-Event-ID handshake. The closure-based
-    /// connect surface keeps `tauri-plugin-websocket` out of this
-    /// crate's mandatory dependency chain — the bin target can plug
-    /// any WS implementation in.
-    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: driven by future setup() hook
-    pub async fn run_with<F, Fut>(
-        &self,
-        mut connect: F,
-        lifecycle_tx: mpsc::Sender<LifecycleEvent>,
-        status_tx: mpsc::Sender<ReconnectStatus>,
-        url: String,
-    ) where
-        F: FnMut(String, Option<String>) -> Fut + Send,
-        Fut: std::future::Future<Output = ConnectOutcome> + Send,
-    {
-        let mut attempt: u32 = 0;
-        loop {
-            if self.is_shutdown() {
-                let down = LifecycleEvent::Down {
-                    url: url.clone(),
-                    reason: "shutdown requested".into(),
-                    will_retry: false,
-                };
-                let _ = status_tx
-                    .send(ReconnectStatus::from_lifecycle(&down))
-                    .await;
-                let _ = lifecycle_tx.send(down).await;
-                return;
-            }
-
-            // Notify "connecting" before the handshake.
-            let connecting = LifecycleEvent::Connecting { url: url.clone() };
-            let _ = status_tx
-                .send(ReconnectStatus::from_lifecycle(&connecting))
-                .await;
-            let _ = lifecycle_tx.send(connecting).await;
-
-            let last = self.last_event_id.get().await;
-            match connect(url.clone(), last.clone()).await {
-                ConnectOutcome::Closed { last_event_id } => {
-                    if let Some(id) = last_event_id.as_deref() {
-                        self.last_event_id.try_update(id).await;
-                    }
-                    let up = LifecycleEvent::Up {
-                        url: url.clone(),
-                        replayed_from: last.clone(),
-                    };
-                    let _ = status_tx.send(ReconnectStatus::from_lifecycle(&up)).await;
-                    let _ = lifecycle_tx.send(up).await;
-
-                    // Connection ended; emit Down then back off.
-                    attempt = 0;
-                    let down = LifecycleEvent::Down {
-                        url: url.clone(),
-                        reason: "socket closed".into(),
-                        will_retry: !self.is_shutdown(),
-                    };
-                    let _ = status_tx
-                        .send(ReconnectStatus::from_lifecycle(&down))
-                        .await;
-                    let _ = lifecycle_tx.send(down).await;
-                }
-                ConnectOutcome::Failed { reason } => {
-                    let down = LifecycleEvent::Down {
-                        url: url.clone(),
-                        reason: reason.clone(),
-                        will_retry: !self.is_shutdown(),
-                    };
-                    let _ = status_tx
-                        .send(ReconnectStatus::from_lifecycle(&down))
-                        .await;
-                    let _ = lifecycle_tx.send(down).await;
-                }
-            }
-
-            if self.is_shutdown() {
-                return;
-            }
-
-            // Compute jittered backoff for this attempt.
-            let base = self.policy.delay_for_attempt(attempt);
-            // Use a deterministic seed derived from the system clock
-            // so the schedule has spread without depending on rand.
-            let seed = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos() as u64)
-                .unwrap_or(attempt as u64);
-            let delay = jitter(base, seed);
-
-            let reconnecting = LifecycleEvent::Reconnecting {
-                url: url.clone(),
-                attempt,
-                next_in_ms: delay.as_millis() as u64,
-            };
-            let _ = status_tx
-                .send(ReconnectStatus::from_lifecycle(&reconnecting))
-                .await;
-            let _ = lifecycle_tx.send(reconnecting).await;
-
-            tokio::time::sleep(delay).await;
-            attempt = attempt.saturating_add(1);
-        }
-    }
-}
-
-impl Default for TransportHandle {
-    fn default() -> Self {
-        Self::new(BackoffPolicy::r1_default())
-    }
-}
-
-/// Apply ±20 % jitter to a base delay. Spec §16 mandates jitter to
-/// break thundering herd; ±20 % is a standard choice. Pure function
-/// so the same `(delay, seed)` is reproducible in tests.
-pub fn jitter(base: Duration, seed: u64) -> Duration {
-    if base.is_zero() {
-        return base;
-    }
-    // Map seed to [-0.20, +0.20] using a stable LCG so tests don't
-    // depend on `rand`'s thread-RNG being deterministic.
-    let s = seed.wrapping_mul(2862933555777941757).wrapping_add(3037000493);
-    let frac = (s as f64) / (u64::MAX as f64); // [0, 1)
-    let signed = (frac * 0.40) - 0.20; // [-0.20, +0.20)
-    let nanos = base.as_nanos() as f64;
-    let jittered = (nanos * (1.0 + signed)).max(0.0);
-    Duration::from_nanos(jittered as u64)
 }
 
 // ---------------------------------------------------------------------------
@@ -508,26 +169,6 @@ mod tests {
     }
 
     #[test]
-    fn jitter_stays_within_20_percent_band() {
-        let base = Duration::from_millis(1000);
-        for seed in 0..100u64 {
-            let j = jitter(base, seed);
-            let lo = (1000.0 * 0.80) as u128;
-            let hi = (1000.0 * 1.20) as u128;
-            let ms = j.as_millis();
-            assert!(
-                ms >= lo && ms <= hi,
-                "seed {seed}: expected {ms} in [{lo},{hi}]"
-            );
-        }
-    }
-
-    #[test]
-    fn jitter_zero_in_zero_out() {
-        assert_eq!(jitter(Duration::ZERO, 42), Duration::ZERO);
-    }
-
-    #[test]
     fn build_connect_url_appends_token() {
         let u = build_connect_url("ws://127.0.0.1:9", "tok", None);
         assert_eq!(u, "ws://127.0.0.1:9?token=tok");
@@ -552,61 +193,27 @@ mod tests {
         assert!(u.contains("token=a%2Fb%2Bc%3Dd"), "got: {u}");
     }
 
-    #[tokio::test]
-    async fn last_event_id_is_monotonic() {
-        let cur = LastEventId::new();
-        assert_eq!(cur.get().await, None);
-        assert!(cur.try_update("01HXY").await);
-        assert_eq!(cur.get().await, Some("01HXY".into()));
-        // Strictly-greater wins.
-        assert!(cur.try_update("01HXZ").await);
-        assert_eq!(cur.get().await, Some("01HXZ".into()));
-        // Equal does NOT update.
-        assert!(!cur.try_update("01HXZ").await);
-        // Earlier id is rejected.
-        assert!(!cur.try_update("01HXY").await);
-        assert_eq!(cur.get().await, Some("01HXZ".into()));
-    }
-
     #[test]
-    fn transport_handle_shutdown_flag_flips() {
-        let h = TransportHandle::default();
-        assert!(!h.is_shutdown());
-        h.shutdown();
-        assert!(h.is_shutdown());
-    }
-
-    #[test]
-    fn lifecycle_event_serialises_with_kind_tag() {
-        let ev = LifecycleEvent::Up {
-            url: "ws://127.0.0.1:9".into(),
-            replayed_from: Some("01HXY".into()),
-        };
-        let json = serde_json::to_string(&ev).expect("LifecycleEvent serialises");
-        assert!(json.contains(r#""kind":"up""#));
-        assert!(json.contains(r#""replayed_from":"01HXY""#));
-    }
-
-    #[test]
-    fn lifecycle_event_round_trips() {
-        let ev = LifecycleEvent::Reconnecting {
-            url: "ws://127.0.0.1:9".into(),
+    fn reconnect_status_serialises_with_state_tag() {
+        // Pins the wire shape the TS pill narrows on
+        // (ReconnectStatusFrame in daemon-status.ts).
+        let json = serde_json::to_string(&ReconnectStatus::Reconnecting {
             attempt: 3,
-            next_in_ms: 4000,
-        };
-        let json = serde_json::to_string(&ev).expect("LifecycleEvent serialises");
-        let back: LifecycleEvent =
-            serde_json::from_str(&json).expect("LifecycleEvent round-trips");
-        assert_eq!(back, ev);
-    }
+            next_in_ms: 2000,
+        })
+        .expect("ReconnectStatus serialises");
+        assert!(json.contains(r#""state":"reconnecting""#), "got: {json}");
+        assert!(json.contains(r#""attempt":3"#), "got: {json}");
+        assert!(json.contains(r#""next_in_ms":2000"#), "got: {json}");
 
-    #[test]
-    fn inbound_frame_captures_last_event_id() {
-        let raw = r#"{"event":"lane.delta","last_event_id":"01HXY","payload":{}}"#;
-        let f: InboundFrame =
-            serde_json::from_str(raw).expect("InboundFrame parses");
-        assert_eq!(f.event.as_deref(), Some("lane.delta"));
-        assert_eq!(f.last_event_id.as_deref(), Some("01HXY"));
-        assert!(f.rest.contains_key("payload"));
+        let back: ReconnectStatus =
+            serde_json::from_str(r#"{"state":"offline","reason":"probe refused"}"#)
+                .expect("ReconnectStatus round-trips");
+        assert_eq!(
+            back,
+            ReconnectStatus::Offline {
+                reason: "probe refused".into()
+            }
+        );
     }
 }

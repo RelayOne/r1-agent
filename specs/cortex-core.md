@@ -757,7 +757,7 @@ End-to-end: 3 fake Lobes (1 deterministic, 2 LLM with mocked providers) all publ
 - WHEN a Lobe panics THE SYSTEM SHALL recover, emit `cortex.lobe.panic`, and keep all other Lobes running.
 - WHEN `Workspace.Publish` is called concurrently from N goroutines THE SYSTEM SHALL produce N distinct Note IDs in monotonic Round-then-time order (verified under -race).
 - WHEN any unresolved `SevCritical` Note exists THE SYSTEM SHALL cause `Cortex.PreEndTurnGate` to return a non-empty message, refusing `end_turn`.
-- WHEN `OnUserInputMidTurn` receives "stop" THE SYSTEM SHALL return a `DecisionInterrupt` from the Router and call `turnCancel()` exactly once.
+- [x] WHEN `OnUserInputMidTurn` receives "stop" THE SYSTEM SHALL return a `DecisionInterrupt` from the Router and call `turnCancel()` exactly once. *(shipped — `Cortex.OnUserInputMidTurn` in `internal/cortex/userinput.go` + chat-interactive REPL wiring in `cmd/r1/chat_interactive_midturn.go`; audit A062)*
 - WHEN the pre-warm pump fails THE SYSTEM SHALL log + emit `cortex.prewarm.failed` AND continue Cortex.Start successfully.
 - WHEN `agentloop.Config.Cortex == nil` THE SYSTEM SHALL behave identically to today (no regressions in `internal/agentloop/loop_test.go`, `pre_end_turn_test.go`, `compact_test.go`).
 

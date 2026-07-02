@@ -963,6 +963,10 @@ func TestValidateHandlerLayer3ParsesJSON(t *testing.T) {
 
 	repoDir := t.TempDir()
 	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600)
+	// Keep the repo fixture clean under the missing-test-file cross-file
+	// gate (A060) so the only category-"test" gap is the Layer-3 one
+	// this test asserts on.
+	os.WriteFile(filepath.Join(repoDir, "main_test.go"), []byte("package main\n"), 0o600)
 
 	jsonResponse := `{"verdict":"incomplete","gaps":[` +
 		`{"category":"test","severity":"blocking","file":"auth.go","line":42,"description":"No test for token expiry","suggestion":"Add expiry test"},` +

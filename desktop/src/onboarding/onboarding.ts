@@ -44,6 +44,47 @@ const PROVIDERS: ReadonlyArray<{
   { id: "ollama", name: "Local Ollama", needsKey: false, hint: "http://localhost:11434" },
 ];
 
+// Records which provider the user picked in the wizard so other
+// panels (Settings → Providers) can badge the actual default instead
+// of inventing one (audit/complete-systems-2026-07-01.md A086).
+const SELECTED_PROVIDER_KEY = "r1.onboarding.provider";
+
+/**
+ * True when a non-empty API key for `providerId` sits in the
+ * localStorage fallback slot `persistApiKey` writes. Read-only helper
+ * for Settings → Providers status derivation (audit A086) — a key's
+ * presence is the only locally verifiable "configured" signal; no
+ * endpoint is probed.
+ */
+export function hasLocalKey(providerId: string): boolean {
+  try {
+    const v = window.localStorage.getItem(
+      `${LOCAL_API_KEY_PREFIX}${providerId}`,
+    );
+    return typeof v === "string" && v.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Provider chosen in onboarding, or null before a choice was saved. */
+export function selectedProviderId(): string | null {
+  try {
+    return window.localStorage.getItem(SELECTED_PROVIDER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the onboarding catalog marks `providerId` as requiring an
+ * API key. Returns null for providers unknown to the catalog.
+ */
+export function providerNeedsKey(providerId: string): boolean | null {
+  const p = PROVIDERS.find((entry) => entry.id === providerId);
+  return p ? p.needsKey : null;
+}
+
 const DEFAULT_DATA_DIR = "~/.r1/";
 const STEP_COUNT = 5;
 
@@ -518,6 +559,11 @@ export async function persistApiKey(
         `[r1-desktop] onboarding: provider "${provider}" is keyless; ignoring supplied API key`,
       );
     }
+    try {
+      window.localStorage.setItem(SELECTED_PROVIDER_KEY, provider);
+    } catch {
+      // Selection bookkeeping is best-effort; the wizard still works.
+    }
     return { ok: true };
   }
 
@@ -532,6 +578,7 @@ export async function persistApiKey(
   try {
     const slot = `${LOCAL_API_KEY_PREFIX}${provider}`;
     window.localStorage.setItem(slot, trimmed);
+    window.localStorage.setItem(SELECTED_PROVIDER_KEY, provider);
     return { ok: true, vault_id: slot };
   } catch (err) {
     return {

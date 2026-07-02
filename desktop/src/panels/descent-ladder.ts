@@ -8,7 +8,7 @@
 // Tier rows pick up per-tier color from CSS custom properties
 // introduced by `TIER_COLORS` below.
 
-import { invokeStub } from "../ipc-stub";
+import { classifyIpcError, invokeStub } from "../ipc-stub";
 import { ALL_DESCENT_TIERS } from "../types/ipc-const";
 import type {
   DescentStatus,
@@ -105,13 +105,36 @@ async function loadTiers(
   sessionId: string,
   acId?: string,
 ): Promise<void> {
-  const rows = await invokeStub<DescentTierRow[]>(
-    "descent_current_tier",
-    "R1D-3",
-    [],
-    acId ? { session_id: sessionId, ac_id: acId } : { session_id: sessionId },
+  try {
+    const rows = await invokeStub<DescentTierRow[]>(
+      "descent_current_tier",
+      "R1D-3",
+      [],
+      acId ? { session_id: sessionId, ac_id: acId } : { session_id: sessionId },
+    );
+    applyStatuses(ladder, rows);
+  } catch (err) {
+    renderTiersUnavailable(ladder, err);
+  }
+}
+
+/**
+ * Surface a truthful unavailable / error note above the ladder when
+ * the host RPC rejects, instead of leaving every tier pinned at the
+ * seeded "pending" state (audit A034).
+ */
+function renderTiersUnavailable(ladder: HTMLOListElement, err: unknown): void {
+  const root = ladder.closest<HTMLElement>(".r1-panel-descent-ladder");
+  const note = root?.querySelector<HTMLElement>(
+    '[data-role="descent-current-tier-note"]',
   );
-  applyStatuses(ladder, rows);
+  if (!note) return;
+  const failure = classifyIpcError(err);
+  note.hidden = false;
+  note.dataset.state = "unavailable";
+  note.textContent = failure.notImplemented
+    ? "Tier statuses are not available yet — the host verb descent.current_tier is unimplemented; the rows below are seeded placeholders."
+    : `Couldn't load tier statuses: ${failure.message}`;
 }
 
 function applyStatuses(
