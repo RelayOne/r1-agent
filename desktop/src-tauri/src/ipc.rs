@@ -541,6 +541,74 @@ pub async fn daemon_install_command() -> IpcResult<String> {
     Ok(crate::discovery::install_command_for_host_os())
 }
 
+// ---------------------------------------------------------------------------
+// Discovery wizard verbs (audit/complete-systems-2026-07-01.md A033)
+//
+// discovery-wizard-mount.tsx invokes these three commands; before this
+// block landed none of them existed on the Rust side, so the wizard
+// was unreachable in Tauri builds and Reconnect could never succeed.
+// ---------------------------------------------------------------------------
+
+/// Map a typed `DiscoveryError` onto the structured IPC taxonomy so
+/// the TS `handleReconnect` catch block sees `{code, stoke_code,
+/// message}` instead of an opaque string.
+fn discovery_error_to_ipc(err: &crate::discovery::DiscoveryError) -> IpcError {
+    use crate::discovery::DiscoveryError as DE;
+    match err {
+        DE::NotFound => IpcError::not_found("daemon (no usable ~/.r1/daemon.json and sidecar unavailable)"),
+        DE::Refused | DE::BadHandshake(_) | DE::SidecarSpawn(_) => {
+            IpcError::internal(err.to_string())
+        }
+    }
+}
+
+/// `daemon_config_exists` — true when `~/.r1/daemon.json` is present
+/// and parseable. The discovery wizard shows itself only when this
+/// returns false (spec desktop-cortex-augmentation §5 lifecycle step
+/// 4). A present-but-corrupt file also reports false: the config is
+/// unusable, so the wizard's install/reconnect guidance applies.
+#[tauri::command]
+pub async fn daemon_config_exists() -> IpcResult<bool> {
+    Ok(crate::discovery::read_daemon_json().is_ok())
+}
+
+/// `daemon_reconnect` — re-run the discovery orchestration
+/// (`discovery::discover_or_spawn`) on user demand and publish the
+/// result into `DiscoveryState`, exactly as `main.rs setup_discovery`
+/// does at startup. Returns the refreshed snapshot on success;
+/// surfaces a structured IpcError on failure so the wizard can stay
+/// open with an actionable message.
+#[tauri::command]
+pub async fn daemon_reconnect(app: AppHandle) -> IpcResult<DaemonStatusSnapshot> {
+    use tauri::Manager;
+    {
+        let state: State<'_, DiscoveryState> = app.state();
+        state.mark_pending();
+    }
+    match crate::discovery::discover_or_spawn(&app).await {
+        Ok(handle) => {
+            let state: State<'_, DiscoveryState> = app.state();
+            state.set_handle(handle);
+            Ok(state.snapshot())
+        }
+        Err(err) => {
+            let state: State<'_, DiscoveryState> = app.state();
+            state.set_error(err.to_string());
+            Err(discovery_error_to_ipc(&err))
+        }
+    }
+}
+
+/// `daemon_accept_sidecar` — record that the user accepted the
+/// already-auto-spawned bundled sidecar (wizard "Use bundled"
+/// button). The sidecar keeps running either way; this stores the
+/// consent flag in `DiscoveryState` and returns the current transport
+/// mode label ("sidecar" / "external" / "pending" / "disconnected").
+#[tauri::command]
+pub async fn daemon_accept_sidecar(state: State<'_, DiscoveryState>) -> IpcResult<String> {
+    Ok(state.accept_sidecar())
+}
+
 /// `transport_reconnect_status` — open a `tauri::ipc::Channel<ReconnectStatus>`
 /// the title-bar pill subscribes to. Currently emits a single
 /// `Connected` frame and idles; the real run-loop driver
@@ -599,6 +667,11 @@ pub fn register_handlers() -> tauri::Builder<tauri::Wry> {
             // panicked on the missing-handler error before this
             // handler existed.
             daemon_install_command,
+            // Discovery wizard verbs (audit A033) — probe, reconnect,
+            // and accept-sidecar backing discovery-wizard-mount.tsx.
+            daemon_config_exists,
+            daemon_reconnect,
+            daemon_accept_sidecar,
             // Wired per audit/scan-rust-stubs.md item #5 — title-bar
             // pill subscribes to a typed status Channel.
             transport_reconnect_status,
@@ -1009,6 +1082,26 @@ mod tests {
         let err = IpcError::internal("unexpected panic");
         assert_eq!(err.code, -32603);
         assert_eq!(err.stoke_code, "internal");
+    }
+
+    #[test]
+    fn discovery_error_maps_not_found_to_taxonomy() {
+        use crate::discovery::DiscoveryError;
+        let err = discovery_error_to_ipc(&DiscoveryError::NotFound);
+        assert_eq!(err.code, -32002);
+        assert_eq!(err.stoke_code, "not_found");
+    }
+
+    #[test]
+    fn discovery_error_maps_refused_and_spawn_to_internal_with_detail() {
+        use crate::discovery::DiscoveryError;
+        let refused = discovery_error_to_ipc(&DiscoveryError::Refused);
+        assert_eq!(refused.code, -32603);
+        assert!(refused.message.contains("refused"));
+
+        let spawn = discovery_error_to_ipc(&DiscoveryError::SidecarSpawn("no sidecar binary".into()));
+        assert_eq!(spawn.stoke_code, "internal");
+        assert!(spawn.message.contains("no sidecar binary"));
     }
 
     #[test]

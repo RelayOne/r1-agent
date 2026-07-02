@@ -696,6 +696,12 @@ export type InvokeMethod =
   // Daemon liveness probe (R1D settings panel)
   | "daemon_status"
   | "daemon_install_command"
+  // Discovery wizard (spec §5 step 4 / audit A033) — registered in
+  // ipc.rs: config presence probe, user-triggered rediscovery, and
+  // bundled-sidecar acceptance.
+  | "daemon_config_exists"
+  | "daemon_reconnect"
+  | "daemon_accept_sidecar"
   // WebView convenience (cached in Rust host; not a JSON-RPC verb)
   | "session_list";
 
