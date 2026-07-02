@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/RelayOne/r1/internal/env"
 	"github.com/RelayOne/r1/internal/failure"
@@ -28,6 +29,13 @@ type Pipeline struct {
 	// instead of os/exec on the host.
 	environ env.Environment
 	handle  *env.Handle
+
+	// Opt-in edit-time LSP diagnostics step (lspdiag.go, audit A067).
+	// lspLaunch defaults to client.LaunchByLanguage; tests inject an
+	// in-memory transport. lspWait bounds the per-language wait for
+	// server-pushed diagnostics (defaults to defaultLSPDiagWait).
+	lspLaunch lspLauncher
+	lspWait   time.Duration
 }
 
 // NewPipeline creates a verification pipeline.
@@ -39,11 +47,13 @@ func NewPipeline(buildCmd, testCmd, lintCmd string) *Pipeline {
 // in the given execution environment instead of directly on the host.
 func (p *Pipeline) WithEnvironment(e env.Environment, h *env.Handle) *Pipeline {
 	return &Pipeline{
-		buildCmd: p.buildCmd,
-		testCmd:  p.testCmd,
-		lintCmd:  p.lintCmd,
-		environ:  e,
-		handle:   h,
+		buildCmd:  p.buildCmd,
+		testCmd:   p.testCmd,
+		lintCmd:   p.lintCmd,
+		environ:   e,
+		handle:    h,
+		lspLaunch: p.lspLaunch,
+		lspWait:   p.lspWait,
 	}
 }
 
@@ -73,6 +83,16 @@ func (p *Pipeline) Run(ctx context.Context, dir string) ([]Outcome, error) {
 		} else {
 			outcome = p.runLocal(ctx, item.name, item.cmd, dir)
 		}
+		outcomes = append(outcomes, outcome)
+		if !outcome.Success {
+			hadFailure = true
+		}
+	}
+	// Opt-in edit-time LSP diagnostics (R1_LSP_DIAGNOSTICS=1, default
+	// off — audit A067). Fails only on Error-severity diagnostics;
+	// missing language servers degrade to a skipped outcome.
+	if LSPDiagnosticsEnabled() {
+		outcome := p.runLSPDiagnostics(ctx, dir)
 		outcomes = append(outcomes, outcome)
 		if !outcome.Success {
 			hadFailure = true

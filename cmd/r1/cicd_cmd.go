@@ -2,7 +2,8 @@ package main
 
 // cicd_cmd.go — `r1 cicd` subcommand.
 //
-// T-R1P-020: GitHub Actions integration
+// GitHub Actions integration (historically mis-tagged T-R1P-020; that
+//   ticket is the multi-language LSP client, internal/lsp/client)
 // T-R1P-021: GitLab CI integration
 // T-R1P-022: CircleCI integration
 // C5:       BitBucket Pipelines integration

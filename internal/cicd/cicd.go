@@ -1,6 +1,8 @@
 // Package cicd provides R1 CI/CD integration templates and validation.
 //
-// T-R1P-020: GitHub Actions integration recipe — YAML workflow template
+// GitHub Actions integration recipe — YAML workflow template
+//   (historically mis-tagged T-R1P-020; that ticket is the multi-language
+//   LSP client, internal/lsp/client — audit A067)
 // T-R1P-021: GitLab CI integration recipe — .gitlab-ci.yml template
 // T-R1P-022: CircleCI integration recipe — .circleci/config.yml template
 //

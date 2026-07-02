@@ -1,17 +1,19 @@
-// lsp.go — registers the multi-language LSP client (T-R1P-020) as a
-// first-class skill capability the agent can call out to at edit-time.
+// lsp.go — language detection for the multi-language LSP client
+// (T-R1P-020, internal/lsp/client).
 //
 // The skill registry already injects markdown skill files by keyword
 // match (see registry.go). For LSP we additionally expose a thin Go
-// surface so that callers — the executor, the autofix loop, the verify
-// pipeline — can launch a language server, ask it for diagnostics or
-// completions, and shut it down without re-deriving language detection
-// from scratch.
+// surface so that consumers can resolve which language server to launch
+// without re-deriving language detection from scratch. The shipped
+// consumer is the verify pipeline's opt-in LSP diagnostics step
+// (internal/verify/lspdiag.go, R1_LSP_DIAGNOSTICS=1 — audit A067),
+// which calls LSPLanguageForFile on each changed file and hands the
+// canonical ID to client.LaunchByLanguage.
 //
 // This file deliberately does NOT import internal/lsp/client to avoid
-// dragging the whole client into every consumer of skill. Instead it
-// exports the language-id list and a tiny LSPLauncher struct that
-// callers can hand to the client package via name.
+// dragging the whole client into every consumer of skill. It exports
+// the language registry (LSPLanguages / LSPLanguageIDs) and the lookup
+// helpers LSPLanguageFor / LSPLanguageForFile.
 
 package skill
 
