@@ -445,16 +445,6 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		}
 	}
 
-	// Progressive context compaction. When RunSpec.CompactThreshold is
-	// set, hook a cache-preserving compactor into the agentloop so long
-	// tasks don't blow past the context window. The compactor keeps the
-	// first user message (task brief) + the last 6 messages verbatim
-	// and summarizes older tool_results.
-	if compactionEnabled(spec) {
-		cfg.CompactThreshold = spec.CompactThreshold
-		cfg.CompactFn = buildNativeCompactor(6, 200)
-	}
-
 	// Midturn spec-faithfulness supervisor. When RunSpec.Supervisor
 	// is set, install a hook that scans the declared files every N
 	// write_file/edit_file tool calls and pushes a [SUPERVISOR NOTE]
@@ -517,6 +507,22 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 				defer live.Stop(context.Background())
 			}
 		}
+	}
+
+	// Progressive context compaction. When RunSpec.CompactThreshold is
+	// set, hook a cache-preserving compactor into the agentloop so long
+	// tasks don't blow past the context window. Two-tier strategy: the
+	// LLM condenser batches middle-window tool_results into ONE rolling
+	// summary block (preserving objective, files touched, failing tests,
+	// remaining work); on nil provider, R1_DISABLE_LLM_CONDENSER=1, or
+	// any summarization failure/timeout it degrades per call to the
+	// byte-truncation compactor. Both tiers keep the first user message
+	// (task brief) + the last 6 messages verbatim. Wired here — after
+	// the cortex block — so the condenser shares eventBus and its spend
+	// telemetry reaches the same BudgetTracker as the loop's own turns.
+	if compactionEnabled(spec) {
+		cfg.CompactThreshold = spec.CompactThreshold
+		cfg.CompactFn = buildLLMCondenser(ctx, p, n.model, eventBus, condenserOptions{})
 	}
 
 	// Create and configure the loop
