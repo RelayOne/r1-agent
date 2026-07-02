@@ -57,16 +57,16 @@ steps:
         mkdir -p /workspace/bench-out
         IFS=',' read -ra AGENTS_ARR <<< "${_AGENTS}"
         while IFS= read -r MISSION; do
-          for AGENT in "${AGENTS_ARR[@]}"; do
-            OUT="/workspace/bench-out/${AGENT//\+/_}--${MISSION}.json"
+          for AGENT in "$${AGENTS_ARR[@]}"; do
+            OUT="/workspace/bench-out/$${AGENT//\+/_}--$${MISSION}.json"
             /workspace/r1-bench-bin \
-              --mission "$MISSION" \
-              --agent "$AGENT" \
+              --mission "$$MISSION" \
+              --agent "$$AGENT" \
               --corpus "${_CORPUS_DIR}" \
               --judge-model "${_JUDGE_MODEL}" \
               --timeout "${_TIMEOUT}" \
-              --output "$OUT" \
-              || echo "WARN: ${AGENT}/${MISSION} failed; continuing"
+              --output "$$OUT" \
+              || echo "WARN: $${AGENT}/$${MISSION} failed; continuing"
           done
         done < /workspace/mission-ids.txt
 
@@ -79,15 +79,15 @@ steps:
       - |
         set -euo pipefail
         DATE=$(date +%Y-%m-%d)
-        REPORT="/workspace/truthful-completion-${DATE}.md"
-        ARCHIVE="/workspace/truthful-completion-${DATE}.tar.gz"
+        REPORT="/workspace/truthful-completion-$${DATE}.md"
+        ARCHIVE="/workspace/truthful-completion-$${DATE}.tar.gz"
         /workspace/r1-bench-bin \
           --aggregate /workspace/bench-out \
           --aggregate-format both \
-          --output "$REPORT"
-        tar -czf "$ARCHIVE" -C /workspace/bench-out .
+          --output "$$REPORT"
+        tar -czf "$$ARCHIVE" -C /workspace/bench-out .
         ls -la /workspace/bench-out/
-        ls -la "$REPORT" "$ARCHIVE"
+        ls -la "$$REPORT" "$$ARCHIVE"
 
   - id: upload-results
     name: 'gcr.io/cloud-builders/gsutil'
@@ -98,9 +98,9 @@ steps:
       - |
         set -euo pipefail
         DATE=$(date +%Y-%m-%d)
-        REPORT="/workspace/truthful-completion-${DATE}.md"
-        ARCHIVE="/workspace/truthful-completion-${DATE}.tar.gz"
-        DEST="${_BUCKET}/truthful-completion/${DATE}/"
-        gsutil -m cp -r /workspace/bench-out/*.json "$REPORT" "$ARCHIVE" "$DEST"
+        REPORT="/workspace/truthful-completion-$${DATE}.md"
+        ARCHIVE="/workspace/truthful-completion-$${DATE}.tar.gz"
+        DEST="${_BUCKET}/truthful-completion/$${DATE}/"
+        gsutil -m cp -r /workspace/bench-out/*.json "$$REPORT" "$$ARCHIVE" "$$DEST"
 
 timeout: 14400s  # 4 hours max
