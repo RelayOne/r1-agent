@@ -529,7 +529,7 @@ type Finding struct {
 **`downloads.r1.run` (r1-downloads-cdn)**
 - `GET /` — channel + asset index (JSON)
 - `GET /<channel>/<asset>` — stream binary
-- `GET /<channel>/<asset>/sha256` — content metadata
+- `GET /<channel>/<asset>/sha256` — checksums: `{ok,object,size,sha256,md5,crc32c}` (sha256 computed server-side)
 
 ## Execution flow — single mission end-to-end
 

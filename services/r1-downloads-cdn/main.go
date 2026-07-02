@@ -11,7 +11,7 @@
 //	GET /healthz       — liveness
 //	GET /             — JSON index of available channels + assets
 //	GET /<channel>/<asset>
-//	GET /<channel>/<asset>/sha256
+//	GET /<channel>/<asset>/sha256 — {ok,object,size,sha256,md5,crc32c}
 //
 // Channel = prod | staging | dev. Asset = filename inside the channel.
 //
@@ -28,6 +28,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -156,10 +157,31 @@ func (s *server) handleObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if wantSha {
+		// GCS ObjectAttrs carries no SHA256 and neither release pipeline
+		// attaches one as metadata, so hash the object server-side —
+		// install scripts curl this endpoint to verify downloads and
+		// previously got checksums they didn't ask for (audit A028).
+		// Assets are <=~64MiB and the JSON stays tiny, so the Cloud Run
+		// 32MiB response cap is irrelevant here.
+		rc, err := obj.NewReader(ctx)
+		if err != nil {
+			log.Printf("sha256 newReader %q: %v", objName, err)
+			http.Error(w, "stream open failed", http.StatusInternalServerError)
+			return
+		}
+		defer rc.Close()
+		h := sha256.New()
+		if _, err := io.Copy(h, rc); err != nil {
+			log.Printf("sha256 read %q: %v", objName, err)
+			http.Error(w, "stream read failed", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Cache-Control", "public, max-age=300")
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":     true,
 			"object": objName,
 			"size":   attrs.Size,
+			"sha256": fmt.Sprintf("%x", h.Sum(nil)),
 			"md5":    fmt.Sprintf("%x", attrs.MD5),
 			"crc32c": attrs.CRC32C,
 		})
