@@ -7,8 +7,8 @@ package app
 //
 // Registration matrix (see audit/complete-systems-2026-07-01.md A065):
 //
-//   - honesty.enabled          → HonestyGate (regex placeholder /
-//     suppression / test-removal gate) + TestIntegrityChecker
+//   - honesty.enabled          → HonestyGate (regex gate for stub
+//     markers / suppression / test-removal) + TestIntegrityChecker
 //     (AST-shape test-weakening gate)
 //   - honesty.check_imports    → ImportChecker (hallucinated-package gate)
 //   - honesty.cot_monitoring   → CoTMonitor (read-only deception-marker log)
