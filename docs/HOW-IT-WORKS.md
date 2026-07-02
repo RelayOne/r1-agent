@@ -64,8 +64,8 @@ Three options; same daemon backs all three.
 open http://127.0.0.1:7777/   # port shown by `r1 serve`
 ```
 The browser loads `internal/server/static/dist/index.html` (embedded by `//go:embed static`). The bundle is the React 18 + Vite 6 + Tailwind 3 + shadcn web app from `web/`. On first connect:
-- It calls `r1d.mintWsTicket()` to get a short-lived WS auth token.
-- `ResilientSocket` from `web/src/lib/api/ws.ts` opens `ws://127.0.0.1:7777/v1/sessions/<id>/ws` with `Sec-WebSocket-Protocol: r1.lanes.v1, <token>`.
+- It calls `POST /auth/ws-ticket` (bearer-authenticated) via `r1d.mintWsTicket()`; the daemon's `server.WSTicketStore` mints a ~30 s ticket.
+- `ResilientSocket` from `web/src/lib/api/ws.ts` opens `ws://127.0.0.1:7777/ws` with `Sec-WebSocket-Protocol: r1.bearer, <ticket>`. The daemon side is the typed-frame bridge (`internal/server/ws/webbridge.go`): it validates the ticket, then translates `{type:"chat"|"interrupt"|"subscribe"|"unsubscribe"|"ping"}` client frames into daemon verbs and streams flat `{type:"lane.*", seq, ts}` envelopes back.
 - `useDaemonSocket` routes incoming envelopes into the per-daemon zustand store (`web/src/lib/store/daemonStore.ts`).
 - The store's `EnvelopeCoalescer` buffers high-frequency `lane.delta` events and flushes them once per animation frame — clamping to ~10 Hz visible rerender even under a 200 Hz event firehose.
 - The Cursor-3-Glass `<ThreeColumnShell>` renders. Left: `<SessionList>`. Center: `<ChatPane>` switching between `<MessageLog>+<Composer>` and `<TileGrid>` based on pinned lane count. Right: `<LanesSidebar>` with `<LaneRow>` per lane.
@@ -93,7 +93,7 @@ You type "Add a request ID middleware" and press Cmd+Enter (or Ctrl+Enter, or cl
 What happens:
 
 1. **Composer disables** — `<Composer>` sets `streaming=true`. Send button swaps to the destructive `<StopButton>`. The textarea + Send disable. The hint flips to "Streaming a response — use the Stop button to interrupt."
-2. **Daemon receives `session.send`** — JSON-RPC call over the WS. The session pushes the user message into its history, schedules a turn.
+2. **Daemon receives the chat** — the browser sends a `{type:"chat"}` typed frame to `/ws`; the typed-frame bridge translates it into the daemon's `session.send` verb (`jsonrpc.HubHandler.DaemonSessionSend`), which delivers the turn onto the session's bounded inbox. CLI/desktop clients call `session.send` as JSON-RPC over `/v1/rpc` directly. If no agent loop is driving the session yet, the daemon replies with an honest `{type:"error", code:"INVALID_INPUT"}` envelope instead of silently dropping the turn.
 3. **Cortex pre-warm** — 4 minutes before the round, `internal/cortex/prewarm.go` fires a `max_tokens=1` cache request to keep the prompt-cache breakpoint warm.
 4. **Round starts** — `internal/cortex/Workspace.Run()` kicks off main thread + 5 Lobes in parallel.
 5. **Main thread plans** — Claude (or your provider chain's first available model) generates a plan. Each step becomes a task in the mission graph.
@@ -128,7 +128,7 @@ The Router fires:
 
 You click `<StopButton>` (or press Esc — global keybinding).
 
-`onInterrupt(dropPartial=true)` fires `r1d.session.interrupt(sessionId, {drop_partial: true})`. Same drop-partial protocol; partial assistant turn vanishes, composer re-enables.
+`onInterrupt(dropPartial=true)` sends `{type:"interrupt", sessionId}` over `/ws`; the bridge maps it onto the daemon's `session.interrupt` JSON-RPC verb (also callable directly over `/v1/rpc`). Drop-partial protocol: the in-flight Run context is cancelled, the streaming turn aborts, and the partial assistant message is never persisted — the session stays registered for the next turn. Composer re-enables.
 
 ### Step 8. Pin a lane
 

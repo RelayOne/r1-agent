@@ -17,9 +17,11 @@ package server
 //	          requireBearer(token, mux)))
 //
 // They are intentionally separate (rather than one super-middleware)
-// so a future SSE bridge that allows token-via-query (TASK-33) can
-// skip requireBearer on its specific path while still enforcing the
-// Origin and Host gates.
+// so the SSE bridge (TASK-33, mounted at GET /v1/sessions/{id}/sse by
+// cmd/r1/serve_cmd.go) can run sse.AttachAuthFromQuery BEFORE
+// requireBearer on its specific path — promoting ?token= into the
+// Authorization header — while still enforcing the Origin and Host
+// gates.
 
 import (
 	"crypto/subtle"

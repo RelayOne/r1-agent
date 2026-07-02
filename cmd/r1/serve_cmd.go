@@ -47,6 +47,7 @@ import (
 	"github.com/RelayOne/r1/internal/server"
 	"github.com/RelayOne/r1/internal/server/jsonrpc"
 	"github.com/RelayOne/r1/internal/server/sessionhub"
+	"github.com/RelayOne/r1/internal/server/sse"
 	"github.com/RelayOne/r1/internal/server/ws"
 )
 
@@ -353,6 +354,19 @@ func runServeLoop(opts serveOptions) {
 			muxAlias.Handle("/v1/rpc", wsHandler)
 			fmt.Fprintf(os.Stderr, "JSON-RPC over WS mounted at /v1/rpc\n")
 
+			// Session event journals + subscribe replay (audit A069).
+			// Sessions created via session.start get a journal-first
+			// event pipe; subscribers (WS $/event, SSE, web bridge)
+			// replay from `~/.r1/journals/<id>.jsonl` then go live.
+			if jd, jerr := serveJournalDir(); jerr != nil {
+				fmt.Fprintf(os.Stderr, "warn: session journals disabled: %v\n", jerr)
+			} else {
+				hub.SetJournalDir(jd)
+				rpcHandler.SetJournalPathFn(func(sessionID string) string {
+					return filepath.Join(jd, sessionID+".jsonl")
+				})
+			}
+
 			// Web chat surface (audit A008): POST /auth/ws-ticket
 			// mints short-lived WS tokens (bearer-authenticated), and
 			// /ws serves the typed-frame bridge the embedded SPA
@@ -380,6 +394,14 @@ func runServeLoop(opts serveOptions) {
 			}
 			muxAlias.Handle("/ws", webWS)
 			fmt.Fprintf(os.Stderr, "web chat WS mounted at /ws (+ POST /auth/ws-ticket)\n")
+
+			// Read-only SSE bridge (audit A069; specs/r1d-server.md
+			// Phase E item 33). AttachAuthFromQuery runs BEFORE
+			// requireBearer so browser EventSource clients can pass
+			// ?token= (the middleware split in auth_middleware.go was
+			// designed for exactly this).
+			muxAlias.Handle("GET /v1/sessions/{id}/sse", buildSessionSSEHandler(rpcHandler, opts.Token))
+			fmt.Fprintf(os.Stderr, "session SSE mounted at /v1/sessions/{id}/sse\n")
 		}
 	}
 
@@ -481,4 +503,42 @@ func portFromAddr(addr string) int {
 	return p
 }
 
+
+// serveJournalDir resolves and creates `~/.r1/journals` (or
+// `$R1_HOME/journals` in sandboxes), the per-session event journal
+// directory the subscribe replay path reads (audit A069).
+func serveJournalDir() (string, error) {
+	dir := os.Getenv("R1_HOME")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home: %w", err)
+		}
+		dir = filepath.Join(home, ".r1")
+	}
+	jd := filepath.Join(dir, "journals")
+	if err := os.MkdirAll(jd, 0o700); err != nil {
+		return "", fmt.Errorf("mkdir %s: %w", jd, err)
+	}
+	return jd, nil
+}
+
+// buildSessionSSEHandler assembles the GET /v1/sessions/{id}/sse
+// middleware chain (audit A069): sse.AttachAuthFromQuery promotes
+// ?token= into the Authorization header BEFORE requireBearer runs, so
+// browser EventSource clients (which cannot set headers) authenticate
+// with the same bearer CLI clients use. The Subscribe binding is the
+// shared fanout engine: journal replay from since_seq / Last-Event-ID,
+// then live events, per the replay-before-live contract.
+func buildSessionSSEHandler(rpcHandler *jsonrpc.HubHandler, token string) http.Handler {
+	var inner http.Handler = &sse.Handler{
+		Subscribe:            rpcHandler.SubscribeSessionWithSink,
+		SessionIDFromRequest: sse.PathSessionID,
+		FilterFromRequest:    sse.QueryFilter,
+	}
+	if token != "" {
+		inner = server.RequireBearer(token)(inner)
+	}
+	return sse.AttachAuthFromQuery(inner)
+}
 
