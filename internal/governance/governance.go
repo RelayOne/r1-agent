@@ -30,7 +30,9 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/RelayOne/r1/internal/bridge"
 	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/costtrack"
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/ledger"
 	"github.com/RelayOne/r1/internal/ledger/loops"
@@ -47,6 +49,12 @@ type Governor struct {
 	bus    *bus.Bus
 	ledger *ledger.Ledger
 	sup    *supervisor.Supervisor
+
+	// costBridge routes hub model.post_call usage into cost.recorded
+	// bus events + cost_record ledger nodes (audit A055). Budget
+	// enforcement stays with the mission.budget.update path below; the
+	// bridge is pure observability here.
+	costBridge *bridge.CostBridge
 
 	mu        sync.Mutex
 	spentUSD  float64 // cumulative spend accumulated from hub cost events
@@ -103,11 +111,12 @@ func New(ctx context.Context, stateDir, missionID string, budgetUSD float64) (*G
 	}
 
 	return &Governor{
-		missionID: missionID,
-		budgetUSD: budgetUSD,
-		bus:       b,
-		ledger:    l,
-		sup:       sup,
+		missionID:  missionID,
+		budgetUSD:  budgetUSD,
+		bus:        b,
+		ledger:     l,
+		sup:        sup,
+		costBridge: bridge.NewCostBridge(b, l, 0),
 	}, nil
 }
 
@@ -183,6 +192,22 @@ func (g *Governor) handle(ctx context.Context, ev *hub.Event) *hub.HookResponse 
 func (g *Governor) onCost(ev *hub.Event) {
 	if ev.Model == nil || ev.Model.CostUSD <= 0 {
 		return
+	}
+
+	// Route the usage through the CostBridge (audit A055) so
+	// cost.recorded events and cost_record ledger nodes exist on every
+	// governed run — regardless of whether a budget is configured. The
+	// runner-reported CostUSD is authoritative; the bridge does not
+	// recompute it.
+	if g.costBridge != nil {
+		g.costBridge.PublishUsage(costtrack.Usage{
+			Model:        ev.Model.Model,
+			TaskID:       ev.TaskID,
+			InputTokens:  ev.Model.InputTokens,
+			OutputTokens: ev.Model.OutputTokens,
+			CacheRead:    ev.Model.CachedTokens,
+			Cost:         ev.Model.CostUSD,
+		}, bus.Scope{MissionID: g.missionID, TaskID: ev.TaskID})
 	}
 
 	// budgetUSD <= 0 disables budget-rule emission (see New's doc contract:

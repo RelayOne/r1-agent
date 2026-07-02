@@ -108,7 +108,7 @@ func (cb *CostBridge) recordEmitError(stage string, err error) {
 func (cb *CostBridge) Record(model, taskID string, inputTokens, outputTokens, cacheRead, cacheWrite int) float64 {
 	cost := cb.tracker.Record(model, taskID, inputTokens, outputTokens, cacheRead, cacheWrite)
 
-	usage := costtrack.Usage{
+	cb.PublishUsage(costtrack.Usage{
 		Model:        model,
 		TaskID:       taskID,
 		InputTokens:  inputTokens,
@@ -117,6 +117,23 @@ func (cb *CostBridge) Record(model, taskID string, inputTokens, outputTokens, ca
 		CacheWrite:   cacheWrite,
 		Cost:         cost,
 		Timestamp:    time.Now(),
+	}, bus.Scope{TaskID: taskID})
+
+	return cost
+}
+
+// PublishUsage emits the cost.recorded bus event and writes the
+// cost_record ledger node for a usage whose cost was computed elsewhere
+// (audit A055) — e.g. the governance Governor translating hub
+// model.post_call events, where the runner already reported the
+// authoritative CostUSD. Unlike Record it does not touch the internal
+// tracker, so bridge totals / OverBudget are unaffected (mission budget
+// enforcement stays with the Governor's mission.budget.update path).
+// The scope's MissionID (when set) is stamped onto the ledger node so
+// governance queries can filter per mission.
+func (cb *CostBridge) PublishUsage(usage costtrack.Usage, scope bus.Scope) {
+	if usage.Timestamp.IsZero() {
+		usage.Timestamp = time.Now()
 	}
 	payload, err := json.Marshal(usage)
 	if err != nil {
@@ -124,14 +141,14 @@ func (cb *CostBridge) Record(model, taskID string, inputTokens, outputTokens, ca
 		// shouldn't fail in practice, but record + return early
 		// rather than emit empty payloads downstream.
 		cb.recordEmitError("usage.marshal", err)
-		return cost
+		return
 	}
 
 	if err := cb.bus.Publish(bus.Event{
 		Type:      EvtCostRecorded,
 		Timestamp: time.Now(),
 		EmitterID: "bridge.cost",
-		Scope:     bus.Scope{TaskID: taskID},
+		Scope:     scope,
 		Payload:   payload,
 	}); err != nil {
 		cb.recordEmitError("usage.publish", err)
@@ -141,12 +158,11 @@ func (cb *CostBridge) Record(model, taskID string, inputTokens, outputTokens, ca
 		Type:          "cost_record",
 		SchemaVersion: 1,
 		CreatedBy:     "bridge.cost",
+		MissionID:     scope.MissionID,
 		Content:       payload,
 	}); err != nil {
 		cb.recordEmitError("ledger.add_node", err)
 	}
-
-	return cost
 }
 
 // Total returns total cost so far.
