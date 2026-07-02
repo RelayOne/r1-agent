@@ -46,13 +46,13 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **README's documented install path downloads.r1.run/prod/r1-linux-amd64 is structurally a 404: no pipeline in the repo ever publishes objects under the CDN's prod/staging/dev channels**
 - Evidence: README.md:90 instructs `curl -fsSL https://downloads.r1.run/prod/r1-$(uname ...)`. services/r1-downloads-cdn/main.go:50 serves bucket relayone-488319-r1-releases and :140 rejects anything but channels prod/staging/dev; :151-156 404s when obj.Attrs fails. But the only publisher to that bucket is cloudbuild-release.yaml:46, which uploads `dist/*.tar.gz checksums.txt` to `gs://relayone-488319-r1-releases/<TAG>/` — tarballs under a tag prefix, never a `prod/r1-linux-amd64` raw binary. The per-push raw binaries go to a different bucket entirely (cloudbuild.yaml:150 `gs://relayone-488319-public/r1/<…
 - Fix: Two-part fix, both in-repo. (1) Pipeline: add a channel-publish step to cloudbuild-binaries.yaml (after publish-r1-binaries) or cloudbuild.yaml (after line 151) that also copies dist/r1-* to gs://relayone-488319-r1-releases/prod/ on main/tag builds (and staging/dev per branch if those triggers exist), e.g. `for f in dist/*; do gcloud storage cp "$$f" gs://relayone-488319-r1-releases/prod/$$(basename "$$f"); done`. Note: the Cloud Build SA may need storage.objectAdmin on that bucket — if the grant is missing, list that single IAM grant as a P3 ci-gap/operator item, but the config change itself …
-- STATUS: PENDING
+- STATUS: FIXED (commit: 38f2a3ca)
 
 ### A006 [partial-wiring/M] cloudbuild.yaml:133
 **All downloadable r1 binaries ship with stub SQLite (CGO_ENABLED=0) and without the sqlite_fts5 tag — --sqlite store, research/wisdom/membus FTS, migration idempotency all inert in shipped binaries**
 - Evidence: cloudbuild.yaml:133-136 builds the published binaries with `CGO_ENABLED=0 GOOS=$$OS ... go build -mod=vendor -trimpath -ldflags "-s -w -X main.version=$SHORT_SHA"` (no -tags sqlite_fts5); cloudbuild-binaries.yaml:36-38 same (CGO_ENABLED=0, `-ldflags "-s -w"`). The only SQLite driver is cgo-only mattn/go-sqlite3 (go.mod:31 + replace at :74); vendor/github.com/mattn/go-sqlite3/static_mock.go:16 makes every Open fail at runtime: "Binary was compiled with 'CGO_ENABLED=0', go-sqlite3 requires cgo to work. This is a stub". This contradicts remediation-triage F1 "STATUS: FIXED" and internal/research/…
 - Fix: (1) cloudbuild.yaml build-multi-platform-r1 step and cloudbuild-binaries.yaml: for linux/amd64 and linux/arm64, apt-get install gcc-x86-64-linux-gnu gcc-aarch64-linux-gnu (as cloudbuild-release.yaml:16-17 already does) and build with CGO_ENABLED=1, CC set per arch, adding -tags sqlite_fts5. (2) For darwin/windows cross-builds in those pipelines, keep CGO_ENABLED=0 (osxcross is not available) but add a `//go:build !cgo` guard file in cmd/r1 (or a doctor check that Pings sqlite3 :memory:) so --sqlite/session.db auto-detect fail fast with "this build has no SQLite support; install via install.sh …
-- STATUS: PENDING
+- STATUS: FIXED (commit: b1f89f08)
 
 ### A007 [partial-wiring/S] cmd/r1/agent_serve_cmd.go:461
 **agent-serve registers research executor with nil Fetcher — every research task fails at runtime**
@@ -72,13 +72,13 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Remote browser providers browserless (1,478 LOC) and inhouse (733 LOC) are complete but unconstructible — no factory maps the provider names to them**
 - Evidence: internal/browser/provider.go:238-239 declares ProviderBrowserless = "browserless" and ProviderInhouse = "inhouse" in wired code (cmd/r1 and internal/executor import internal/browser), and provider.go:12-13 documents both backends. But go list shows internal/browser/browserless and internal/browser/inhouse have zero importers outside each other (inhouse imports browserless), and grep for ProviderBrowserless/ProviderInhouse finds no non-test consumer — only NewLocalProvider (provider_local.go:63) is ever constructed. The Cloud Run service half (services/r1-browser, spec browser-remote-sandbox.md…
 - Fix: 1) Implement the documented factory: add `PickProvider(name string, cfg Config) (browser.Provider, error)` (name per provider.go:33 doc; place in internal/browser or cmd/r1) switching on ProviderLocal/ProviderBrowserless/ProviderInhouse → NewLocalProvider / browserless.NewClient / inhouse.NewClient, optionally wrapped in NewFallback per `browser.fallback` config. 2) In cmd/r1/browse_cmd.go, honor the --provider override / R1_BROWSER_PROVIDER instead of discarding it (delete `_ = providerOverride` at line 53) and pass the constructed Provider into the executor. 3) Refactor executor.BrowserExecu…
-- STATUS: PENDING
+- STATUS: FIXED (commit: fa3916f8)
 
 ### A010 [partial-wiring/M] internal/cortex/cortex.go:541
 **Cortex lobes never receive conversation History or Provider — all 4 production lobes are no-ops every round**
 - Evidence: MidturnNote discards its input: `_ = messages // history payload not consumed at this layer; reserved for future per-round LobeInput wiring.` (cortex.go:541), and LobeRunner.buildInput only sets Bus+Workspace — 'History and Provider are populated by TASK-14 wiring and are nil at this layer' (lobe.go:306-317) — but TASK-14 (MidturnNote) never populates them. Every lobe wired by native_runner.go:626-631 depends on History: memoryrecall returns nil when `lastUserMessage(in.History)` is empty (lobes/memoryrecall/lobe.go:165-168); antitrunc gets `assistantTextHistory(in.History)` plus planPath="" s…
 - Fix: Four parts, all in-repo: (1) Thread history into rounds: in Cortex.MidturnNote (internal/cortex/cortex.go:540), deep-copy messages once per round and hand them to each runner before TickRound (e.g. runner.SetRoundInput(roundID, historyCopy) storing an atomic pointer, or extend TickRound's signature); have LobeRunner.buildInput (internal/cortex/lobe.go:308) populate LobeInput.History from that stash and LobeInput.Provider from the Cortex cfg.Provider; delete the false 'populated by TASK-14 wiring' comment. (2) Fix the every-turn 2s stall: either exclude daemon-style lobes from the Round barrier…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 0e6ea00e)
 
 ### A011 [stub/L] cmd/r1/desktop_rpc_cmd.go:85
 **r1 desktop-rpc serves desktopapi.NotImplemented{} — entire desktop data path is a scaffold**
@@ -98,7 +98,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Conflict-auto-resolution merge path has zero coverage anywhere (Merge/detectConflicts/applyConflictResolutions all 0.0%)**
 - Evidence: `go tool cover -func` on internal/worktree: manager.go:246 Merge 0.0%, manager.go:318 allAutoResolved 0.0%, manager.go:337 applyConflictResolutions 0.0%, conflicts.go:114 detectConflicts 0.0%, helpers.go:430 ValidateMerge 0.0%, helpers.go:489 ResetMainTo 0.0%. Root integration_test.go exercises only the happy path — its own section header at line 184 reads "Parallel worktrees (non-conflicting merges)" and no test in the repo greps for a forced conflict through Merge. This is the code that AUTO-RESOLVES git conflicts and commits the result to main (design decisions #8/#9); package coverage is 4…
 - Fix: Two-part fix in internal/worktree: (1) Repair the dead wiring in Manager.Merge (manager.go:255-310): merge-tree --write-tree output never contains conflict markers, so stop Parse-ing it. Instead, on real-merge failure, list conflicted files via `git diff --name-only --diff-filter=U`, read each working-tree file (which DOES contain <<<<<<< markers), call conflictres.Parse(content, file) per file (fixing the empty-File bug at manager.go:265), AutoResolve, then reuse applyConflictResolutions to Resolve/stage/commit, keeping the existing merge --abort fallback when any conflict is not auto-resolve…
-- STATUS: PENDING
+- STATUS: FIXED (commit: b790670e)
 
 ## P2 — significant (bugs, dormant systems, CI gaps)
 
@@ -196,19 +196,19 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Rust host round-trips 6 verbs (session.lanes.*, session.set_workdir, daemon.status/shutdown) the Go subprocess never routes**
 - Evidence: dispatch() has no cases for session.lanes.list/subscribe/unsubscribe/kill, session.set_workdir, daemon.status, daemon.shutdown → `default: s.writeError(req.ID, -32601, "method_not_found"...)`. ipc.rs sends exactly those strings (ipc.rs:648 "session.lanes.list", :696 "session.lanes.subscribe", :793 "session.lanes.kill", :822 "session.set_workdir", :845 "daemon.status", :876 "daemon.shutdown"). The daemon API uses different names anyway (internal/server/jsonrpc/daemonapi.go:343 "lanes.list", :350 "lanes.kill", :366 "daemon.info") — verb-name drift between the two Go surfaces and the Rust host.
 - Fix: Three-part in-repo fix: (1) Extend internal/desktopapi Handler + NotImplemented with the six verb methods (SessionLanesList/Subscribe/Unsubscribe/Kill, SessionSetWorkdir, DaemonStatus, DaemonShutdown) using the request/response shapes already specified in desktop/IPC-CONTRACT.md §2.7-2.8, and add the six dispatch cases in cmd/r1/desktop_rpc_cmd.go so they return -32010 not_implemented per the scaffold contract (restoring the documented "coming soon" degradation instead of -32601). (2) Reconcile verb naming with internal/server/jsonrpc/daemonapi.go before the WS transport switch: either registe…
-- STATUS: PENDING
+- STATUS: FIXED (commit: f964eb8e)
 
 ### A030 [partial-wiring/M] cmd/r1/retention_policy.go:48
 **--retention-permanent flag is a no-op: setRetentionPolicy validates and discards the policy; no retention enforcement exists in cmd/r1**
 - Evidence: cmd/r1/retention_policy.go:47-49: `func setRetentionPolicy(p retention.Policy) { _ = p.Validate() }` — the built policy is validated then thrown away; there is no package-level register despite main.go:1832-1836 claiming "stash the per-run retention policy in the package-level register so the retention enforcement hooks read a single source of truth". The flag is defined at cmd/r1/main.go:1823 and consumed only at main.go:1837 `setRetentionPolicy(buildRetentionPolicy(*retentionPermanent))`. grep confirms retention.EnforceOnSessionEnd has ZERO callers anywhere (only defined at internal/retentio…
 - Fix: In cmd/r1/retention_policy.go, add a package-level register: `var runRetentionPolicy = retention.Defaults()` plus accessor `currentRetentionPolicy()`; make setRetentionPolicy store the policy only when p.Validate() == nil (fail-soft to defaults, matching its doc comment). Then complete spec item 32: in the sow session-end path (cmd/r1/sow_native_streamjson.go emitSessionEnd, after the session span is closed), call retention.EnforceOnSessionEnd(ctx, currentRetentionPolicy(), session.ID, cfg.Bus) gated on STOKE_RETENTION=1 per specs/retention-policies.md §Flag gate, logging errors without failin…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 8ee6d700)
 
 ### A031 [partial-wiring/M] cmd/r1/serve_cmd.go:81
 **r1 serve advertises --no-tcp/--no-unix but never binds a unix socket; internal/server/ipc (523 LOC) is dormant**
 - Evidence: cmd/r1/serve_cmd.go:81-82 defines flags "--no-tcp: unix-socket only (no TCP listener)" and "--no-unix", validated for mutual exclusion at lines 102-103 — but opts.NoTCP/opts.NoUnix are never read again (only 3 occurrences in the file: struct, flag def, validation; runServeLoop never references them and only binds TCP). internal/server/ipc (specs/r1d-server.md Phase C items 14-16: $XDG_RUNTIME_DIR/r1/r1.sock with kernel peer-cred auth, ipc/listen_unix.go:96 func Listen) has zero importers module-wide. cmd/r1/ctl_daemon_cmd.go:202-204 falsely implies parity: "When the daemon binds a unix-side HT…
 - Fix: Wire ipc.Listen() into runServeLoop: when !opts.NoUnix, call ipc.Listen(), serve the same srv handler on the unix listener via a second http.Server (peer-cred check from ipc replaces bearer auth on that transport), and pass the socket path (instead of the hardcoded "") to daemondisco.WriteDiscovery at serve_cmd.go:365 so r1 ctl's existing unixSocketAlive/dialUnix branch (ctl_daemon_cmd.go:252-257) activates; when opts.NoTCP, skip the TCP srv.ListenAndServe goroutine. Add a serve-loop test asserting --no-tcp yields no TCP bind and --no-unix yields no socket file. If full wiring is deferred, the…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 409997d7)
 
 ### A032 [partial-wiring/L] cmd/r1/sow_native.go:576
 **HITL approval service is constructed but never consumed: sowNativeConfig.HITL set-never-read, GovernanceTier never set or read, SoftPassApprovalFunc never assigned, run_cmd discards hitlSvc**
@@ -222,19 +222,19 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Discovery wizard invokes 3 host commands that don't exist (daemon_config_exists, daemon_reconnect, daemon_accept_sidecar) — wizard never shows, Reconnect can never succeed**
 - Evidence: `await invoke<boolean>("daemon_config_exists", {})` (:59), `await invoke("daemon_reconnect", {})` (:148), `await invoke("daemon_accept_sidecar", {})` (:166). None appear in ipc.rs generate_handler! (ipc.rs:570-605) or anywhere in src-tauri (grep: zero hits). shouldShowDiscoveryWizard catches the error and returns null, so the wizard is unreachable in Tauri builds; if mounted, handleReconnect always fails and leaves the wizard open (comment admits "Sister Rust PR will land structured errors here").
 - Fix: In desktop/src-tauri/src/ipc.rs add three #[tauri::command] handlers and register them in generate_handler! (ipc.rs:570-605): (1) daemon_config_exists() -> IpcResult<bool> returning discovery::read_daemon_json().is_ok(); (2) daemon_reconnect(app: AppHandle, state: State<DiscoveryState>) re-running discovery::discover_or_spawn(&app) and storing the resulting handle/mode in DiscoveryState exactly as main.rs setup_discovery (main.rs:106-130) does on success, mapping DiscoveryError to a structured IpcError so the TS handleReconnect comment's anticipated error surface exists; (3) daemon_accept_side…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 0c071159)
 
 ### A034 [partial-wiring/M] desktop/src/panels/cost-panel.ts:57
 **Panels have no error handling for RPC failures, contradicting desktop-rpc's claim of graceful 'coming soon' rendering**
 - Evidence: loadCost awaits invokeStub("cost_get_current"...) (:57-62) with no try/catch; same for ledger-viewer.ts:56, memory-inspector.ts:105, descent-ladder.ts:108 (grep shows the only try/catch in panels are session-view.ts:978 and skill-catalog.ts:513). cmd/r1/desktop_rpc_cmd.go:17-18 claims "The Tauri host handles the not_implemented error code gracefully by rendering a 'coming soon' state in the affected panel" — no panel does; rejections are unhandled and the cost panel keeps showing seeded $0.00.
 - Fix: Two-part fix, both in-repo. (a) Add a shared helper (e.g. renderUnavailable(root, err) in desktop/src/ipc-stub.ts or a new panels/lib module) and wrap the async loader bodies in cost-panel.ts (loadCost), ledger-viewer.ts (loadEvents), memory-inspector.ts (loadScopes + entry loader), descent-ladder.ts (loadTiers) in try/catch: on rejection whose stoke_code/data.stoke_code is "not_implemented" (code -32010) render the existing r1-empty truthful-unavailable pattern ("Not available yet — host verb unimplemented"); on other errors render an error row instead of leaving seeded $0.00/empty placeholde…
-- STATUS: PENDING
+- STATUS: FIXED (commit: cd035230)
 
 ### A035 [partial-wiring/M] desktop/src/panels/sow-tree.ts:57
 **SOW-tree panel calls unregistered commands session_list/session_tree; panel hangs at 'Loading sessions…' in real Tauri**
 - Evidence: `invokeStub<SessionSummary[]>("session_list", ...)` (:57) and `"session_tree"` (:154) — neither is in ipc.rs generate_handler! (:570-605) nor defined anywhere in src-tauri (grep: zero hits). In a Tauri WebView invokeStub forwards to real invoke (ipc-stub.ts:81-83) which rejects with unknown-command; `void loadSessions(list)` (:53) has no catch, so the rejection is unhandled and the tree never leaves its loading row.
 - Fix: Two-part in-repo fix: (1) In desktop/src/panels/sow-tree.ts wrap loadSessions and loadChildren bodies in try/catch and, on rejection OR while the host verbs are unregistered, render the same truthful-unavailable row pattern used by mcp-servers.ts/observability.ts ("Session tree IPC not wired yet — session_list/session_tree host commands are not registered") instead of the misleading "No sessions yet" empty state; alternatively register session_list/session_tree handlers in desktop/src-tauri/src/ipc.rs backed by SubprocessManager's cached session summaries and add them to generate_handler!. (2)…
-- STATUS: PENDING
+- STATUS: FIXED (commit: b3b2ec75)
 
 ### A036 [partial-wiring/L] internal/beacon/runtime/runtime.go:1
 **Beacon attestation runtime cluster (runtime/review/trust/trust/kinds/transport, ~1,200 LOC) is dormant; only pairing/token halves are wired**
@@ -284,43 +284,43 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **nightly.yml requires an unregistered [self-hosted, large-linux] runner — the job queues for 24h and is cancelled every night (the 4x 'cancelled 24h0m2s' runs in the prior audit)**
 - Evidence: nightly.yml:20 `runs-on: [self-hosted, large-linux]` with a nightly cron (:14). `timeout-minutes: 30` (:21) only bounds execution, not queue time; with no matching runner registered, GitHub cancels the queued job at its 24h cap — exactly matching audit/r1-finish-gap-2026-06-12.md's "cancelled 24h0m2s four nights running". Nothing in the repo has changed this workflow since. Secondary: :26 pins `go-version: "1.23"` while go.mod:3 requires `go 1.25.5` (works only if GOTOOLCHAIN auto-download is allowed on the runner).
 - Fix: Edit .github/workflows/nightly.yml: (1) change the cron-triggered job to runs-on: ubuntu-latest and run the benchmark step with the Makefile-documented commodity overrides (env: R1_BENCH_CONCURRENCY: "100", R1_BENCH_WALL_BUDGET_S: "10" on the `make test-oneshot-concurrent` step) so the nightly lane goes green with reduced-size regression signal; (2) replace go-version: "1.23" with go-version-file: go.mod (or "1.25.x") so setup-go matches go.mod 1.25.5 without relying on toolchain auto-download; (3) keep a second workflow_dispatch-only job pinned to [self-hosted, large-linux] for the full 1000-…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 4f1ca801)
 
 ### A043 [ci-gap/S] cloudbuild-binaries.yaml:38
 **Duplicate divergent binary-publish pipeline: cloudbuild-binaries.yaml publishes version-less ('dev') binaries to the same latest/ GCS path that cloudbuild.yaml publishes SHA-versioned ones to**
 - Evidence: cloudbuild-binaries.yaml:36-38 builds with `-ldflags "-s -w"` (no `-X main.version`, golang:1.26, non-vendored) and :58-59 uploads to `gs://relayone-488319-public/r1/<ref>/` and `latest/` — the same destinations as cloudbuild.yaml:150-151, whose build step DOES embed `-X main.version=$SHORT_SHA` (:136). Whichever trigger runs last overwrites latest/ — potentially with binaries whose `r1 --version` prints "dev" (cmd/r1/main.go:96 `var version = "dev"`). The finish-gap item (a) 'version embedding not landed' is now only PARTIALLY closed: install.sh:56 and Makefile:16 also still build without -X …
 - Fix: 1) Delete cloudbuild-binaries.yaml — cloudbuild.yaml's build-multi-platform-r1 + publish-r1-binaries steps fully supersede it (same bucket, same latest/ path, plus version embedding, vendored deps, and the full test/race/antitrunc gate). 2) Fix docs/DEPLOYMENT.md:222: remove/rewrite the claim that cloudbuild-binaries.yaml ships per-channel binaries to gs://relayone-488319-r1-releases/{prod,staging,dev} on tag push; if tag-push publishing is still wanted, document pointing that trigger at cloudbuild.yaml or cloudbuild-release.yaml (goreleaser already embeds -X main.version={{.Version}} at .gore…
-- STATUS: PENDING
+- STATUS: FIXED (commit: f0b4d121)
 
 ### A044 [ci-gap/M] cloudbuild-release.yaml:16
 **Tag-release pipeline cannot succeed: .goreleaser.yml darwin builds require o64-clang (osxcross) which cloudbuild-release.yaml never installs**
 - Evidence: cloudbuild-release.yaml:16-17 installs only `gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu gcc`, then runs `goreleaser release` with CGO_ENABLED=1. .goreleaser.yml:15-16 sets CGO_ENABLED=1 for the r1 build and its darwin overrides (:35-41) set `CC=o64-clang` — a toolchain that does not exist in the golang:1.25 image, so the darwin/amd64 and darwin/arm64 legs fail and goreleaser aborts the whole release. The v-tag release channel (which feeds the relayone-488319-r1-releases bucket the downloads CDN reads) is therefore broken as configured.
 - Fix: Two changes, both in-repo: (1) .goreleaser.yml — remove darwin from the CGO_ENABLED=1 'r1' build (keep linux amd64/arm64 with the existing gcc overrides) and add a separate 'r1-darwin' build id with binary 'r1', CGO_ENABLED=0, goos [darwin], goarch [amd64, arm64], mirroring the r1-acp pattern at .goreleaser.yml:44-61; mattn/go-sqlite3 compiles under !cgo with a runtime-error stub, and cloudbuild-binaries.yaml already ships CGO_ENABLED=0 darwin r1 binaries, so this matches existing distribution behavior (osxcross install is the alternative but requires a macOS SDK and is not justified). (2) clo…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 054f0b41)
 
 ### A045 [ci-gap/M] services/cloudbuild-deploy.yaml:36
 **No CI lane runs desktop (vitest/cargo) or services *_test.go — the repo gate covers only the main Go module**
 - Evidence: The declared CI gate is `go build ./cmd/r1 && go test ./... && go vet ./...` (CLAUDE.md), which excludes the five standalone services modules (own go.mod each) and desktop/. cloudbuild-deploy.yaml steps (:36-101) go straight from docker build to deploy with no test step; cloudbuild-e2e.yaml tests only cmd/r1-server/e2e + web; no yaml references desktop/, cargo test, or vitest despite desktop/src/r1d-*.test.ts, src-tauri/tests/, and packages/web-components tests existing.
 - Fix: Drop the desktop lane from the fix (it already exists). For services, add `RUN go test ./... -count=1 -timeout=120s` to the builder stage of each services/<svc>/Dockerfile (r1-admin, r1-coord-api, r1-docs, r1-downloads-cdn, plus Dockerfile.r1-browser) immediately after the source COPY lines — this gates every image build regardless of which trigger invokes it and requires no Cloud Build trigger changes. Note CGO: the tests pass with the modules' default settings, and the builder image is golang:1.25-bookworm so the toolchain is present. Optionally also add an explicit `test-services` step at t…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 98c47c73)
 
 ### A046 [ci-gap/S] services/cloudbuild-r1-browser.yaml:58
 **r1-browser deploy smoke step can never pass: unauthenticated external curl against a service deployed with --no-allow-unauthenticated AND internal-only ingress**
 - Evidence: cloudbuild-r1-browser.yaml:58 deploys with `--no-allow-unauthenticated` and :69 `--ingress=internal-and-cloud-load-balancing`, then the smoke step (:80-95) does a plain `curl ... "$$URL/livez"` from the Cloud Build worker expecting 200 ("/livez is unauthenticated (it's outside the WS path)" — true only at app level). The request is rejected at both the ingress layer (external caller) and the IAM layer (no identity token), so smoke always exits 1 and the deploy pipeline is red by construction. This is the still-open residue of the finish-gap item 'deploy r1-browser service or strike C6 from liv…
 - Fix: In services/cloudbuild-r1-browser.yaml, replace the post-deploy external curl smoke with (a) a hermetic pre-deploy container smoke after the build step: docker run -d -p 8080:8080 -e R1_BROWSER_SKIP_CHROMIUM=1 us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-browser:$SHORT_SHA, then curl -s -o /dev/null -w '%{http_code}' localhost:8080/livez expecting 200 (the R1_BROWSER_SKIP_CHROMIUM override at services/r1-browser/main.go:75-79 serves /livez without Chromium), and (b) a post-deploy control-plane readiness check that works despite internal ingress: gcloud run services describe r1-browser-${_ENV} …
-- STATUS: PENDING
+- STATUS: FIXED (commit: c9aaa42b)
 
 ### A047 [ci-gap/S] services/cloudbuild-r1-browser.yaml:86
 **cloudbuild-r1-browser smoke curls run.app /livez unauthenticated but the service is deployed no-allow-unauthenticated + internal ingress — smoke can never pass**
 - Evidence: Deploy uses `--no-allow-unauthenticated` (:58) and `--ingress=internal-and-cloud-load-balancing` (:69); the smoke step comments "/livez is unauthenticated (it's outside the WS path)" (:84) and curls the default URL with no identity token (:86). Cloud Run IAM/ingress rejects before the container sees the request (403/404), so the pipeline's final step always fails.
 - Fix: Replace the data-plane curl in the smoke step (services/cloudbuild-r1-browser.yaml:74-95) with a control-plane readiness assertion that works regardless of ingress/IAM: poll `gcloud run services describe r1-browser-${_ENV} --region=${_REGION} --format='value(status.conditions[0].status)'` for Ready=True, and assert the serving revision runs the new image, e.g. compare `gcloud run services describe ... --format='value(status.latestReadyRevisionName)'` against `status.traffic` and verify the revision's image tag equals $SHORT_SHA via `gcloud run revisions describe`. Also fix the misleading :84 c…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 583efa4a)
 
 ### A048 [test-gap/S] cmd/r1-server/sse_v2_test.go:67
 **TestSSE_ResyncOnPrunedCursor (spec T19) structurally always skips — resync path never tested**
 - Evidence: Test seeds 3 events into a fresh DB so the oldest row id is always 1; then `prunedCursor := oldest - 1; if prunedCursor <= 0 { t.Skip("oldest event has id <= 1; cannot construct a below-floor cursor") }`. With a fresh sqlite DB this is 0 every run, so the skip ALWAYS fires — verified in a live `go test ./... -v` run (the skip appeared). The `event: resync` / `cursor_pruned` assertions below (lines 84-93) are dead code; spec 4 §10 T19 is untested while the file header claims it is covered.
 - Fix: In TestSSE_ResyncOnPrunedCursor (cmd/r1-server/sse_v2_test.go): seed 4 events instead of 3, then delete the lowest-id row directly — the test is in package main so it can run db.sql.Exec(`DELETE FROM session_events WHERE instance_id = ? AND id = ?`, "r1-sse-resync", rows[0].ID); AUTOINCREMENT guarantees ids are not reused, so re-listing yields oldest > 1 deterministically (this also models real pruning more faithfully than id arithmetic). Compute prunedCursor := oldest-1 (now >= 1) and replace the t.Skip with t.Fatalf("fixture broken: oldest=%d", oldest) since the fixture is fully controlled. …
-- STATUS: PENDING
+- STATUS: FIXED (commit: a80b067c)
 
 ### A049 [test-gap/S] internal/workflow/workflow_e2e_test.go:233
 **TestE2EWorkflowWisdomAccumulates asserts nothing — name claims accumulation, body discards the result**
@@ -332,13 +332,13 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Graph 3k-FPS e2e test (spec T11) is unreachable by every lane — its own header claims the rehearsal lane runs it**
 - Evidence: Header line 11-12: "It runs in the release-rehearsal CI lane only — see cloudbuild.yaml's e2e step." But services/cloudbuild-e2e.yaml:48-50 does `cd cmd/r1-server/e2e` then `go test -tags=e2e ./...` — that directory is a separate go.mod submodule containing only e2e_test.go; graph_e2e_test.go lives one level up in package main and is never in the invocation set. No other file references TestGraph3kFPS or graph-fps outside the e2e dir. The FPS ≥ 30 gate never executes anywhere (it additionally skips without R1_SERVER_UI_V2=1, which only the e2e lane sets).
 - Fix: Two-part fix, both in-repo: (1) Implement the missing fixture seed the test header already promises: add graph_e2e_fixture.go (build tag e2e) in cmd/r1-server that seeds a session DB with e2eFixtureNodes=3000 nodes into the server's data dir before startServer, keyed to session id "e2e-fixture" (reuse the import.go/session-DB machinery); without this the wired test fatals on waitForFunction(__GRAPH_RENDERER__). (2) Wire the lane: in services/cloudbuild-e2e.yaml's e2e-test step, after the existing submodule run, add from repo root: `R1_SERVER_UI_V2=1 CGO_ENABLED=1 go test -mod=vendor -tags=e2e …
-- STATUS: PENDING
+- STATUS: BLOCKED: Cannot fix within file ownership. The adversarially-verified fix requires (1) creating cmd/r1-server/graph_e2e_fixture.go — a new production e2e-tagged 3000-node seeder without which the wired test fatals on waitForFunction(__GRAPH_RENDERER__), (2) adding a repo-root 'go test -tags=e2e -run TestGraph3kFPS ./cmd/r1-server' step to services/cloudbuild-e2e.yaml, and (3) correcting cmd/r1-server/e2e/R
 
 ### A051 [dormant/M] cmd/r1/task_cmd.go:221
 **`r1 task` dispatch for research/browser/delegate is scaffolding registered with zero-value executors**
 - Evidence: Non-code task types print "hint: this executor is scaffolding; real pipeline lands in a follow-up Track B task." and exit 2 (lines 213-224); TaskResearch is registered as zero-value `&executor.ResearchExecutor{}` with nil Fetcher at line 45. The command classifies and routes but cannot execute anything except TaskCode, so most of the `r1 task` surface is a router in front of nothing. Honest (exit 2, explicit hint) but an incomplete shipped command.
 - Fix: In buildDefaultTaskRouter (cmd/r1/task_cmd.go:38-50), replace the zero-value registrations with the constructors agent-serve already uses: executor.NewResearchExecutor(research.NewHTTPFetcher()) (pattern from cmd/r1/research_cmd.go:72), executor.NewBrowserExecutor(), executor.NewDeployExecutor(deploy.DeployConfig{...}), and the delegate constructor from internal/executor/delegate.go. Then generalize the dispatch block at task_cmd.go:189 to call e.Execute(ctx, plan, effort) for all registered types (mirroring the deliverable-summary printing done for TaskCode), reserving the exit-2 branch for g…
-- STATUS: PENDING
+- STATUS: FIXED (commit: e512f4b0)
 
 ### A052 [dormant/L] desktop/src-tauri/src/lanes.rs:255
 **Lane event pipeline dead-ends: LaneSubscription::ingest never called, so subscribed WebView channels receive zero events**
@@ -382,7 +382,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Policy.Honesty (HonestyConfig, 8 fields) is parsed but never read; the entire hub/builtin/honesty subscriber package is never registered; a YAML honesty: section fails policy load**
 - Evidence: HonestyConfig (policy.go:246-255: Enabled, CheckImports, HiddenTestDir, HiddenTestCommand, ClaimDecomposition, CoTMonitoring, Confession, JudgeModel) has ZERO references outside internal/config (grep `HonestyConfig` and `.Honesty`). DefaultHonestyConfig (policy.go:258) has zero callers. The subscribers it is supposed to control — NewCoTMonitor, NewClaimDecomposer, NewConfessionElicitor, NewMultiSampleChecker, NewImportChecker, NewTestIntegrityChecker in internal/hub/builtin/honesty/ — are never constructed in production (only hubbuiltin.NewAnalyticsSubscriber/NewCoderadarSubscriber/NewLifecycl…
 - Fix: Option A (wire it — preferred, the subscriber implementations are complete and tested): (1) In internal/config/policy.go add `case section == "honesty": continue` to parsePolicyYAML (after the governance case at :613-618) and add a yaml.v3 parseHonestyBlock mirroring governance_config.go, with an honestyExplicit bool so an omitted section gets DefaultHonestyConfig() in normalizePolicy. (2) At the hub wiring in cmd/r1/main.go (alongside the builtin registrations near :662), when policy.Honesty.Enabled register: (&hubbuiltin.HonestyGate{}).Register(bus); honesty.NewImportChecker() when CheckImpo…
-- STATUS: PENDING
+- STATUS: FIXED (commit: d07251a4)
 
 ### A059 [dormant/M] internal/config/policy.go:286
 **Policy.Skills (SkillsConfig) is parsed/defaulted but never read anywhere; skill budgets are hardcoded and a YAML skills: section fails policy load**
@@ -414,19 +414,19 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **internal/harness/stances — the '11 templates' CLAUDE.md advertises — are dormant; harness uses harness/prompts instead**
 - Evidence: internal/harness/stances contains 11 stance files (cto.go, dev.go, judge.go, lead_designer.go, lead_engineer.go, po.go, qa_lead.go, reviewer.go, sdm_stance.go, stakeholder.go, vp_eng.go) defining StanceTemplate with ConsensusPosture and full system prompts (e.g. cto.go:4 ctoTemplate). go list shows zero importers. The wired harness resolves prompts via a parallel system: internal/harness/harness.go:83 `tmpl, err := prompts.Template(req.Role)`. CLAUDE.md:43 ("harness/ Stance lifecycle... (11 templates)") and :46 ("harness/stances/ Stance definitions (CTO, Dev, Reviewer, PO) with system prompts"…
 - Fix: Make internal/harness/stances the single source of role definitions: (1) in internal/harness/harness.go, replace prompts.KnownRole/prompts.Template with stances.Get(req.Role), appending the {{TOOLS}}/{{CONCERN_FIELD}} scaffold (tools line + bus-event directive + concern field) to StanceTemplate.SystemPrompt; (2) wire StanceTemplate.DefaultModel into resolveModel as override -> config.ModelOverrides[role] -> stance.DefaultModel -> config.DefaultModel, matching docs/architecture/harness-stances.md:58; (3) add the missing "researcher" role to stances (it exists only in prompts/templates.go:212) o…
-- STATUS: PENDING
+- STATUS: FIXED (commit: f20038b6)
 
 ### A064 [dormant/S] internal/harness/stances/stances.go:16
 **internal/harness/stances: 11-role StanceTemplate registry is imported by nobody — harness uses a duplicate, divergent prompts registry instead**
 - Evidence: grep for 'harness/stances"' across the repo returns zero importers (earlier apparent matches were a comment in internal/app/promptguard_boot.go and internal/router/intent_gate.go importing harness/tools, not stances). The init() registry (stances.go:16-35) builds 11 rich StanceTemplates with DefaultModel and ConsensusPosture that nothing reads — harness.SpawnStance resolves prompts from the separate `prompts.templates` map (internal/harness/prompts/templates.go:24) and models from h.config.DefaultModel, ignoring stances entirely. The two registries have already drifted: stances/po.go:5 uses Ro…
 - Fix: Consolidate to a single registry. Preferred: make harness resolve from stances.Get(role) — (1) reconcile role keys (rename stances "product_owner" → "po" or add an alias, and add the missing "researcher" template to stances); (2) in SpawnStance replace prompts.KnownRole/prompts.Template with stances.Get, using StanceTemplate.SystemPrompt (keeping the {{TOOLS}}/{{CONCERN_FIELD}} substitution contract — port those placeholders into stances prompts); (3) insert StanceTemplate.DefaultModel as a fallback tier in resolveModel between config.ModelOverrides and config.DefaultModel; (4) surface Consens…
-- STATUS: PENDING
+- STATUS: FIXED (commit: f20038b6 — same deletion as A063)
 
 ### A065 [dormant/M] internal/hub/builtin/honesty/claim_decomp.go:32
 **Advanced honesty suite internal/hub/builtin/honesty (1,126 LOC, 6 checkers) is dormant; only the regex HonestyGate is wired**
 - Evidence: internal/hub/builtin/honesty exports NewConfessionElicitor (confession.go:31), NewCoTMonitor (cot_monitor.go:29), NewClaimDecomposer (claim_decomp.go:32), NewMultiSampleChecker (multi_sample.go:31), NewImportChecker (imports.go:24), NewTestIntegrityChecker (test_integrity.go:31) — an LLM-backed anti-deception suite taking provider.Provider. go list shows zero importers module-wide. The wired honesty enforcement is only the deterministic regex HonestyGate in the parent package (internal/hub/builtin/honesty.go:14-18). CLAUDE.md:58 describes hub/builtin as "honesty gate, cost tracker" without not…
 - Fix: In cmd/r1/main.go where the hub event bus is built (near the analytics/coderadar/lifecycle subscriber wiring at lines ~662-685, and the bus setup at ~326/4418), read policy.Honesty (internal/config/policy.go:201) and register: (a) the parent builtin.HonestyGate when Honesty.Enabled; (b) the deterministic checkers honesty.NewImportChecker / NewTestIntegrityChecker / NewCoTMonitor gated on CheckImports / Enabled / CoTMonitoring; (c) the LLM-backed honesty.NewClaimDecomposer / NewConfessionElicitor / NewMultiSampleChecker only when their flags (ClaimDecomposition / Confession) are set AND a provi…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 7199f996)
 
 ### A066 [dormant/S] internal/ledger/loops/loops.go:1
 **internal/ledger/loops (7-state consensus loop tracker) is dormant — supervisor consensus rules never use it**
@@ -446,7 +446,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **FTS5 dormancy regression guard is itself dormant — no lane ever runs `go test -tags sqlite_fts5`**
 - Evidence: TestFTS5ActiveUnderBuildTag exists specifically as "a regression guard for the dormant-FTS5 bug" and fails if `!s.hasFTS` (Search silently degrading to LIKE fallback). It is behind `//go:build sqlite_fts5`, but the only sqlite_fts5 reference in any build/CI file is `Makefile:16 go build -tags sqlite_fts5 -o ./bin/r1 ./cmd/r1` — the shipped binary uses the tag while `go test` never does (Makefile:21 runs untagged). The exact regression this test was written to catch would ship undetected again.
 - Fix: 1) Makefile `test:` target (Makefile:20-21): add a second line `go test -tags sqlite_fts5 -count=1 -timeout=120s ./internal/research/ ./internal/wisdom/` so the guard (and wisdom's opportunistic hasFTS/searchFTS path, internal/wisdom/sqlite.go:137,327-334) run under the tag on every `make test` / `make ci`. 2) Mirror the same tagged test line in the .goreleaser.yml before hooks (line 9) so release cuts run it. 3) (Adjacent finding, separate commit) add `-tags sqlite_fts5` to the goreleaser r1 build flags and the Dockerfile go build so release/Docker binaries match Makefile/install.sh — today t…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 08eb5e12)
 
 ### A069 [dormant/M] internal/server/sse/bridge.go:1
 **internal/server/sse (r1d-server Phase E SSE bridge) is dormant; auth middleware anticipates it but it is never mounted**
@@ -476,7 +476,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **internal/trustplane is a dead, diverging duplicate of internal/truecom (zero importers)**
 - Evidence: internal/trustplane/ contains client.go, real.go, factory.go, hire.go, env.go, identity_headers.go plus dpop/ and openapi/ — near-identical to internal/truecom/ (diff shows every common file differs, i.e. already diverging). `rg 'RelayOne/r1/internal/trustplane'` finds no import outside the package, and `go list -deps ./cmd/... | grep trustplane` is empty. All production callers (cmd/r1/agent_serve_cmd.go, cmd/r1-mcp/backends.go, internal/hire, internal/executor/delegate.go, internal/delegation) import truecom. The trustplane copy compiles and is tested but is unreachable dead weight that will…
 - Fix: Delete internal/trustplane/ entirely (including dpop/ and openapi/) — do NOT add a deprecation alias package; it is internal-only with zero importers so an alias is dead weight. In the same change: (1) update docs/trustplane-integration.md lines 15, 53, 112, 118 and services/r1-docs/docs/trustplane-integration.md to reference internal/truecom/... paths; (2) fix the stale package doc in internal/truecom/client.go:1 ("Package trustplane" → "Package truecom") and the internal/trustplane/openapi/ path reference at internal/truecom/client.go:8 and internal/truecom/real.go:3. Verify with go build ./…
-- STATUS: PENDING
+- STATUS: FIXED (commit: fe458623)
 
 ### A073 [dormant/L] internal/tui/lanes/doc.go:1
 **internal/tui/lanes (3,323 LOC + 2,316 test) Cortex lanes TUI panel is never mounted anywhere**
@@ -514,19 +514,19 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **ARCHITECTURE.md MCP catalog listing does not match the shipped 38-tool catalog: 7 of 9 categories have wrong tool names/counts, listed tools sum to 32, and web/cli categories are missing**
 - Evidence: docs/ARCHITECTURE.md:495-505 claims sessions(5)=list/get/create/pause/cancel, cortex(4)=notes/workspace/lobes/round, mission(4)=start/status/abort/report, worktree(3)=create/merge/cleanup, bus(1)=tail, verify(4)=build/test/vet/lint, TUI(5)=snapshot/dispatch/assertA11y/cycle/quit, anti-truncation(1)=r1.antitrunc.verify. Actual catalog (internal/mcp/r1_server_catalog.go:29: "sessions(6)+lanes(5)+cortex(5)+mission(4)+worktree(4)+bus(2)+verify(3)+tui(4)+web(4)+cli(1) = 38"): sessions=start/send/cancel/list/get/resume, cortex=notes/publish/lobes_list/lobe_pause/lobe_resume, mission=create/list/canc…
 - Fix: Regenerate the docs/ARCHITECTURE.md "MCP catalog" section from the shipped catalog via `go run ./cmd/r1 mcp serve --print-tools --markdown` (flags verified working; cmd/r1/mcp_serve_print_markdown_test.go): sessions(6) start/send/cancel/list/get/resume; lanes(5) unchanged; cortex(5) notes/publish/lobes_list/lobe_pause/lobe_resume; mission(4) create/list/cancel/get; worktree(4) list/diff/merge/clean; bus(2) tail/replay; verify(3) build/test/lint; tui(4) press_key/snapshot/get_model/focus_lane; web(4) navigate/click/fill/snapshot; cli(1) invoke = 38. Remove the fictitious "anti-truncation(1) r1.…
-- STATUS: PENDING
+- STATUS: FIXED (commit: feda7bc1)
 
 ### A078 [docs-drift/S] docs/mintlify/reference/env-vars.mdx:122
 **Documented env vars STOKE_RETENTION and STOKE_MASTER_KEY_FILE are read by no code**
 - Evidence: env-vars.mdx:122 documents `STOKE_RETENTION` as "`1` enables the default retention profile when no operator config exists", but grep across cmd/, internal/, services/ finds no os.Getenv/LookupEnv for it — the only hit is a comment at internal/retention/policy.go:75. docs/operations/session-migration.md:148 tells operators to "Provision via STOKE_MASTER_KEY_FILE" for key_material_mismatch recovery, but no Go code reads STOKE_MASTER_KEY_FILE anywhere. Both are operator instructions that provably do nothing.
 - Fix: Two-part fix. (1) STOKE_RETENTION: implement the spec's gate rather than deleting the doc row, because the current unconditional sweep violates the spec's opt-in retain-forever promise and deletes operator data by default — in cmd/r1-server/main.go:181 wrap startRetentionSweep in `if os.Getenv("STOKE_RETENTION") == "1"` (spec item 33), and keep env-vars.mdx:122 as-is; optionally log one DEBUG line when unset per spec §242. Additionally (same commit or follow-up) make cmd/r1/retention_policy.go actually store the policy (package-level var + getRetentionPolicy) or delete the misleading 'stored f…
-- STATUS: PENDING
+- STATUS: FIXED (commit: f48a7e0c)
 
 ### A079 [docs-drift/S] internal/migration/integration_roundtrip_test.go:12
 **1000-turn session-migration roundtrip test claims "CI runs it separately" — nothing invokes its build tag**
 - Evidence: File header: "is not part of the default unit-test gate; CI runs it separately." It is behind `//go:build integration_session_migrate`, and `grep -rn integration_session_migrate Makefile .github/ services/ scripts/` returns zero non-.go hits. The spec C1 §T22 roundtrip (ledger.Store + bus.WAL + 1000 events + sign/verify/replay) never runs in any lane.
 - Fix: Preferred (measured runtime 0.207s makes the "heavy" rationale false): remove the //go:build integration_session_migrate tag so the test runs in the default gate (go test ./...), and rewrite the header comment (lines 1-12) and inline comment (lines 45-49) to drop the false "CI runs it separately"/"wired into CI"/nonexistent-spec-instruction claims. Then update docs/operations/session-migration.md:221, docs/ARCHITECTURE.md:413, and docs/FEATURE-MAP.md:204 to say it runs in the default unit-test gate. Alternative if the tag must stay: add a Makefile target (go test -count=1 -tags integration_ses…
-- STATUS: PENDING
+- STATUS: FIXED (commit: e5da1c39)
 
 ### A080 [docs-drift/M] internal/workflow/workflow.go:1951
 **Documented 5-provider fallback chain can never fall past Codex/Native — OpenRouter/DirectAPI/Ember/LintOnly hardwired unavailable**
@@ -538,7 +538,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **r1-browser doc claims Google JWKS signature verification; verifyBearer only checks token shape**
 - Evidence: main.go:22-25 states "The token must be signed by Google for an audience matching this service's URL. Verification uses the standard JWKS endpoint ... (cached for an hour)." But verifyBearer (:134-152) checks only Bearer prefix, len>=16, and 3 dot-segments — no signature, audience, or expiry check — and R1_BROWSER_DEV_ANY_BEARER accepts arbitrary strings. IAM is the actual gate (comment :129-133).
 - Fix: Rewrite the Auth paragraph in services/r1-browser/main.go:22-25 to match v1 reality: the app performs a structural JWT shape check only (Bearer prefix, len>=16, 3 dot-segments); Google-signed ID-token signature + audience verification is enforced by Cloud Run IAM (run.invoker, two-SA pattern per spec T10), not in-process; in-app JWKS verification is deferred to v2 per the supervisor.go:129-133 comment; and R1_BROWSER_DEV_ANY_BEARER is a dev/integration-test-only escape hatch that must never be set in production. Optionally add that last warning to the supervisor.go:149 comment as well. (Altern…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 7f83647b)
 
 ## P3 — real but lower blast radius
 
@@ -582,13 +582,13 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **README documents `make check-pkg-count` as a CI gate, but it is wired nowhere and fails at HEAD (expected 180, actual 265)**
 - Evidence: README.md:297: "CI also runs `-race`, `golangci-lint` (advisory), `govulncheck`, `gosec`, and `make check-pkg-count`." Makefile:165-173 pins `expected=180`. Running `make check-pkg-count` at HEAD prints: "ERROR: internal package count drifted: expected 180, got 265" and exits 1. grep for check-pkg-count in cloudbuild.yaml and .github/workflows/*.yml returns nothing — the gate is not in CI, and if it were, every build would be red.
 - Fix: 1) Makefile:165 — replace the hardcoded `expected=180` with a derived count or update to 265; prefer deriving from a single source, e.g. `actual=$$(go list ./internal/... | wc -l)` compared against a count stored in one place, to prevent re-drift. 2) Either wire the target into CI (add a `make check-pkg-count` step to cloudbuild.yaml or a .github/workflows job) to make README.md:297 true, or delete the `make check-pkg-count` clause from README.md:297. 3) Reconcile the package counts in CLAUDE.md ("132 internal" header — actual is 265), PACKAGE-AUDIT.md, and README.md so all reference the same …
-- STATUS: PENDING
+- STATUS: FIXED (commit: 2c50e6e8)
 
 ### A089 [ci-gap/S] services/cloudbuild-deploy.yaml:132
 **cloudbuild-deploy binds DATABASE_URL/Cloud SQL and CODERADAR_SAMPLE_RATE that no service code reads**
 - Evidence: deploy-coord-api sets `--set-secrets=DATABASE_URL=...` and `--add-cloudsql-instances` (:132-133), and all four deploys set CODERADAR_SAMPLE_RATE (:131,:169,:205,:246) — but `grep -rn "DATABASE_URL\|CODERADAR_SAMPLE_RATE" services --include=*.go` returns zero hits; the sampler that reads it lives in the main module (internal/coderadar/sampler.go:100), which is not compiled into these standalone service modules.
 - Fix: In services/cloudbuild-deploy.yaml: (1) in deploy-coord-api, change line 132 to keep only the consumed secret — `--set-secrets=AUTH_JWT_SECRET=r1-${_ENV}-shared-AUTH_JWT_SECRET:latest` — and delete line 133 (`--add-cloudsql-instances=...r1-${_ENV}-pg`); (2) remove `CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE}` from the four --set-env-vars lines (131, 169, 205, 246) and delete the now-unused `_CODERADAR_SAMPLE_RATE` substitution block (lines 26-30), including the comment that misattributes service-side sampling to internal/coderadar/sampler.go; (3) update the header comment (line 17) so it n…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 7844481e)
 
 ### A090 [test-gap/S] internal/hub/builtin/analytics_subscriber_test.go:157
 **TestAnalyticsSubscriber_DropsUnmappedEvent cannot fail — final check is t.Logf, no drop assertion**
@@ -606,7 +606,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Self-scan dogfood test contradicts its own exclusion policy: whole-rule and whole-directory mutes**
 - Evidence: Lines 119-120 promise "Narrow exclusions to specific files that define detection patterns, NOT entire directories (to avoid masking real issues in new files)" — yet line 115 disables the `no-blank-error` rule for every file unconditionally, and the fpPaths list at lines 160-177 mutes entire trees (`internal/context/`, `internal/hub/builtin/`, `internal/harness/`, `cmd/r1/`, `internal/reviewereval/`, `internal/websearch/`) for no-placeholder-code. New placeholder code anywhere under cmd/r1/ passes the dogfood gate.
 - Fix: In internal/scan/selfscan_test.go isKnownFalsePositive, replace the directory prefixes in fpPaths (lines 160-177) with exact file suffixes verified to contain the pattern today: internal/context/masking.go, internal/hub/builtin/honesty/confession.go, internal/ledger/nodes/decision.go, internal/harness/stances/dev.go, internal/harness/prompts/templates.go, cmd/r1/sow_spec_guard.go, cmd/r1/scan_repair_prompts.go, cmd/r1/sow_native.go, internal/reviewereval/reviewereval.go, internal/websearch/websearch.go (keep the existing internal/plan/*.go per-file entries; hub/builtin/honesty.go is already co…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 36cc4a49)
 
 ### A093 [test-gap/S] internal/skillselect/detect_test.go:557
 **TestSelectSkillsMatchesKeywords always skips, and even its post-skip body asserts nothing**
@@ -618,7 +618,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Chdir-leak sentinel test is dormant (tag never invoked) and tests a byte-copy of the SUT, not the production code**
 - Evidence: File is behind `//go:build chdirleak_test` (line 1) and `grep -rn chdirleak_test Makefile .github/ scripts/ services/` finds no invocation — it never runs anywhere. Worse, its header (lines 19-24) claims coverage of `sentinel.go::assertCwd`, `dispatch.go::defaultDispatchHook`, and `wrapHandler`, but the test fires its own hook and asserts on `assertCwdMirror` (line 166), a test-local function that "replicates sessionhub.assertCwd byte-for-byte because assertCwd is unexported" — the production sentinel could be deleted and this test would still pass if anyone ran it.
 - Fix: Preferred: rewrite TestChdirSentinel_PanicsOnStrayChdir to exercise the production path via public API — create the session at wdA, inject the goroutine os.Chdir(wdB), then drive s.Run with a tool_use mock provider (pattern already proven in internal/server/sessionhub/dispatch_test.go:20-45) leaving DispatchHook unset so defaultDispatchHook/assertCwd fire for real, and recover/assert the production panic; delete assertCwdMirror and correct the Coverage header. Add a `go test -tags chdirleak_test -run TestChdirSentinel ./cmd/r1` step to .github/workflows/nightly.yml so the lane actually execute…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 9f9ba92b)
 
 ### A095 [dormant/M] desktop/src-tauri/src/transport.rs:353
 **transport.rs reconnect run-loop and transport_reconnect_status verb are mutually dormant; cost_get_history has no caller**
@@ -686,7 +686,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **internal/harness/models (provider interface + MockProvider) has zero importers, including tests**
 - Evidence: internal/harness/models/mock.go:7 defines MockProvider ("test double that returns canned responses") next to provider.go, 87 LOC total, no test files, and go list shows zero importers module-wide — even harness itself does not use its own model-provider abstraction, so stance workers have no model interface. CLAUDE.md:44 documents it as "Model provider interface and mock for stance workers".
 - Fix: Delete internal/harness/models/ (rm provider.go and mock.go) and remove the 'harness/models/' row from the r1-agent CLAUDE.md package map, then re-run go build ./cmd/r1 && go test ./... && go vet ./... (must stay green since nothing imports it). Do NOT wire models.Provider into harness.SpawnStance as part of this audit — that is a design change (harness currently has no execution path at all) and needs its own spec; re-add the package when that spec lands.
-- STATUS: PENDING
+- STATUS: FIXED (commit: 2111ee7c)
 
 ### A105 [dormant/S] internal/harness/spec_anchored_stance.go:10
 **harness.SpecAnchoredStance.ValidateCommitMsg has zero callers — spec-anchored commit enforcement never runs**
@@ -698,13 +698,13 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **coderadar hub-integration test behind a build tag no lane invokes (Makefile only runs the different coderadar_smoke tag)**
 - Evidence: File is `//go:build coderadar_integration`; grep of Makefile/.github/services/scripts finds no use of that tag. Makefile:54 runs `-tags=coderadar_smoke ./internal/coderadar/...` — a different tag in a different package — so the six-subscriber wire-format integration test ("assert.SixDistinctNames appear on the wire", line 9) never executes anywhere.
 - Fix: Add a hermetic integration lane: new Makefile target `test-coderadar-integration: go test -tags=coderadar_integration -count=1 -timeout=60s ./internal/hub/builtin/` and invoke it from .github/workflows/nightly.yml (it needs no DSN/secret — the test spins up its own httptest ingest server). Optionally also chain it into the existing smoke-coderadar target, and tick the acceptance checkbox at specs/coderadar-dogfood.md:694 once wired.
-- STATUS: PENDING
+- STATUS: FIXED (commit: 51b28cc8)
 
 ### A107 [dormant/S] internal/r1rename/doc.go:1
 **internal/r1rename (515 LOC) duplicates the wired r1env package; its dirs/headers/MCP rename surfaces are inactive**
 - Evidence: internal/r1rename/doc.go:1-2: "Package r1rename centralises the Stoke -> R1 rename compatibility surface... per work-r1-rename.md Phase S1", including env.go, dirs.go, headers.go, mcp.go, audit.go with a 2026-07-23 window-close date. go list shows zero importers. The env-var half was independently reimplemented in internal/r1env (r1env.go:1: "Package r1env implements the STOKE_* → R1_* env var dual-accept window") which IS wired into cmd/r1, r1-a2a, r1-mcp, r1-server. The dirs/headers/MCP dual-accept surfaces exist only in the dormant package, so those legacy-accept windows were never actually…
 - Fix: Delete internal/r1rename entirely: every surface it wraps already has a wired implementation (r1env for env vars, r1dir for dirs, internal/provider/correlation_wire.go for headers, internal/mcp/memory.go for MCP aliases, internal/streamjson/emitter.go for audit meta), and the header window date it pins (2026-05-23) has already passed. If the opt-in .stoke->.r1 one-shot migration is still wanted, move MigrateStokeDir (dirs.go:65-103) into internal/r1dir and wire it as a real `r1 migrate-datadir` subcommand in cmd/r1/main.go before deleting the rest; otherwise drop it too and fix the stale promi…
-- STATUS: PENDING
+- STATUS: FIXED (commit: a5de08b1)
 
 ### A108 [dormant/S] internal/reviewereval/reviewereval.go:1
 **internal/reviewereval (S-U-017 cross-model review FP/FN measurement harness) is dormant with no runner command**
@@ -724,13 +724,13 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **skillselect.DetectStack + SelectSkills form a dead second detection path — production uses only DetectProfile + MatchSkills**
 - Evidence: grep for 'skillselect.DetectStack|skillselect.SelectSkills' outside internal/skillselect and tests returns nothing. The live path is internal/app/app.go:346-349 (DetectProfile + MatchSkills) and internal/wizard run.go/maturity.go (themselves dormant, see RunWizard finding). DetectStack (detect.go:75) with its layer1/layer2/layer3 parsers and SelectSkills (detect.go:395, the only function that maps a stack onto a *skill.Registry) never run in production, so the CLAUDE.md claim 'skill mapping from repo structure' is only half-live.
 - Fix: Delete the dead path outright; do NOT take the finder's alternative of routing MatchSkills through SelectSkills (registry-budgeted tiered injection in registry.go:425-497 is strictly more capable than SelectSkills' flat registry.Match, so that consolidation would be a regression). Concretely: (1) delete internal/skillselect/detect.go (DetectStack, layer1/layer2/layer3, SelectSkills, StackInfo, and its private helpers — profile.go has its own profileExists at profile.go:582 and shares nothing else) and internal/skillselect/detect_test.go; (2) remove RepoProfile.ToStackInfo (profile.go:34-45) an…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 6a2a00aa)
 
 ### A111 [dormant/S] internal/specexec/specexec.go:223
 **specexec.ExtractInsights and Outcome.Insights are dead — 'merge insights from failed approaches into retry prompts' is never wired**
 - Evidence: ExtractInsights (specexec.go:223) has zero non-test callers (grep outside internal/specexec and _test files returns nothing), and no producer ever populates Outcome.Insights — the scheduler's executor (scheduler.go:445-473) sets StrategyID/Success/Duration/Tests*/DiffLines only. The package header promise 'Optionally merge insights from failed approaches into retry prompts' (specexec.go:10) has no implementation path.
 - Fix: Option A (wire it): in scheduler.WithSpecExec, after specexec.Run (scheduler.go:475) compute insights := specexec.ExtractInsights(result); in Phase 2 append them to the winning prompt (e.g. realTask.Description += "\n\nLearnings from other explored approaches:\n- ..." ) before base(ctx, realTask) at scheduler.go:499, and in the all-failed path include them in the returned TaskResult.Error so the workflow retry loop sees them; optionally populate outcome.Insights in the executor (scheduler.go:454-461) from the failed strategy's error/plan output. Option B (delete it): remove ExtractInsights (sp…
-- STATUS: PENDING
+- STATUS: FIXED (commit: ce5bd5da)
 
 ### A112 [dormant/M] internal/topology/topology.go:1
 **internal/topology (STOKE-019, 429 LOC) coordination topology engine — dormant**
@@ -744,91 +744,91 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **CLAUDE.md package map header claims '20 commands' and '183 internal + 1 cmd + 10 bench'; actual is ~71 subcommands, 184 internal dirs (265 Go packages), 11 cmd binaries, 11 bench packages, and the map body omits 78 packages**
 - Evidence: CLAUDE.md:16: "cmd/r1/main.go 20 commands" — the dispatch switch at cmd/r1/main.go:732-940 has 71 case arms (run, build, plan, scan, audit, ... cortex, version, help). CLAUDE.md:13: "## Package map (183 internal + 1 cmd + 10 bench)" — ls internal/ = 184 dirs, `go list ./internal/...` = 265 packages, ls cmd/ = 11 binaries (r1, r1-server, r1-bench, r1-mcp, r1-gateway, r1-a2a, r1-acp, r1-skill-compile, chat-probe, critique-compare, heroa-e2e), `go list ./bench/...` = 11. The map body lists only 106 of 184 top-level internal packages; 78 real packages are absent, including auth, analytics, browser…
 - Fix: In CLAUDE.md: (1) change line 13 header to the measured counts '## Package map (184 internal + 11 cmd + 11 bench)' or, more durably, drop exact counts and title it '## Package map (curated; run go list ./... for the full set)'; (2) change line 16 '20 commands' to '71 subcommands (see usage() in cmd/r1/main.go)'; (3) either append one-line entries for the 78 missing internal packages (a2a, agentserve, analytics, antitrunc, artifact, auth, beacon, browser, browseragent, chat, cicd, cloud, coderadar, consolidation, correlation, counterfact, daemon, daemondisco, daemonlock, decisionbisect, delegat…
-- STATUS: PENDING
+- STATUS: BLOCKED: CLAUDE.md package-map header/count corrections cannot be applied: the repo PreToolUse hook .claude/hooks/protect-hooks.sh blocks all CLAUDE.md edits ('CLAUDE.md is human-controlled. Propose changes via AskUserQuestion'), and the only sanctioned bypass is a user-granted /approve override, which a headless subagent cannot legitimately grant. Bypassing the content-protection hook via bash writes is p
 
 ### A114 [docs-drift/S] README.md:225
 **README/ARCHITECTURE claim Spec D removed R1_SERVER_UI_V2=1 from the e2e rehearsal pipeline, but services/cloudbuild-e2e.yaml still sets it**
 - Evidence: README.md:225: "runs `go test -tags=e2e ./cmd/r1-server/e2e/...` with `R1_SERVER_SHARE_ENABLED=1` (Spec D removed the prior paired `R1_SERVER_UI_V2=1`)" and ARCHITECTURE.md:426 says the same. services/cloudbuild-e2e.yaml:49 actually still exports `R1_SERVER_UI_V2=1 R1_SERVER_SHARE_ENABLED=1`. The env var is a no-op in code (cmd/r1-server/ui_v2_flag.go:44 hardcoded true), so the yaml carries a dead variable and the two docs describe a pipeline state that doesn't exist; DEPLOYMENT.md:567/:584 document the old pair, adding a three-way inconsistency.
 - Fix: Do NOT remove R1_SERVER_UI_V2=1 from services/cloudbuild-e2e.yaml:49 — cmd/r1-server/e2e/e2e_test.go:61-63 skips the whole rehearsal without it and the pipeline would post false green. Instead: (1) correct README.md:225, docs/README.md:225, and docs/ARCHITECTURE.md:426 to say the rehearsal runs with `R1_SERVER_UI_V2=1 R1_SERVER_SHARE_ENABLED=1`, noting the server ignores R1_SERVER_UI_V2 post-Spec-D but the e2e harness still uses it as its opt-in run/skip gate; (2) optionally, to make the Spec-D "flag fully removed" story true, migrate the gate to a dedicated var (e.g. R1_SERVER_E2E=1) in cmd/r…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 37aafe89)
 
 ### A115 [docs-drift/S] cmd/r1-mcp/main.go:327
 **r1-mcp stale scaffold comments claim synthetic responses and StubClient-only while real backends are wired**
 - Evidence: Comment block at lines 325-334: "Each handler validates the shape and returns a synthetic response for now... get wired in a follow-up." In fact all four handlers call s.backends.Invoke/Verify/Audit/Delegate, and backends.go wires real engines (skillmfr, verify, ledger, delegation) and calls truecom.NewFromEnv() at backends.go:94 which supports RealClient. The r1_delegate tool Description (line 266) is also stale: it claims "ships StubClient only; SOW task B-5 will add a NewFromEnv factory... when R1_TRUSTPLANE_MODE=real" — NewFromEnv exists and the real env var is STOKE_TRUSTPLANE_MODE (inter…
 - Fix: In cmd/r1-mcp/main.go: (1) Replace the stale comment block at lines 325-334 with one sentence stating handlers are thin adapters over the real engines wired in backends.go (skillmfr.Registry, verify.EvaluateRubric, ledger.AddNode, delegation.Manager via truecom.NewFromEnv). (2) Rewrite the r1_delegate Description at line 266 to: token issued via the trustplane client selected by truecom.NewFromEnv() — STOKE_TRUSTPLANE_MODE unset/"stub" → in-memory StubClient (local dev default); STOKE_TRUSTPLANE_MODE=real → RealClient against the TrustPlane gateway (requires TRUECOM_API_URL or legacy STOKE_TRU…
-- STATUS: PENDING
+- STATUS: FIXED (commit: d5c40b0a)
 
 ### A116 [docs-drift/S] cmd/r1-server/main.go:21
 **r1-server header says RS-3 scanner "will be added in a follow-up commit" but the scanner is wired below**
 - Evidence: Package comment: "RS-3 (scanner + event tailer) will be added in a follow-up commit." Yet main() at lines 170-172 constructs and starts it: `scanner := NewScanner(db, ScannerConfig{Logger: logger}); scanner.Start(scannerCtx)`. The stale claim misleads maintainers auditing what is and isn't implemented in the observation daemon.
 - Fix: In cmd/r1-server/main.go, replace line 21 ("RS-3 (scanner + event tailer) will be added in a follow-up commit.") with an accurate statement, e.g.: "RS-3 (instance scanner + per-session event tailer + ledger loader) lives in scanner.go and is started from run()." No code change needed.
-- STATUS: PENDING
+- STATUS: FIXED (commit: df05d4ab)
 
 ### A117 [docs-drift/S] docs/ARCHITECTURE.md:43
 **Stale repo-size claims: '175 internal packages + 10 cmd binaries', 'go test runs all 175 packages', '245 packages green', 'repo map (175 packages)'**
 - Evidence: docs/ARCHITECTURE.md:43: "Repository map (175 internal packages + 10 cmd binaries...)"; :46: "cmd/r1/ CLI entrypoint — 30+ subcommands"; :564: "`go test ./...` runs all 175 packages". README.md:257: "245 packages green"; :273: "repo map (175 packages)". Actual at HEAD: `go list ./...` = 295 packages, `go list ./internal/...` = 265, ls cmd/ = 11 binaries, 71 CLI subcommand case arms (cmd/r1/main.go:732-940).
 - Fix: 1) Update docs/ARCHITECTURE.md:43 to "265 internal packages + 11 cmd binaries" (or non-numeric phrasing), add cmd/r1-bench to the cmd list at lines 46-55, and fix :564 to "runs all 295 packages" (or "the full module"). 2) Update README.md:257 "245 packages green" -> 295 and :273 "(175 packages)" -> current, and apply the same edits to the mirror docs/README.md:257/:273. 3) Fix Makefile:165 expected=180 -> 265 so `make check-pkg-count` passes, and either wire it into the CI gate or remove the "CI check" comment. Prefer non-numeric doc phrasing with the Makefile as the single numeric source of t…
-- STATUS: PENDING
+- STATUS: FIXED (commit: a301d3b4)
 
 ### A118 [docs-drift/M] docs/ARCHITECTURE.md:628
 **ARCHITECTURE.md 'Planned components (scoped, not yet built)' opens with 'None of these are merged yet' but the same list marks entries done/live/shipped and duplicates most bullets 2-3 times**
 - Evidence: docs/ARCHITECTURE.md:628: "None of these are merged yet; this section is the forward-looking map." Yet within the same section: :632 "internal/analytics/ (B1, done 2026-05-12) — PostHog client live", :633 "internal/auth/ (live, A4 done 2026-05-12)", :645 "internal/ideinstall/ (done — C4)", :647 "internal/cicd/bitbucket/ (shipped 2026-05-12)", :649 "internal/browser/... (Done — C6, 2026-05-12)", :652 "internal/oneshot/ (extended, A3 landed 2026-05-12)". auth/analytics/ideinstall/cicd/browser/oneshot/throttle/lifecycle all exist under internal/ at HEAD. The stale 'new' duplicates remain alongsid…
 - Fix: Rewrite docs/ARCHITECTURE.md lines 626-663: (1) delete the stale duplicate "(new)" bullets at lines 631, 634-644 (auth/analytics/lifecycle/throttle duplicates), 646, 648, 650, 651, and 659, keeping exactly one bullet per package with its real status (the detailed done/live/shipped variants at 632, 633, 645, 647, 649, 652-658 are the accurate ones to keep); (2) also update line 630 (promptguard A1) since toolinput.go/fingerprint.go/budget.go/cl4r1t4s corpus are built; (3) move the built entries into the existing Done/Partial status sections above (per the doc's own status-section convention) an…
-- STATUS: PENDING
+- STATUS: FIXED (commit: d3d97fec)
 
 ### A119 [docs-drift/S] docs/DEPLOYMENT.md:614
 **DEPLOYMENT.md instructs operators to set R1_SERVER_UI_V2 to enable the tracebundle route, but the flag was removed and the route is always registered**
 - Evidence: docs/DEPLOYMENT.md:614: "V2-flag-gated: returns `404` unless `R1_SERVER_UI_V2=1` is set"; :618: "**Set `R1_SERVER_UI_V2=1`** as a Cloud Run env var ... to enable the export route"; :637 repeats "v2-flag-gated". Code: cmd/r1-server/ui_v2_flag.go:44 — "hardcoded true — Spec D removed the R1_SERVER_UI_V2 toggle"; cmd/r1-server/ui.go:140 registers `GET /api/session/{id}/export.tracebundle` unconditionally. ARCHITECTURE.md:514, HOW-IT-WORKS.md:149, FEATURE-MAP.md:180 all correctly say the gate was removed — DEPLOYMENT.md (and ARCHITECTURE.md:598's Done bullet "v2-flag-gated") contradict both the co…
 - Fix: In docs/DEPLOYMENT.md: rewrite the "Tracebundle v2 export — operator notes" section (lines 612-622) to state the route is always-on post-Spec-D (D-UI2-7 removed R1_SERVER_UI_V2; only R1_SERVER_SHARE_ENABLED remains as a separate /share/* gate, and the route sits behind the standard /api/* bearer middleware); delete the "Set R1_SERVER_UI_V2=1" bullet at :618 and the "v2-flag-gated" phrase in the Done bullet at :637. Also drop R1_SERVER_UI_V2=1 from the e2e instructions at DEPLOYMENT.md:567 and :584 (ARCHITECTURE.md:426 confirms Spec D removed it from that pipeline). Fix docs/ARCHITECTURE.md:598…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 758a0091)
 
 ### A120 [docs-drift/S] docs/DEPLOYMENT.md:334
 **DEPLOYMENT.md operational snippets still describe the 3-service topology (9 endpoints / 9 CNAMEs / 3 images) while the doc itself and code deploy 4 services x 3 envs**
 - Evidence: docs/DEPLOYMENT.md:334-346 smoke-check loops over only `r1-coord-api r1-docs r1-downloads-cdn` and says "Expected: 9 × 200", and :503-507, :516-526, :528 ("Add 9 CNAMEs"), :537-545 ("Expected: 9 × OK") likewise omit r1-admin — yet the same doc's CNAME table (:242-255) has 12 rows and Done section (:629) claims "12 public Cloud Run services". :300 says "The script runs gcloud run deploy for each of the 3 services" but services/deploy.sh:170,178 iterates `r1-coord-api r1-docs r1-downloads-cdn r1-admin` (4). Artifact Registry listing at :209-212 shows 3 images vs ARCHITECTURE.md:552 "4 public-ser…
 - Fix: In docs/DEPLOYMENT.md: (1) add `r1/r1-admin:<sha>` to the Artifact Registry listing at :209-212; (2) change ":300" to "each of the 4 services × N envs"; (3) add r1-admin to the SVC loop at :338 and change :346 to "Expected: 12 × 200"; (4) add r1-admin to the build/push loop at :503; (5) add a fourth `gcloud beta run domain-mappings create --service=r1-admin-$ENV --domain=admin$SUB.r1.run` inside the loop at :516-526; (6) change :528 to "Add 12 CNAMEs"; (7) add r1-admin to the final-smoke loop at :538 and change :545 to "Expected: 12 × OK". In docs/ARCHITECTURE.md:559 change "9 CNAME records (o…
-- STATUS: PENDING
+- STATUS: FIXED (commit: c7f2b4cf)
 
 ### A121 [docs-drift/S] docs/FEATURE-MAP.md:112
 **FEATURE-MAP claims '4 Playwright e2e ... Done' at a nonexistent path while every desktop e2e spec is permanently skipped**
 - Evidence: docs/FEATURE-MAP.md:112: "| 4 Playwright e2e | multi-session, lanes-streaming, popout-lane, daemon-discovery | Done | `desktop/tests/agent/*.spec.ts` |" — desktop/tests/ contains only e2e/ (no agent/ dir), and all four spec files are file-level skipped: desktop/tests/e2e/popout-lane.spec.ts:32-34 `test.skip(..., "app has no test-mode driver surface (test.windows.list, primary-window.closed, popout.* events) ... (CI-2)")`, same in daemon-discovery/multi-session/lanes-streaming. The workflow gate itself is now truthful (.github/workflows/desktop-augmentation.yml:158-167 runs release cargo build …
 - Fix: Edit docs/FEATURE-MAP.md:112: change Status from 'Done' to 'Skipped (CI-2 — no test-mode driver surface)' and change Reference from `desktop/tests/agent/*.spec.ts` to `desktop/tests/e2e/*.spec.ts` (see audit/desktop-e2e-truth-2026-06-12.md). Commit as a standalone docs commit per the repo's docs-update rule.
-- STATUS: PENDING
+- STATUS: FIXED (commit: c05ae9f9)
 
 ### A122 [docs-drift/S] docs/FEATURE-MAP.md:361
 **FEATURE-MAP 'Scoped 2026-06-03' section still lists governance-activation, cortex-activation, repomap-multilang and cmd-r1-test-isolation as 'Newly SCOPED, ready for /build' — all four are done and wired at HEAD**
 - Evidence: docs/FEATURE-MAP.md:361-366 presents the four activation specs as future work (and says governance is 'default-off', citing c5e5e787). At HEAD all four specs open with `<!-- STATUS: done -->` (specs/governance-activation.md:1, specs/cortex-activation.md:1, specs/repomap-multilang.md:1, specs/cmd-r1-test-isolation.md:1) and the code is live: internal/app/app.go:228-246 constructs governance.New behind policy/flags with `--no-governance` kill-switch (cmd/r1/main.go:1253), internal/engine/native_runner.go:493-509 builds+Starts the deterministic cortex default-ON (`--cortex` default true, main.go:…
 - Fix: In docs/FEATURE-MAP.md, rewrite the 'Scoped 2026-06-03 — audit remediation' section (lines 360-366): move the four bullets (governance-activation, cortex-activation, repomap-multilang, cmd-r1-test-isolation) into the Done lineage with their evidence — governance-activation Done 2026-06-03 (default-ON via policy default with --no-governance kill-switch; internal/app/app.go:228-246, cmd/r1/main.go:1253); cortex-activation Done 2026-06-03 (--cortex default true, main.go:1254; internal/engine/native_runner.go:493-509); repomap-multilang Done (8ed654f1, marked done 8225a060); cmd-r1-test-isolation …
-- STATUS: PENDING
+- STATUS: FIXED (commit: 79f9c69b)
 
 ### A123 [docs-drift/S] docs/FEATURE-MAP.md:342
 **FEATURE-MAP Tier D contradicts itself: antitrunc --hook-mode listed as 'Scoped (ready, BUILD_ORDER 47)' though it shipped (and line 15 of the same doc says Done)**
 - Evidence: docs/FEATURE-MAP.md:342 status column says "Scoped (ready, BUILD_ORDER 47)" for the `r1 antitrunc verify --hook-mode` flag, while FEATURE-MAP.md:15 lists the same flag as Done, and the flag exists at cmd/r1/antitrunc_cmd.go:92 (`hookMode := fs.Bool("hook-mode", false, ...)`) with the envelope emitter at :156-166.
 - Fix: In docs/FEATURE-MAP.md:342, change the status cell from "Scoped (ready, BUILD_ORDER 47)" to "Done (2026-05-13)" and extend the reference cell to "`specs/antitrunc-hook-mode-flag.md`, `cmd/r1/antitrunc_cmd.go` (`--hook-mode`/`--plan`/`--input`)", matching the Done row at line 15. Optionally reword the Outcome cell's forward-looking "Two-day delta to cmd/r1/antitrunc_cmd.go" / "Unblocks..." phrasing to past tense. Commit as a standalone docs commit per repo rules.
-- STATUS: PENDING
+- STATUS: FIXED (commit: 2c14d1cd)
 
 ### A124 [docs-drift/S] docs/HOW-IT-WORKS.md:81
 **Docs reference an `r1 desktop` command that is not registered in cmd/r1**
 - Evidence: docs/HOW-IT-WORKS.md:81: "```r1 desktop      # if installed; or open the .dmg / .msi / .deb / .rpm bundle```" and docs/DEPLOYMENT.md:128: "r1 desktop      # if installed; or open the platform-specific bundle". The dispatch switch in cmd/r1/main.go:732-940 has no `desktop` case — only `desktop-rpc` (main.go:911), which is the JSON-RPC server the Tauri host spawns, not a user-facing launcher. `r1 desktop` prints "unknown subcommand".
 - Fix: Edit both snippets to drop the nonexistent command. docs/HOW-IT-WORKS.md:81 -> "# Launch the installed R1 Desktop app (.dmg / .msi / .deb / .rpm bundle); the app spawns `r1 desktop-rpc` internally". docs/DEPLOYMENT.md:128 -> "# Open the installed R1 Desktop app (platform bundle); it connects to the daemon or spawns `r1 desktop-rpc`". Do NOT add a `desktop` case to main.go — the Tauri app is scaffold-only (tauri.conf.json:39), so a launcher subcommand would exec an app this repo doesn't ship, trading a docs error for dead code.
-- STATUS: PENDING
+- STATUS: FIXED (commit: f75fec41)
 
 ### A125 [docs-drift/S] docs/mintlify/reference/env-vars.mdx:22
 **Eight production env vars are read but absent from the env-var reference page**
 - Evidence: The canonical env-var table (env-vars.mdx) omits vars with real behavioral effect, verified read sites: WEBSEARCH_COMMAND (internal/websearch/websearch.go:354 — enables shell-wrapped search, referenced in operator-facing error text at internal/plan/externaldocs.go:474 yet undocumented), R1_ONE_SHOT (cmd/r1/browse_cmd.go:42), R1_BROWSER_PROVIDER (cmd/r1/browse_cmd.go:130), R1_KEYRING_BACKEND (internal/encryption/backend_99designs.go:115), R1_NDJSON_LEGACY_DROP (internal/streamjson/emitter.go:42), R1_EXPECTED_UID (internal/server/ipc/peercred_linux.go:67 — a security control), STOKE_CLAUDE_BIN a…
 - Fix: In docs/mintlify/reference/env-vars.mdx add: (1) a 'Web search' section with WEBSEARCH_COMMAND (shell-wrapped search command, must contain {{query}}; internal/websearch/websearch.go:354) and TAVILY_API_KEY (also named in the same operator-facing error text at internal/plan/externaldocs.go:474); (2) a 'Browser' section with R1_BROWSER_PROVIDER (provider override, default local; cmd/r1/browse_cmd.go:130) and R1_ONE_SHOT (marks one-shot invocation, rejects remote browser providers; cmd/r1/browse_cmd.go:42); (3) a row under the existing 'Encryption at rest' section for R1_KEYRING_BACKEND ('file' f…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 85b31081)
 
 ### A126 [docs-drift/S] internal/server/jsonrpc/daemonapi_impl.go:15
 **daemonapi_impl.go header comment is stale: claims pause/resume/send are BLOCKED-annotated stubs, but all verbs are implemented and no BLOCKED: markers exist**
 - Evidence: Header (lines 14-21) says: 'The ones that depend on Session methods that don't yet exist (pause/resume as distinct lifecycle states; multi-turn send delivery) return a stokerr-tagged BLOCKED error... Each such stub is annotated with a `BLOCKED:` marker... that's the single source of truth for "what's left to wire" reviewers will look for.' But grep 'BLOCKED:' in the file matches only those two comment lines — DaemonSessionPause (line 192), DaemonSessionResume (205) and DaemonSessionSend (247) are fully implemented against SessionHub. A reviewer following the documented 'grep BLOCKED:' protocol…
 - Fix: In internal/server/jsonrpc/daemonapi_impl.go: (1) rewrite the '# Surface area' section (lines 10-21) to state that every DaemonAPI verb is wired — pause/resume via Session.Pause/Resume (pause flag + resume channel), send via Session.Send (bounded inbox), cancel via hub.Delete — and delete the BLOCKED-marker protocol paragraph; (2) rewrite the '# Errors' section (lines 32-43) to list the actual taxonomy: ErrValidation (bad input, send-to-not-running), ErrNotFound (unknown session/sub), ErrConflict (session exists at lines 174/176, inbox full at line 264), ErrInternal (unconfigured callbacks: sh…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 44f0a174)
 
 ### A127 [docs-drift/S] internal/throttle/race_off_test.go:8
 **Throttle race_off_test.go documents a "strict steady-state rate bound" that TestConcurrentSafety no longer has; underRace consts are dead**
 - Evidence: race_off_test.go:5-8: "underRace is false in normal (non-race) builds, so TestConcurrentSafety applies its strict steady-state rate bound and would catch a real over-admission regression." But bucket_test.go:112-119 says the opposite — "No numeric admission bound here, race detector or not" — and the only assertion is `allowed == 0` fatal. Neither race_off_test.go's nor race_on_test.go's `underRace` const is referenced anywhere (grep returns only the two definitions); both files plus the first (superseded) paragraph of the comment block at bucket_test.go:103-111 are dead scaffolding making the…
 - Fix: Delete internal/throttle/race_off_test.go and internal/throttle/race_on_test.go (underRace is referenced nowhere). In internal/throttle/bucket_test.go: remove the stale first comment paragraph (lines 103-111, ending "...WOULD catch a real over-admission regression."), keeping the honest paragraph at lines 112-119; also rewrite the TestConcurrentSafety doc header at lines 71-72 from "total allows <= burst + rate*duration. -race must pass." to reflect reality, e.g. "1000 goroutines hammer the same bucket; asserts data-race freedom (via -race runs) and liveness (at least one admission); precise b…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 0aa0ccb1)
 
 ### A128 [docs-drift/S] services/r1-admin/main.go:246
 **r1-admin pages assert specific backends that don't exist: 'Backed by <coord-api>/v1/sessions' and 'migrations/ — pending'**
