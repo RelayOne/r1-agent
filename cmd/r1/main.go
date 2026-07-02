@@ -1868,6 +1868,15 @@ func sowCmd(args []string) {
 	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution")
 	governance := fs.Bool("governance", false, "Force-enable the V2 governance layer (default on via policy)")
 	noGovernance := fs.Bool("no-governance", false, "Kill-switch: disable the V2 governance layer for this run")
+	// Governance tier + HITL wait ceiling (audit A032). Enterprise tier
+	// gates every descent T8 soft-pass through hitl.RequestApproval: an
+	// hitl_required line is emitted on the stream-json critical lane and
+	// the run blocks until the operator answers on stdin (or the wait
+	// ceiling fires, which rejects). Community (default) auto-grants
+	// soft-passes, preserving prior behavior. Wiring:
+	// buildDescentConfig -> buildSoftPassApprovalFunc (hitl_wiring.go).
+	governanceTier := fs.String("governance-tier", "community", "Governance tier for descent soft-pass resolution: community (auto-grant, default) or enterprise (each soft-pass requires human approval via an hitl_required line on the stream-json output answered with a JSON decision line on stdin)")
+	hitlTimeout := fs.Duration("hitl-timeout", 0, "HITL approval wait ceiling override (default: 1h community, 15m enterprise). A timed-out approval counts as a rejection.")
 	cortexEnabled := fs.Bool("cortex", true, "Enable parallel-cognition deterministic lobes (default on; --cortex=false or --no-cortex to disable)")
 	noCortex := fs.Bool("no-cortex", false, "Disable the cortex lobes for this run")
 	// SOW builds are long-running (hours-to-days for large SOWs). Hard timeout
@@ -1980,12 +1989,13 @@ func sowCmd(args []string) {
 	// S-0/S-2 (work-stoke T1): TwoLane emitter + HITL service wired into
 	// the sow-native config below. Bound to the real stdout BEFORE the
 	// redirect on the next branch so descent.tier / session.start /
-	// hitl_required lines land on the stream, not on stderr. Community-
-	// tier default: 1h HITL wait ceiling (matches run_cmd.go:146). The
-	// legacy nil-guards in sow_native_streamjson.go keep tests using
+	// hitl_required lines land on the stream, not on stderr. Wait
+	// ceiling resolved by hitlWaitCeiling (audit A032): --hitl-timeout
+	// override wins, else 15m enterprise / 1h community. The legacy
+	// nil-guards in sow_native_streamjson.go keep tests using
 	// zero-value cfg happy even though production now always sets these.
 	sowStreamJSON := streamjson.NewTwoLane(os.Stdout, *outputFormat == "stream-json")
-	sowHITL := hitl.New(sowStreamJSON, os.Stdin, time.Hour)
+	sowHITL := hitl.New(sowStreamJSON, os.Stdin, hitlWaitCeiling(*governanceTier, *hitlTimeout))
 	streamResult := &streamjsonResult{subtype: "success", cost: 0, turns: 0, text: "ok"}
 	if streamEmitter.Enabled() {
 		os.Stdout = os.Stderr
@@ -3239,11 +3249,13 @@ func sowCmd(args []string) {
 			// real stdout before it's redirected to stderr for human
 			// log output in stream-json mode. Both fields are nil-safe
 			// on every consumer site (sow_native_streamjson.go +
-			// descent_bridge_hitl.go).
-			StreamJSON:  sowStreamJSON,
-			HITL:        sowHITL,
-			Timeline:    sowTimeline,
-			ResumeState: resumeState,
+			// descent_bridge.go, where buildDescentConfig installs the
+			// enterprise-tier SoftPassApprovalFunc — audit A032).
+			StreamJSON:     sowStreamJSON,
+			HITL:           sowHITL,
+			GovernanceTier: *governanceTier,
+			Timeline:       sowTimeline,
+			ResumeState:    resumeState,
 			// H-91d: correlation IDs stamped into every worker JSONL
 			// entry (via engine.WorkerLogContext). Generated once per
 			// `r1 sow` invocation — the same RunID ties all
@@ -7248,8 +7260,11 @@ RUN FLAGS (CloudSwarm stream-json mode — activated by --output):
   --branch <name>             Branch name to check out
   --model <name>              Override primary model
   --sow <path>                Path to SOW file; switches to SOW mode
-  --hitl-timeout <duration>   HITL wait override (default 1h community, 15m enterprise)
-  --governance-tier <tier>    community (default) | enterprise (HITL-gated soft-pass)
+  --hitl-timeout <duration>   Accepted for CloudSwarm compat; no effect here.
+                              run mode is announce-only (no worker dispatch, no
+                              descent), so HITL never fires. Honored by r1 sow.
+  --governance-tier <tier>    community (default) | enterprise. Echoed on the
+                              stream; HITL-gated soft-pass runs in r1 sow.
   TASK_SPEC                   Positional free-text task (used when --sow absent)
 
   Exit codes (stream-json mode): 0=pass, 1=AC failed, 2=budget/usage,
@@ -7314,6 +7329,12 @@ SOW FLAGS:
   Safety:
     --timeout <duration>    Wall-clock cap (default: 0 = supervisor-driven)
     --policy <path>         Path to stoke.policy.yaml
+    --governance-tier <t>   community (default: descent soft-pass auto-grants) |
+                            enterprise (every soft-pass emits hitl_required on
+                            the stream-json output and blocks for a JSON
+                            decision line on stdin)
+    --hitl-timeout <dur>    HITL approval wait ceiling (default: 1h community,
+                            15m enterprise; timeout = rejection)
 
 PLAN FLAGS:
   --task <goal>        High-level goal description

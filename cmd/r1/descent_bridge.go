@@ -97,6 +97,14 @@ func buildDescentConfig(
 	}
 
 	// -----------------------------------------------------------------
+	// SoftPassApprovalFunc: enterprise-tier HITL gate (audit A032).
+	// Non-nil only when cfg.HITL is set AND GovernanceTier=enterprise;
+	// community tier leaves it nil so T8 soft-pass auto-grants exactly
+	// as before. See hitl_wiring.go.
+	// -----------------------------------------------------------------
+	dc.SoftPassApprovalFunc = buildSoftPassApprovalFunc(cfg.HITL, cfg.GovernanceTier)
+
+	// -----------------------------------------------------------------
 	// RepairFunc: dispatch a focused repair worker for a single AC.
 	// Wraps the legacy dispatch with the spec-1 item 5 bootstrap-per-cycle
 	// guard (manifest-change re-install) and injects the spec-1 item 3

@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/hitl"
 	"github.com/RelayOne/r1/internal/streamjson"
 )
 
@@ -21,7 +20,6 @@ import (
 func TestDispatchCloudSwarmSOWParsesAndAnnounces(t *testing.T) {
 	var buf bytes.Buffer
 	emitter := streamjson.NewTwoLane(&buf, true)
-	svc := hitl.New(emitter, strings.NewReader(""), time.Second)
 
 	code := dispatchCloudSwarmSOW(
 		t.Context(),
@@ -31,7 +29,6 @@ func TestDispatchCloudSwarmSOWParsesAndAnnounces(t *testing.T) {
 		"claude-sonnet-4-6",
 		"community",
 		emitter,
-		svc,
 	)
 	emitter.Drain(time.Second)
 
@@ -77,8 +74,7 @@ func TestDispatchCloudSwarmSOWMalformedReturns2(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	emitter := streamjson.NewTwoLane(&buf, true)
-	svc := hitl.New(emitter, strings.NewReader(""), time.Second)
-	code := dispatchCloudSwarmSOW(t.Context(), bad, "", "", "", "community", emitter, svc)
+	code := dispatchCloudSwarmSOW(t.Context(), bad, "", "", "", "community", emitter)
 	emitter.Drain(time.Second)
 	if code != ExitBudgetOrUsage {
 		t.Errorf("malformed SOW exit=%d, want %d", code, ExitBudgetOrUsage)
