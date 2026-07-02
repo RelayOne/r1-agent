@@ -17,11 +17,16 @@ import (
 //	only (other commands ignore).
 //
 // The flag is intentionally wired at package-init time rather than
-// inside the existing flag.FlagSet so the change does not require
-// editing chat_interactive_cmd.go (which currently houses its own
-// FlagSet) — keeping cmd/r1/main.go and chat_interactive_cmd.go
-// untouched satisfies the spec's "thin passthrough" intent and keeps
-// the diff blast radius small.
+// inside the existing flag.FlagSet so the parse does not collide with
+// chat_interactive_cmd.go's own FlagSet — the spec's "thin
+// passthrough" intent.
+//
+// Consumption (audit A073): runChatInteractiveCmd reads this variable
+// and, when true, builds the session lane surface via
+// newChatLanesPanel (chat_interactive_lanes_panel.go) — cortex
+// workspace + shared hub bus + lanes.Mount around each plan/execute
+// phase. Preconditions failing (--cortex=false, no TTY) are explicit
+// errors, never a silent no-op.
 //
 // Default off. Other commands ignore --lanes in their own arg parsers.
 var chatInteractiveLanesEnabled bool

@@ -483,6 +483,10 @@ settle, and compares against `testdata/<name>.golden` via
 
 ### Manual / integration
 
+*Status (audit A073): the wiring these smoke tests exercise shipped
+(items 25/27); the live-TTY smoke runs themselves have NOT been
+performed yet and the boxes below stay unchecked until they are.*
+
 - [ ] Run `r1 chat-interactive --lanes` against a live cortex with 4 active
       Lobes; confirm no flicker on a 200 Hz token stream.
 - [ ] Resize terminal from 200 → 60 cols; confirm graceful columns→stack flip
@@ -552,6 +556,11 @@ settle, and compares against `testdata/<name>.golden` via
        requests defined in lanes-protocol §RPC. Envelope schema details
        (field names, error codes, replay semantics) are owned by
        lanes-protocol; this spec consumes them as-shipped.
+       *Shipped deviation (audit A040/A073): no `r1.lanes.killAll` RPC
+       exists anywhere in the protocol (LaneToolNames ships only
+       list/subscribe/get/kill/pin), so BOTH transports implement
+       `KillAll` client-side as an iterated `r1.lanes.kill` over the
+       non-terminal lanes from `r1.lanes.list`.*
 9. [ ] Implement `runProducer(ctx)`: 250 ms ticker; coalesce map keyed by
        `LaneID`; status changes bypass; flush map → `m.sub` on tick; close on
        ctx.Done().
@@ -593,13 +602,27 @@ settle, and compares against `testdata/<name>.golden` via
 24. [ ] Implement `Send*()` helpers exported for `runner.go` / `interactive.go`
         composition: `SendLaneStart`, `SendLaneTick`, `SendLaneEnd`,
         `SendLaneList`, `SendBudget`. Each wraps `p.Send(msg)`.
-25. [ ] Implement `Mount(parent *tea.Program) (subModel tea.Model, cleanup func())`
+25. [x] Implement `Mount(parent *tea.Program) (subModel tea.Model, cleanup func())`
         — composition hook so `interactive.go` can embed the panel under an `L`
         toggle without circular import.
+        *Shipped (audit A073) with an adapted signature:
+        `Mount(sessionID string, t Transport, teaOpts []tea.ProgramOption,
+        opts ...Option) (*tea.Program, *Model, func())` in
+        `internal/tui/lanes/lanes_mount.go`. No Bubble Tea v2 parent
+        program exists in the repo (chat-interactive is a line REPL and
+        the legacy TUI pins v1), so Mount constructs and owns the v2
+        program instead of embedding a sub-model.*
 26. [ ] Wire `runner.go` flag `--lanes` (off by default); when set, attach
         `lanes.Model` and route `lanes.Send*` from the existing event router.
-27. [ ] Add `cmd/r1/main.go` `--lanes` passthrough on `r1 chat-interactive`
+27. [x] Add `cmd/r1/main.go` `--lanes` passthrough on `r1 chat-interactive`
         only (other commands ignore).
+        *Shipped (audit A073): parsed/stripped in
+        `cmd/r1/chat_interactive_lanes.go`, consumed in
+        `runChatInteractiveCmd` — the session builds a cortex Workspace
+        + shared hub bus (`chat_interactive_lanes_panel.go`) and mounts
+        the panel via `lanes.Mount` + `NewLocalTransport` around each
+        plan/execute phase. `--lanes` with `--cortex=false` or without a
+        TTY is an explicit error, never a silent no-op.*
 28. [ ] Snapshot tests: `TestSnapshot_Empty`, `TestSnapshot_StackMode`,
         `TestSnapshot_ColumnsMode_2`, `TestSnapshot_ColumnsMode_4`,
         `TestSnapshot_FocusMode`, with golden files under `testdata/`.

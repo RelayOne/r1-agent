@@ -58,7 +58,7 @@ Complete feature inventory for r1 as of 2026-05-15. Status reflects the merged s
 | 250 ms coalesce | Single fan-in `chan laneTickMsg`; ≤10 Hz visible rerender | Done | `internal/tui/lanes/runProducer` |
 | Render-string cache | Diff-only repaint per lane | Done | `internal/tui/lanes/Model` |
 | Keybindings | `1`–`9` jump-to-lane, `tab`/`shift-tab` cycle, `j`/`k` move, `enter` focus, `esc` exit, `x`+`y` kill, `K` kill-all, `?` help | Done | `internal/tui/lanes/keymap` |
-| `--lanes` flag | Wired into `r1 chat-interactive` | Done | `cmd/r1/chat_interactive.go` |
+| `--lanes` flag | `r1 chat-interactive --lanes` mounts the panel around each plan/execute phase (`lanes.Mount` + `NewLocalTransport` on the session cortex workspace; shared hub bus reaches the native runner's cortex); explicit error with `--cortex=false` or no TTY | Done | `cmd/r1/chat_interactive_lanes.go`, `cmd/r1/chat_interactive_lanes_panel.go` |
 | 72 tests `-race` clean | Catches lane FSM regressions | Done | `internal/tui/lanes/*_test.go` |
 
 ## Web UI — Cursor 3 Glass (spec 6)

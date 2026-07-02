@@ -87,6 +87,11 @@ type chatInteractiveSession struct {
 	// queued holds queue_mission briefs awaiting dispatch after the
 	// current task completes.
 	queued []string
+
+	// lanes is the tui-lanes panel controller, non-nil only when the
+	// session was started with --lanes (specs/tui-lanes.md item 27,
+	// audit A073). See chat_interactive_lanes_panel.go.
+	lanes *chatLanesPanel
 }
 
 var (
@@ -150,6 +155,20 @@ func runChatInteractiveCmd(args []string) error {
 		storePath: storePath,
 		conv:      conv,
 	}
+
+	// --lanes (parsed + stripped in chat_interactive_lanes.go): mount
+	// the Cortex lanes panel around each workflow phase. Failing the
+	// preconditions is an explicit error, never a silent no-op (audit
+	// A073 / specs/tui-lanes.md item 27).
+	if chatInteractiveLanesEnabled {
+		lanesPanel, err := newChatLanesPanel(cfg.CortexEnabled, isatty.IsTerminal(os.Stdin.Fd()))
+		if err != nil {
+			return err
+		}
+		session.lanes = lanesPanel
+		defer lanesPanel.Close()
+	}
+
 	session.planFn = func(ctx context.Context, task string) (workflow.Result, error) {
 		return session.runWorkflow(ctx, task, true)
 	}
@@ -367,7 +386,11 @@ func (s *chatInteractiveSession) runWorkflow(ctx context.Context, task string, p
 		NativeAPIKey:    s.cfg.NativeAPIKey,
 		NativeModel:     s.cfg.NativeModel,
 		NativeBaseURL:   s.cfg.NativeBaseURL,
-		State:           taskstate.NewTaskState(runID),
+		// Shared bus so the native runner's cortex emits lane events
+		// onto the same bus the --lanes panel subscribes to. nil when
+		// --lanes is off (pre-lanes behavior).
+		EventBus: s.lanesEventBus(),
+		State:    taskstate.NewTaskState(runID),
 	})
 	if err != nil {
 		return workflow.Result{}, err
@@ -380,6 +403,13 @@ func (s *chatInteractiveSession) runWorkflow(ctx context.Context, task string, p
 	}
 	defer cancel()
 
+	if s.lanes != nil {
+		phase := "execute"
+		if planOnly {
+			phase = "plan"
+		}
+		return s.lanes.runUnderPanel(runCtx, phase, orchestrator.Run)
+	}
 	return orchestrator.Run(runCtx)
 }
 
