@@ -151,3 +151,35 @@ func TestWorkspaceSeqAllocatorPathThroughLanes(t *testing.T) {
 		}
 	}
 }
+
+// TestSeqAllocatorStopUnderPressure covers audit A018: Stop() while
+// callers are enqueued must never strand a next() caller on its reply
+// channel. Before the fix, run() exited on quit without draining the
+// buffered requests channel, leaking any caller that had already won
+// the enqueue race ('Safe to call ... under concurrent next() pressure'
+// was false). Callers must either get a value or the documented panic.
+func TestSeqAllocatorStopUnderPressure(t *testing.T) {
+	for iter := 0; iter < 50; iter++ {
+		a := newSeqAllocator(0)
+		const n = 16
+		done := make(chan struct{}, n)
+		for i := 0; i < n; i++ {
+			go func() {
+				defer func() {
+					recover() // post-stop panic is the documented contract
+					done <- struct{}{}
+				}()
+				_ = a.next()
+			}()
+		}
+		a.Stop()
+		deadline := time.After(5 * time.Second)
+		for i := 0; i < n; i++ {
+			select {
+			case <-done:
+			case <-deadline:
+				t.Fatalf("iter %d: %d/%d next() callers stranded after Stop", iter, n-i, n)
+			}
+		}
+	}
+}
