@@ -44,9 +44,47 @@ steps:
     waitFor: ['build-r1-browser']
     args: [push, --all-tags, us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-browser]
 
+  # Hermetic pre-deploy smoke (audit A046): boot the freshly built image
+  # on the Cloud Build worker's docker daemon and probe /livez from
+  # inside the container's network namespace. R1_BROWSER_SKIP_CHROMIUM
+  # (services/r1-browser/main.go) serves /livez without launching
+  # Chromium. This is the pipeline's only data-plane check — the
+  # deployed service cannot be curled from the Cloud Build worker
+  # because it runs with --no-allow-unauthenticated and internal-only
+  # ingress (see the post-deploy control-plane check below).
+  - id: smoke-container
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-r1-browser']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        docker run -d --name r1-browser-smoke \
+          -e R1_BROWSER_SKIP_CHROMIUM=1 \
+          us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-browser:$SHORT_SHA
+        CODE=""
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          CODE=$(docker run --rm --network container:r1-browser-smoke \
+            curlimages/curl:8.11.1 -s -o /dev/null -w '%{http_code}' --max-time 5 \
+            http://localhost:8080/livez || true)
+          if [ "$$CODE" = "200" ]; then
+            echo "  container livez=200 (attempt $$i)"
+            break
+          fi
+          echo "  container livez=$$CODE — retrying"
+          sleep 2
+        done
+        docker logs r1-browser-smoke || true
+        docker rm -f r1-browser-smoke || true
+        if [ "$$CODE" != "200" ]; then
+          echo "  container smoke FAILED"
+          exit 1
+        fi
+
   - id: deploy-r1-browser
     name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
-    waitFor: ['push-r1-browser']
+    waitFor: ['push-r1-browser', 'smoke-container']
     entrypoint: bash
     args:
       - -c
