@@ -13,7 +13,7 @@
 // `aria-expanded` / `role="tree"` / `role="treeitem"` / `role="group"`
 // attributes keep screen readers in sync with the visual state.
 
-import { invokeStub } from "../ipc-stub";
+import { classifyIpcError, invokeStub } from "../ipc-stub";
 import type {
   SessionSummary,
   SessionTreeNode,
@@ -54,12 +54,42 @@ export function renderPanel(root: HTMLElement): void {
 }
 
 async function loadSessions(list: HTMLUListElement): Promise<void> {
-  const sessions = await invokeStub<SessionSummary[]>(
-    "session_list",
-    "R1D-3",
-    [],
-  );
+  let sessions: SessionSummary[];
+  try {
+    sessions = await invokeStub<SessionSummary[]>(
+      "session_list",
+      "R1D-3",
+      [],
+    );
+  } catch (err) {
+    // In a real Tauri WebView this rejects today: session_list is not
+    // registered in the Rust host's generate_handler!. Render the
+    // truthful state instead of hanging on the loading row or showing
+    // a misleading "No sessions yet" (audit A035).
+    renderTreeUnavailable(list, "session_list", err);
+    return;
+  }
   renderTree(list, sessions);
+}
+
+/**
+ * Truthful unavailable / error row for the tree root or a children
+ * group. Mirrors the pattern used by mcp-servers.ts / observability.ts.
+ */
+function renderTreeUnavailable(
+  container: HTMLUListElement,
+  verb: string,
+  err: unknown,
+): void {
+  const failure = classifyIpcError(err);
+  const row = document.createElement("li");
+  row.className = "r1-empty";
+  row.dataset.role = "sow-unavailable";
+  row.setAttribute("role", "none");
+  row.textContent = failure.notImplemented
+    ? `Session tree IPC is not wired yet — the ${verb} verb is unimplemented on the host.`
+    : `Session tree IPC is not wired yet — the ${verb} host command is not registered (${failure.message}).`;
+  container.replaceChildren(row);
 }
 
 function renderTree(list: HTMLUListElement, sessions: SessionSummary[]): void {
@@ -151,12 +181,20 @@ async function loadChildren(
 ): Promise<void> {
   container.innerHTML = `<li class="r1-empty" role="none">Loading&hellip;</li>`;
 
-  const result = await invokeStub<SessionTreeResult>(
-    "session_tree",
-    "R1D-3",
-    { nodes: [] },
-    { session_id: state.session.session_id },
-  );
+  let result: SessionTreeResult;
+  try {
+    result = await invokeStub<SessionTreeResult>(
+      "session_tree",
+      "R1D-3",
+      { nodes: [] },
+      { session_id: state.session.session_id },
+    );
+  } catch (err) {
+    // session_tree is likewise unregistered in the Rust host; render
+    // the truthful state in the children group (audit A035).
+    renderTreeUnavailable(container, "session_tree", err);
+    return;
+  }
   state.children = result.nodes;
   state.loaded = true;
   renderChildren(container, result.nodes);

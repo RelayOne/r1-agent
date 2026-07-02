@@ -123,6 +123,57 @@ describe("memory inspector RPC failure handling (A034)", () => {
   });
 });
 
+describe("sow-tree RPC failure handling (A035)", () => {
+  it("renders the truthful unavailable row when session_list rejects", async () => {
+    const panel = await importWithRejection(
+      "./panels/sow-tree",
+      new Error("unknown command session_list"),
+    );
+    const root = makeRoot();
+    panel.renderPanel(root);
+    await flush();
+
+    const row = root.querySelector('[data-role="sow-unavailable"]');
+    expect(row?.textContent).toContain("Session tree IPC is not wired yet");
+    expect(row?.textContent).toContain("session_list");
+    expect(root.textContent).not.toContain("Loading sessions");
+    expect(root.textContent).not.toContain("No sessions yet");
+  });
+
+  it("renders the unavailable row in the children group when session_tree rejects", async () => {
+    vi.resetModules();
+    const stub = await import("./ipc-stub");
+    stub.__setInvokeForTests(<T,>(cmd: string): Promise<T> => {
+      if (cmd === "session_list") {
+        return Promise.resolve([
+          {
+            session_id: "S1",
+            title: "demo",
+            started_at: "2026-07-01T00:00:00Z",
+            status: "running",
+          },
+        ] as unknown as T);
+      }
+      return Promise.reject(new Error("unknown command session_tree"));
+    });
+    const panel = await import("./panels/sow-tree");
+    const root = makeRoot();
+    panel.renderPanel(root);
+    await flush();
+
+    // Expand the session row to trigger loadChildren.
+    const sessionRow = root.querySelector<HTMLLIElement>(
+      'li[data-session-id="S1"]',
+    );
+    expect(sessionRow).not.toBeNull();
+    sessionRow?.click();
+    await flush();
+
+    const row = root.querySelector('[data-role="sow-unavailable"]');
+    expect(row?.textContent).toContain("session_tree");
+  });
+});
+
 describe("descent ladder RPC failure handling (A034)", () => {
   it("surfaces an unavailable note instead of pinning seeded pending rows", async () => {
     const panel = await importWithRejection(
