@@ -53,18 +53,33 @@ func TestSSE_LastEventIDFromQuery(t *testing.T) {
 func TestSSE_ResyncOnPrunedCursor(t *testing.T) {
 	db := newTestDB(t)
 	s := newTestServer(t, db)
-	seedStreamSession(t, db, "r1-sse-resync", "a", "b", "c")
+	seedStreamSession(t, db, "r1-sse-resync", "a", "b", "c", "d")
 
 	rows, err := db.ListEvents("r1-sse-resync", 0, 0)
-	if err != nil || len(rows) != 3 {
+	if err != nil || len(rows) != 4 {
 		t.Fatalf("seed events: rows=%d err=%v", len(rows), err)
+	}
+
+	// Prune the lowest-id row directly, modeling retention deleting old
+	// events. AUTOINCREMENT never reuses ids, so the remaining oldest id
+	// is strictly greater than the deleted one — a below-floor cursor is
+	// then always constructible.
+	if _, err := db.sql.Exec(
+		`DELETE FROM session_events WHERE instance_id = ? AND id = ?`,
+		"r1-sse-resync", rows[0].ID,
+	); err != nil {
+		t.Fatalf("prune oldest event: %v", err)
+	}
+	rows, err = db.ListEvents("r1-sse-resync", 0, 0)
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("re-list after prune: rows=%d err=%v", len(rows), err)
 	}
 	oldest := rows[0].ID
 
 	// Request with a cursor BELOW the oldest available row.
 	prunedCursor := oldest - 1
 	if prunedCursor <= 0 {
-		t.Skip("oldest event has id <= 1; cannot construct a below-floor cursor")
+		t.Fatalf("fixture broken: oldest=%d after pruning; cursor must be >= 1", oldest)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
