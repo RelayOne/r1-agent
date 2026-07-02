@@ -25,7 +25,7 @@ func (f *fakePauseLobe) Run(_ context.Context, _ LobeInput) error { f.calls.Add(
 func TestLobeRunner_PauseSkipsRun(t *testing.T) {
 	t.Parallel()
 	fake := &fakePauseLobe{}
-	r := NewLobeRunner(fake, nil, nil, nil)
+	r := NewLobeRunner(fake, nil, nil, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -76,7 +76,7 @@ func TestLobeRunner_PauseSkipsRun(t *testing.T) {
 // underlying Lobe.ID().
 func TestLobeRunner_LobeID(t *testing.T) {
 	t.Parallel()
-	r := NewLobeRunner(&fakePauseLobe{}, nil, nil, nil)
+	r := NewLobeRunner(&fakePauseLobe{}, nil, nil, nil, nil)
 	if got := r.LobeID(); got != "fake-pause" {
 		t.Errorf("LobeID() = %q, want fake-pause", got)
 	}

@@ -193,7 +193,7 @@ func TestLobeRunnerLifecycle(t *testing.T) {
 	lobe := &EchoLobe{Workspace: w}
 	sem := NewLobeSemaphore(1)
 
-	r := NewLobeRunner(lobe, w, sem, b)
+	r := NewLobeRunner(lobe, w, sem, b, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -279,7 +279,7 @@ func TestLobeRunnerPanic(t *testing.T) {
 	lobe := &panicLobe{}
 	sem := NewLobeSemaphore(1)
 
-	r := NewLobeRunner(lobe, w, sem, b)
+	r := NewLobeRunner(lobe, w, sem, b, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -369,8 +369,8 @@ func TestLobeRunnerSemaphoreLLM(t *testing.T) {
 		Unblock: make(chan struct{}),
 	}
 
-	rA := NewLobeRunner(loA, w, sem, b)
-	rB := NewLobeRunner(loB, w, sem, b)
+	rA := NewLobeRunner(loA, w, sem, b, nil)
+	rB := NewLobeRunner(loB, w, sem, b, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -439,7 +439,7 @@ func TestLobeRunnerSemaphoreDeterministic(t *testing.T) {
 	defer sem.Release()
 
 	lobe := &EchoLobe{Workspace: w, Kindly: KindDeterministic}
-	r := NewLobeRunner(lobe, w, sem, b)
+	r := NewLobeRunner(lobe, w, sem, b, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

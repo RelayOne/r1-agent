@@ -240,7 +240,11 @@ func New(cfg Config) (*Cortex, error) {
 	runners := make([]*LobeRunner, 0, len(cfg.Lobes))
 	roundRunners := make([]*LobeRunner, 0, len(cfg.Lobes))
 	for _, l := range cfg.Lobes {
-		runner := NewLobeRunner(l, ws, sem, cfg.EventBus)
+		// The shared tracker gives every runner the per-round output
+		// budget gate (spec item 21): KindLLM runners consult
+		// Exceeded() after Acquire and skip the round (emitting
+		// cortex.lobe.budget_skipped) once the 30% cap is spent.
+		runner := NewLobeRunner(l, ws, sem, cfg.EventBus, tracker)
 		// Forward the Cortex-level model client so LobeInput.Provider
 		// reaches Lobes that need it (LLM Lobes; deterministic Lobes
 		// ignore it).
@@ -574,6 +578,15 @@ func (c *Cortex) MidturnNote(messages []agentloop.Message, turn int) string {
 	}
 
 	roundID := c.roundCounter.Add(1)
+
+	// Zero the per-round Lobe output accumulator BEFORE the TickRound
+	// fan-out so the 30% cap measures this round in isolation (spec
+	// item 21, audit A061). The budget itself (30% of the main agent's
+	// last output turn) is untouched — RecordMainTurn keeps feeding it
+	// from the EventModelPostCall subscriber registered in Start.
+	if c.tracker != nil {
+		c.tracker.ResetRound()
+	}
 
 	// Deep-copy the conversation once per round and hand the same copy
 	// to every round-style runner. The copy insulates Lobes (which may
