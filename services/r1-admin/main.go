@@ -243,7 +243,7 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 func handleSessions(w http.ResponseWriter, r *http.Request) {
 	body := template.HTML(`
-<p>This page surfaces every active session across every daemon (one row per session). Backed by <code>` + template.HTMLEscapeString(coordAPI) + `/v1/sessions</code>.</p>
+<p>This page surfaces every active session across every daemon (one row per session). Requires <code>GET ` + template.HTMLEscapeString(coordAPI) + `/v1/sessions</code> — that endpoint is not implemented in this repo's coord-api.</p>
 <table><thead><tr><th>Daemon</th><th>Session</th><th>Workdir</th><th>Status</th><th>Last activity</th><th>Cost USD</th></tr></thead>
 <tbody><tr><td colspan=6 style="color:#888;text-align:center;padding:2rem">Wiring depends on the coord-api Sessions endpoint (post-deploy iteration).</td></tr></tbody></table>`)
 	render(w, page{Title: "Sessions", Path: "/sessions", Body: body})
@@ -291,7 +291,7 @@ func handleUsers(w http.ResponseWriter, r *http.Request) {
 
 func handleLicenseKeys(w http.ResponseWriter, r *http.Request) {
 	body := template.HTML(`
-<p>License-key issuance, rotation, revocation, audit. Backed by Cloud SQL <code>license_keys</code> table (schema in <code>services/r1-coord-api/migrations/</code> — pending).</p>
+<p>License-key issuance, rotation, revocation, audit. No key store is wired in this repo; coord-api's <code>/v1/license/verify</code> performs a stateless format check only.</p>
 <table><thead><tr><th>Key fingerprint</th><th>Owner</th><th>Tier</th><th>Issued</th><th>Last verified</th><th>Status</th></tr></thead>
 <tbody><tr><td colspan=6 style="color:#888;text-align:center;padding:2rem">Real key store + UI wired post-deploy.</td></tr></tbody></table>`)
 	render(w, page{Title: "License keys", Path: "/license-keys", Body: body})
@@ -558,7 +558,12 @@ func requireOperator(next http.Handler) http.Handler {
 		}
 		token, ok := bearerTokenFromHeader(r.Header.Get("Authorization"))
 		if !ok {
-			http.Redirect(w, r, "/v1/auth/sso/start", http.StatusFound)
+			// Absolute URL: this admin service serves no /v1/auth/sso/*
+			// routes itself, and the path is not in isPublic, so a
+			// relative redirect looped forever. coord-api's callback
+			// returns the JWT as JSON (no return redirect), so browser
+			// SSO into admin remains a token-paste flow for now.
+			http.Redirect(w, r, strings.TrimRight(coordAPI, "/")+"/v1/auth/sso/start", http.StatusFound)
 			return
 		}
 		cfg, err := loadAdminJWTConfig()
