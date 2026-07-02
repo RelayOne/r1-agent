@@ -9,16 +9,12 @@
 //
 // # Surface area
 //
-// HubHandler implements every method on DaemonAPI. The ones that map
-// cleanly onto SessionHub (start, list-via-DaemonInfo, cancel-as-delete)
-// are fully wired. The ones that depend on Session methods that don't
-// yet exist (pause/resume as distinct lifecycle states; multi-turn send
-// delivery) return a stokerr-tagged BLOCKED error that names the
-// missing dependency, so the dispatcher surfaces a proper RPC fault to
-// the caller instead of crashing the daemon. Each such stub is
-// annotated with a `BLOCKED:` marker and a reference to the dependency
-// that owns the missing piece — that's the single source of truth for
-// "what's left to wire" reviewers will look for.
+// HubHandler implements every method on DaemonAPI, and every verb is
+// wired to a real primitive: start via hub.Create, list via DaemonInfo,
+// cancel via hub.Delete, pause/resume via Session.Pause/Resume (pause
+// flag + resume channel), and send via Session.Send (bounded inbox the
+// agent loop drains between provider calls). There are no stubbed
+// verbs left in this file.
 //
 // # Why a thin handler
 //
@@ -34,13 +30,14 @@
 // All errors are *stokerr.Error so the dispatcher's ErrorFromGo path
 // emits structured RPC error codes:
 //
-//   - ErrValidation  — bad input (empty session_id, etc.)
-//   - ErrNotFound    — session_id does not exist in the hub
-//   - ErrInternal    — sub-handler is BLOCKED on a missing dependency
-//
-// The BLOCKED surface uses ErrInternal because there is no dedicated
-// taxonomy code for "feature pending". A reviewer can grep `BLOCKED:`
-// to find the unwired set in one shot.
+//   - ErrValidation  — bad input (empty session_id, empty send text,
+//     send to a not-running session whose inbox is closed)
+//   - ErrNotFound    — session_id / subscription does not exist
+//   - ErrConflict    — session already exists, single-session mode
+//     active, or send inbox full (back-pressure; retry shortly)
+//   - ErrInternal    — hub operation failed, or a daemon-supplied
+//     callback (shutdownFn, reloadConfigFn, ConnFromContextFunc) was
+//     never configured by the serve loop
 package jsonrpc
 
 import (
@@ -240,7 +237,7 @@ func (h *HubHandler) DaemonSessionCancel(ctx context.Context, req SessionIDReque
 
 // DaemonSessionSend delivers a user turn onto the session's inbox.
 // Returns ErrValidation when text is empty or the session is not
-// running (inbox closed); ErrUnavailable when the inbox is full.
+// running (inbox closed); ErrConflict when the inbox is full.
 // Otherwise returns the assigned delivery time. Multi-turn delivery
 // is enabled by Session.Send pushing onto an inbox channel the
 // agent loop drains between provider calls.
