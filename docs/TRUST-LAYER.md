@@ -3,44 +3,37 @@
 This document refers to the Beacon Hub Trust Layer, not verification
 descent.
 
-## Purpose
+## Status
 
-The Beacon Hub Trust Layer gives a relay hub a narrowly-scoped way to
-warn or constrain an agent without decrypting its session payloads.
+The in-process hub trust verification engine
+(`internal/beacon/trust`, `internal/beacon/trust/kinds`) and the
+attestation runtime that would have consumed it
+(`internal/beacon/runtime`, `internal/beacon/review`,
+`internal/beacon/transport`) were removed in July 2026 (audit finding
+A036, `audit/complete-systems-2026-07-01.md`): no binary ever
+constructed them, so paired devices could never actually deliver
+pause / rotate / attest signals. In-process session-control approvals
+ship via the `sessionctl` approval path instead.
 
-## What shipped in this phase
+## What remains shipped
 
-- `internal/beacon/trust`: pinned-root verification, signed signal
-  frames, freshness checks, and nonce replay rejection.
-- `internal/beacon/trust/kinds`: the hardcoded signal kinds from the
-  canonical scope.
 - `internal/ledger/nodes/trust.go`: ledger-native trust signal,
-  cooldown, ban, device attestation, and federation signal nodes.
+  cooldown, ban, device attestation, and federation signal node types.
+  These are the append-only audit records a future hub trust layer
+  would write; the node schemas are live in the ledger today.
+- The Beacon pairing/token halves described in
+  `docs/BEACON-PROTOCOL.md` (`internal/beacon/identity`, `pairing`,
+  `session`, `token`), which carry their own signature, replay, and
+  capability checks.
 
-## Signal model
+## Design intent (for a future reimplementation)
 
-The agent only accepts these kinds:
-
-- `display_to_user`
-- `ask_user_and_execute_on_approve`
-- `pause`
-- `rotate_session_key`
-- `force_resurgence`
-- `attest_state`
-- `request_offline_review`
-
-Unknown kinds are rejected. A hub cannot extend the protocol by sending
-arbitrary action names.
-
-## Verification chain
-
-Every signal goes through the same pre-dispatch checks:
-
-1. The hub identity must be pinned in the local trust root.
-2. The frame signature must verify with the pinned Ed25519 key.
-3. The frame must still be within its freshness window.
-4. The nonce must not have been seen before.
-5. The kind must be one of the hardcoded protocol kinds.
-
-Rejected signals still produce ledger output so the operator can audit
-why the frame was dropped.
+The removed engine enforced, per signal frame: a pinned hub identity
+in a local trust root, Ed25519 frame-signature verification, a
+freshness window, nonce replay rejection, and a hardcoded whitelist of
+signal kinds (`display_to_user`, `ask_user_and_execute_on_approve`,
+`pause`, `rotate_session_key`, `force_resurgence`, `attest_state`,
+`request_offline_review`). Any revival should keep that shape: a hub
+must never be able to extend the protocol by sending arbitrary action
+names, and rejected signals must still produce ledger output so the
+operator can audit why a frame was dropped.

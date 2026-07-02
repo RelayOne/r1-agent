@@ -11,11 +11,11 @@
 //     with code 4408.
 //
 // Implemented over net/http.Hijacker (not coder/websocket). The codebase
-// already ships two RFC 6455 implementations (internal/server/dashboard.go
-// handleWebSocket and internal/beacon/transport/transport.go ServeWS) so
-// taking on a third-party dependency is unnecessary for the small subset
-// of the protocol we need (text frames, ping/pong control frames, server
-// close codes). Behaviour is verified by the unit tests in ws_test.go.
+// already ships a hand-rolled RFC 6455 implementation
+// (internal/server/dashboard.go handleWebSocket) so taking on a
+// third-party dependency is unnecessary for the small subset of the
+// protocol we need (text frames, ping/pong control frames, server close
+// codes). Behaviour is verified by the unit tests in ws_test.go.
 //
 // JSON-RPC 2.0 framing for session.subscribe (TASK-15) is implemented in
 // the same file because the verb is intrinsic to the WS transport per
