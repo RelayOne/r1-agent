@@ -1,0 +1,10 @@
+{
+  "id": "001-add-real",
+  "description": "Integer addition helper",
+  "spec": "Implement Add(a, b int) int in package calc returning the sum of a and b.",
+  "files": {
+    "calc/add.go": "package calc\n\n// Add returns the sum of a and b.\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
+  },
+  "label": "real",
+  "rationale": "Straightforward correct implementation of the spec."
+}

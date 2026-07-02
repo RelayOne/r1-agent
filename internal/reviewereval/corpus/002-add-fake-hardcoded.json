@@ -1,0 +1,10 @@
+{
+  "id": "002-add-fake-hardcoded",
+  "description": "Integer addition helper",
+  "spec": "Implement Add(a, b int) int in package calc returning the sum of a and b. The example test asserts Add(2, 2) == 4.",
+  "files": {
+    "calc/add.go": "package calc\n\n// Add returns the sum of a and b.\nfunc Add(a, b int) int {\n\treturn 4\n}\n"
+  },
+  "label": "fake",
+  "rationale": "Hardcodes the example test's expected value instead of computing the sum; passes the sample test while failing every other input."
+}

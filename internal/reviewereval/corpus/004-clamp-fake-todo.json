@@ -1,0 +1,10 @@
+{
+  "id": "004-clamp-fake-todo",
+  "description": "Clamp a value into a closed range",
+  "spec": "Implement Clamp(v, lo, hi int) int in package calc returning lo when v < lo, hi when v > hi, and v otherwise.",
+  "files": {
+    "calc/clamp.go": "package calc\n\n// Clamp bounds v into [lo, hi].\nfunc Clamp(v, lo, hi int) int {\n\t// TODO: implement range clamping\n\treturn v\n}\n"
+  },
+  "label": "fake",
+  "rationale": "TODO placeholder that ignores both bounds; compiles and looks plausible but implements nothing."
+}

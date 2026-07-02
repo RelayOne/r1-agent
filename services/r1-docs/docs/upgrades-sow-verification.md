@@ -28,7 +28,7 @@ TOTAL: PASS 57 (42%) · PARTIAL 9 · MISSING 81
 - **S-U-013 failure fingerprint**: 10-class taxonomy + fingerprint + TS/Go/Rust/Python parsers ✅.
 - **S-U-014 OAuth usage**: PollClaudeUsage + circuit breaker (StatusCircuitOpen) + beta header ✅; header-based rate-limit fallback PARTIAL.
 - **S-U-015 scheduling**: GRPW + Continuum + continuum-lite ✅; benchmark harness MISSING.
-- **S-U-017 reviewereval + modelsource**: Case struct + LoadCorpus + FP/FN computation + Builder/Reviewer routing + --builder-model / --reviewer-model flags ✅; result artifacts MISSING (experiment not yet run).
+- **S-U-017 reviewereval + modelsource**: Case struct + LoadCorpus + FP/FN computation + RunPair pair-runner + `r1-bench reviewereval` runner subcommand + seed corpus (`internal/reviewereval/corpus/`) ✅; result artifacts MISSING (experiment not yet run). Note: the `--builder-model` / `--reviewer-model` flags on `r1 sow` serve the SOW runner's model routing, not this harness — reviewereval has its own `--builder` / `--reviewer` flags.
 - **S-U-020 stream-json**: `--output-format stream-json` + emitter + Claude-Code-compatible system/assistant/user/result/stream_event + `_stoke.dev/` namespace + terminal result on all exit paths (incl. fatal, feasibility, strict-validation, panic, normal completion) ✅.
 
 ## Shipped this session
@@ -80,5 +80,5 @@ Immediate (<1 day each):
 Next sprint (1 week each):
 - S-U-002 ACP adapter (biggest distribution unlock)
 - S-U-011 Phase 2: register read_skill tool + swap default prompt builder
-- S-U-017 actually run the cross-model experiment on the shipped reviewereval harness
+- S-U-017 actually run the cross-model experiment via `r1-bench reviewereval --corpus internal/reviewereval/corpus --builder <model> --reviewer <model>` (pair-runner + subcommand landed with audit A108; before that the harness had no runner and could not be executed)
 - S-U-008 extend cache_control to rolling message window (audit prefix stability)
