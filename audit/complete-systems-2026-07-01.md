@@ -144,7 +144,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **Ledger WriteNode: non-atomic two-tier write + chain-presence dedup permanently loses node content on crash**
 - Evidence: WriteNode writes the chain tier first via plain `os.WriteFile(chainPath, chainData, 0o600)` (store.go:133), then the content tier (store.go:144). Neither write is tmp+rename atomic. The dedup guard at store.go:112-117 returns early when the chain file exists: "Chain record already exists; treat as dedup. Do NOT touch the content tier either — we can't distinguish 'previously redacted' from 'never written'". So a crash or disk-full between the chain write and the content write leaves a chain record with no content; any retry of AddNode/Batch (which are documented as idempotent-by-dedup, store.g…
 - Fix: In internal/ledger/store.go: (1) add an atomicWriteFile helper (write to a .tmp file in the same directory, f.Sync(), close, os.Rename onto the final path); use it for the chain record (store.go:133), content record (store.go:144), WriteContentBlob (store.go:183), and WriteEdge (store.go:248). (2) Reorder WriteNode to write the content tier BEFORE the chain record so chain-file presence becomes the commit point and the dedup guard at store.go:112 stays sound; on chain-write failure, best-effort os.Remove the just-written content file so no orphan content blob lingers. (3) In ReadNode, map a ze…
-- STATUS: PENDING
+- STATUS: FIXED (commit: d3c6924e)
 
 ### A022 [bug/S] internal/memory/memory.go:108
 **memory.Store.RememberWithContext has a lock-gap race that mutates and returns the wrong entry under concurrency**
@@ -156,7 +156,7 @@ Per CLAUDE.md: no finding is dismissed as pre-existing/out-of-scope; BLOCKED ite
 **patchapply concurrent-edit detection is advisory-only and computes the wrong line number, and Apply itself is dormant**
 - Evidence: The hashline guard appends "concurrent edit detected" to result.Errors (patch.go:250-253) but never skips the file: execution falls through to applyHunks and os.WriteFile (patch.go:265-280), the file is overwritten and reported in result.Applied — so the detection cannot prevent anything. The line-number math is also wrong: `lineNum := h.OldStart + i` (patch.go:248) iterates i over ALL hunk lines including '+' additions, which do not consume old-file lines, and double-counts OldStart's own line (first context line should be OldStart+0 only if adds are excluded) — producing spurious mismatch re…
 - Fix: In internal/patchapply/patch.go applyPatch: preferred option (a) — delete the hashline pre-check block (lines 239-257) and its hashline import, since findMatch already enforces exact context/delete-line matching at the apply position (the actual concurrency guard); update the package doc comment to say context matching in findMatch is the concurrent-edit protection, and add a regression test asserting a valid patch with additions yields len(result.Errors)==0. Option (b) if hashline verification must be kept: track old-file position with a dedicated counter incremented only for OpContext/OpDele…
-- STATUS: PENDING
+- STATUS: FIXED (commit: 1c4b935c)
 
 ### A024 [bug/M] internal/scheduler/scheduler.go:436
 **specexec production wiring scores plan-only outcomes that carry no test/diff signal — winner degenerates to 'fastest plan' and the 0.9 early-stop threshold is mathematically unreachable**
