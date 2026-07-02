@@ -6,6 +6,13 @@
 // runtime API surface to actually trigger workflows, poll runs, fetch
 // job logs, and post inline review comments against any GitHub repo.
 //
+// Shipped consumer (audit A056): `r1 cicd trigger|status|logs
+// --provider github` (cmd/r1/cicd_cmd.go) drives TriggerWorkflow /
+// GetRunStatus / WaitForCompletion / GetJobLogs from GITHUB_TOKEN /
+// GH_TOKEN. The auto-reviewer pipeline (reviewer.go AutoReview) and
+// the PR comment surface remain library-only — no CLI verb invokes
+// them yet.
+//
 // Built on top of github.com/google/go-github/v62 — the canonical Go
 // SDK for the GitHub REST API. The wrapper narrows the SDK's surface
 // to the operations the agent needs, normalises the polling /
