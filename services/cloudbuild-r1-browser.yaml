@@ -106,7 +106,14 @@ steps:
           --service-account=r1-browser-runtime@$PROJECT_ID.iam.gserviceaccount.com \
           --ingress=internal-and-cloud-load-balancing
 
-  # Smoke check /livez on the deployed service. Skips /readyz —
+  # Post-deploy readiness via the control plane (audit A047). The
+  # service is deployed --no-allow-unauthenticated with internal-only
+  # ingress, so a data-plane curl from the (external, tokenless) Cloud
+  # Build worker is rejected at the ingress layer before IAM — and
+  # Cloud Run IAM applies to /livez like every other path; the app-level
+  # "livez is outside the WS auth" exemption never comes into play.
+  # Instead assert: service Ready=True AND the latest ready revision
+  # runs this build's image AND traffic points at that revision.
   # Chromium readiness is verified by the inhouse_live integration
   # test (T13b) which runs from CI separately.
   - id: smoke
@@ -117,20 +124,46 @@ steps:
       - -c
       - |
         set -euo pipefail
-        URL=$(gcloud run services describe r1-browser-${_ENV} --region=${_REGION} --format='value(status.url)')
-        echo "smoke: r1-browser-${_ENV} $$URL"
-        # /livez is unauthenticated (it's outside the WS path).
-        for i in 1 2 3 4 5; do
-          CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$$URL/livez")
-          if [ "$$CODE" = "200" ]; then
-            echo "  livez=200 (attempt $$i)"
-            exit 0
+        READY=""
+        for i in $(seq 1 30); do
+          READY=$(gcloud run services describe r1-browser-${_ENV} \
+            --region=${_REGION} \
+            --format='value(status.conditions[0].status)')
+          if [ "$$READY" = "True" ]; then
+            echo "  Ready=True (attempt $$i)"
+            break
           fi
-          echo "  livez=$$CODE — retrying"
+          echo "  Ready=$$READY — retrying"
           sleep 5
         done
-        echo "  smoke FAILED"
-        exit 1
+        if [ "$$READY" != "True" ]; then
+          echo "  readiness FAILED: service not Ready"
+          exit 1
+        fi
+        REV=$(gcloud run services describe r1-browser-${_ENV} \
+          --region=${_REGION} \
+          --format='value(status.latestReadyRevisionName)')
+        IMAGE=$(gcloud run revisions describe "$$REV" \
+          --region=${_REGION} \
+          --format='value(spec.containers[0].image)')
+        echo "  latestReadyRevision=$$REV image=$$IMAGE"
+        case "$$IMAGE" in
+          *:$SHORT_SHA)
+            echo "  revision image matches :$SHORT_SHA"
+            ;;
+          *)
+            echo "  readiness FAILED: revision image does not match :$SHORT_SHA"
+            exit 1
+            ;;
+        esac
+        SERVING=$(gcloud run services describe r1-browser-${_ENV} \
+          --region=${_REGION} \
+          --format='value(status.traffic[0].revisionName)')
+        if [ -n "$$SERVING" ] && [ "$$SERVING" != "$$REV" ]; then
+          echo "  readiness FAILED: traffic serves $$SERVING, expected $$REV"
+          exit 1
+        fi
+        echo "  smoke OK (control plane)"
 
 images:
   - us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-browser:$SHORT_SHA
