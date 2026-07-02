@@ -35,10 +35,28 @@ options:
   machineType: E2_HIGHCPU_8
 
 steps:
+  # Gate: run every standalone service module's tests before any image
+  # builds (audit A045). The repo-root CI gate (`go test ./...`) never
+  # reaches these — each service has its own go.mod — so before this
+  # step an auth regression in r1-coord-api would build and auto-deploy
+  # to prod with its own passing test suite never executed anywhere.
+  - id: test-services
+    name: 'golang:1.25'
+    waitFor: ['-']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        for d in r1-admin r1-coord-api r1-docs r1-downloads-cdn; do
+          echo "=== go test services/$$d"
+          (cd services/$$d && go test ./... -count=1 -timeout=120s)
+        done
+
   # Four image builds in parallel.
   - id: build-coord-api
     name: 'gcr.io/cloud-builders/docker'
-    waitFor: ['-']
+    waitFor: ['test-services']
     dir: services/r1-coord-api
     args:
       - build
@@ -49,7 +67,7 @@ steps:
 
   - id: build-docs
     name: 'gcr.io/cloud-builders/docker'
-    waitFor: ['-']
+    waitFor: ['test-services']
     dir: services/r1-docs
     args:
       - build
@@ -60,7 +78,7 @@ steps:
 
   - id: build-downloads-cdn
     name: 'gcr.io/cloud-builders/docker'
-    waitFor: ['-']
+    waitFor: ['test-services']
     dir: services/r1-downloads-cdn
     args:
       - build
@@ -71,7 +89,7 @@ steps:
 
   - id: build-admin
     name: 'gcr.io/cloud-builders/docker'
-    waitFor: ['-']
+    waitFor: ['test-services']
     dir: services/r1-admin
     args:
       - build
