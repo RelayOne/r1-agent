@@ -859,7 +859,14 @@ func (b *Bus) restoreDelayed() error {
 		return err
 	}
 
-	now := time.Now()
+	// Hold b.mu across the whole restore loop: past-due entries arm 1ms
+	// timers whose callbacks lock b.mu and read/delete b.delayed, so an
+	// unlocked `b.delayed[id] = e` here raced those callbacks (concurrent
+	// map write panic) and a callback firing before the insert leaked the
+	// entry forever. Callbacks just block until restore finishes —
+	// matching PublishDelayed's invariant.
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	for _, entry := range entries {
 		if entry.Cancelled {
 			continue
@@ -872,7 +879,6 @@ func (b *Bus) restoreDelayed() error {
 
 		e := entry // capture
 		cancelID := e.ID
-		_ = now // suppress lint
 		e.timer = time.AfterFunc(remaining, func() {
 			b.mu.Lock()
 			de, ok := b.delayed[cancelID]
