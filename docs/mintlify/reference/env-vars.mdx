@@ -119,7 +119,7 @@ the OS keyring with a `FileBackend` fallback. See
 
 | Variable | Purpose |
 |---|---|
-| `STOKE_RETENTION` | `1` enables the default retention profile when no operator config exists |
+| `STOKE_RETENTION` | **Not read by any code yet.** `specs/retention-policies.md` reserves `1` as the opt-in gate for the default retention profile, but r1-server currently starts its hourly retention sweep unconditionally with `retention.Defaults()` (stream files pruned after 90 days, checkpoint files after 30 days) — setting or unsetting this variable has no effect today |
 | `STOKE_CANARY_DO_NOT_EMIT` | Canary honeypot marker — not a credential; never set, never log |
 
 ## Upstream provider keys
