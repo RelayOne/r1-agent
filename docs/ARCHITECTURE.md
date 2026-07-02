@@ -597,7 +597,7 @@ type Finding struct {
 - **Final-sweep PRs #168 / #169 / #170 / #171** (sync to `main` in commit `242af4a8`):
   - Skill lifecycle hooks: `concern.SkillCompactor` (LRU eviction under budget) + `workflow.SkillScopeCloser` (phase-exit drop) wired through `internal/skilltracker.Tracker`.
   - ed25519-signed redaction events: `internal/ledger/redact_sign.go` + `Store.RedactionsForVerified`.
-  - Tracebundle v2: per-session ledger filtering + chain-root hashing + canonical manifest body; production source at `cmd/r1-server/tracebundle_source.go` v2-flag-gated.
+  - Tracebundle v2: per-session ledger filtering + chain-root hashing + canonical manifest body; production source at `cmd/r1-server/tracebundle_source.go`; route always-on post-Spec-D (D-UI2-7 removed the `R1_SERVER_UI_V2` gate).
   - Release-rehearsal CI: Cloud Build trigger pair (push-to-main + tag) + manual GitHub Actions workflow.
 
 ### In Progress
