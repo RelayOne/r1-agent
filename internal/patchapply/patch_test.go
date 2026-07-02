@@ -267,3 +267,85 @@ func TestStripPrefix(t *testing.T) {
 		t.Error("should not strip without prefix")
 	}
 }
+
+// TestApplyReverseUndoesCreateAndDelete covers audit A082: the package
+// doc promises "Reverse application (undo a patch)", but reversing a
+// patch that created or deleted files fell into the modify branch
+// against "/dev/null" and silently failed.
+func TestApplyReverseUndoesCreateAndDelete(t *testing.T) {
+	root := t.TempDir()
+
+	createPatch := `--- /dev/null
++++ b/created.txt
+@@ -0,0 +1,2 @@
++hello
++world
+`
+	p, err := Parse(createPatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := Apply(p, root); len(res.Failed) != 0 {
+		t.Fatalf("forward apply failed: %v", res.Errors)
+	}
+	if res := ApplyReverse(p, root); len(res.Failed) != 0 {
+		t.Fatalf("reverse of create failed: %v", res.Errors)
+	}
+	if _, err := os.Stat(filepath.Join(root, "created.txt")); !os.IsNotExist(err) {
+		t.Fatalf("reverse of create did not remove the file (err=%v)", err)
+	}
+
+	// Delete patch: forward removes, reverse must recreate content.
+	if err := os.WriteFile(filepath.Join(root, "doomed.txt"), []byte("a\nb\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deletePatch := `--- a/doomed.txt
++++ /dev/null
+@@ -1,2 +0,0 @@
+-a
+-b
+`
+	p2, err := Parse(deletePatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := Apply(p2, root); len(res.Failed) != 0 {
+		t.Fatalf("forward delete failed: %v", res.Errors)
+	}
+	if res := ApplyReverse(p2, root); len(res.Failed) != 0 {
+		t.Fatalf("reverse of delete failed: %v", res.Errors)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "doomed.txt"))
+	if err != nil || !strings.Contains(string(got), "a") || !strings.Contains(string(got), "b") {
+		t.Fatalf("reverse of delete did not recreate content: %q err=%v", got, err)
+	}
+}
+
+// TestApplyWithAdditionsNoSpuriousErrors covers audit A023: the old
+// hashline pre-check indexed hunk lines including '+' additions, which
+// consume no old-file lines, so valid patches with additions produced
+// spurious "concurrent edit detected" noise in result.Errors.
+func TestApplyWithAdditionsNoSpuriousErrors(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "f.txt"), []byte("l1\nl2\nl3\nl4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	patch := `--- a/f.txt
++++ b/f.txt
+@@ -1,4 +1,6 @@
+ l1
++added-a
+ l2
++added-b
+ l3
+ l4
+`
+	p, err := Parse(patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := Apply(p, root)
+	if len(res.Failed) != 0 || len(res.Errors) != 0 {
+		t.Fatalf("valid patch produced errors: failed=%v errors=%v", res.Failed, res.Errors)
+	}
+}
