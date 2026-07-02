@@ -1,0 +1,10 @@
+# Substrate offload: r1 spawns the Substrate MCP server and exposes its
+# deterministic codegen tool as `mcp_substrate_substrate_generate`.
+mcp_servers:
+  - name: substrate
+    transport: stdio
+    command: /home/eric/repos/substrate/bin/substrate-mcp
+    trust: trusted
+    max_concurrent: 4
+    timeout: 120s
+    enabled: true

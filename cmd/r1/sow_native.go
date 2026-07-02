@@ -2775,7 +2775,19 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 		}
 		workerSpan := perflog.Start("worker.dispatch", "task="+task.ID, "files="+strconv.Itoa(len(task.Files)))
 		dispatchStart := time.Now()
-		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, taskCfg, maxTurns, sup)
+		// Substrate deterministic offload pre-pass (R1_SOW_OFFLOAD=1). For
+		// covered codegen tasks Substrate emits validated code at ~0
+		// generation tokens; when it returns a confident hit we apply that
+		// code and skip the LLM dispatch entirely. nil => fall through to the
+		// normal worker loop (fail-safe). See sow_offload.go for the rationale
+		// (exposure != usage: advertising the MCP tool did not make the worker
+		// use it, so the decision is made deterministically here).
+		var tr plan.TaskExecResult
+		if pre := offloadPrePass(task, taskCfg.RepoRoot); pre != nil {
+			tr = *pre
+		} else {
+			tr = execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, taskCfg, maxTurns, sup)
+		}
 		workerSpan.End("success=" + strconv.FormatBool(tr.Success))
 		// Spec-2 item 9: emit task.complete on the critical lane so
 		// CloudSwarm never loses a terminal task verdict.
@@ -3864,6 +3876,16 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 		ExtraPreEndTurnCheck: cfg.ExtraPreEndTurnCheck,
 		ExtraMidturnCheck:    cfg.ExtraMidturnCheck,
 		HoneypotCheckFn:      honeypotCheck,
+	}
+
+	// When MCP exposure is enabled (R1_SOW_MCP=1), mark the worker as a
+	// trusted caller so the registry exposes trusted-server tools (the
+	// Substrate codegen server is declared trust: trusted in the policy).
+	// The registry is fail-closed: without this the trust gate hides
+	// trusted-server tools from the worker, so the flag must set both the
+	// registry (main.go) and the per-dispatch trust label here.
+	if os.Getenv("R1_SOW_MCP") == "1" {
+		spec.WorkerTrust = "trusted"
 	}
 
 	start := time.Now()

@@ -2948,6 +2948,14 @@ func sowCmd(args []string) {
 		// Resolve BUILDER_* first so nativeKey / nativeBaseURL /
 		// nativeModelName are correct by the time we build the runner.
 		nativeBaseURLForRunner := *nativeBaseURL
+		// Capture the resolved builder provider so we can apply it as the
+		// runner's ProviderOverride for non-litellm sources. Without this
+		// the sow native runner uses its default Anthropic-format provider
+		// even when --builder-source=openrouter (OpenAI-compat) was chosen,
+		// producing a 400 wire-format mismatch ("No connected db." from the
+		// Anthropic-shaped request hitting OpenRouter). litellm path is
+		// unaffected (it sets ProviderOverride via the prefix branches below).
+		var sowBuilderProvider provider.Provider
 		if br, changed, err := modelsource.ResolveRole(modelsource.RoleBuilder,
 			*builderModelFlag, *builderSourceFlag, *builderURLFlag, *builderAPIKeyFlag,
 			nativeModelName, *nativeBaseURL, nativeKey); err != nil {
@@ -2979,6 +2987,10 @@ func sowCmd(args []string) {
 				if *builderAPIKeyFlag != "" {
 					nativeKey = *builderAPIKeyFlag
 				}
+				// Remember the OpenAI-compat (or direct-vendor) provider that
+				// modelsource built so the runner speaks the right wire format
+				// for the resolved endpoint (applied as ProviderOverride below).
+				sowBuilderProvider = br.Provider
 			}
 		}
 
@@ -3017,6 +3029,34 @@ func sowCmd(args []string) {
 			runner.ProviderOverride = provider.NewClaudeCodeWorker("claude", absRepo, nativeModelName)
 		} else if strings.HasPrefix(*nativeBaseURL, "codex") {
 			runner.ProviderOverride = provider.NewCodexProvider("codex", absRepo, "")
+		} else if sowBuilderProvider != nil {
+			// Apply the modelsource-resolved builder provider (e.g. the
+			// OpenAI-compat provider for source=openrouter) so the worker
+			// talks the correct wire protocol to the resolved endpoint.
+			// Always-on: this only fires for non-litellm, non-claude, non-codex
+			// sources, where the default Anthropic provider would be wrong.
+			runner.ProviderOverride = sowBuilderProvider
+			fmt.Printf("  🔧 sow: applied resolved builder provider override (source=%s)\n", *builderSourceFlag)
+		}
+
+		// Wire policy-declared mcp_servers into the sow native runner so the
+		// worker can call MCP-backed tools (e.g. the Substrate codegen server)
+		// from within its task loop. The capability already exists in
+		// engine.NativeRunner.MCPRegistry but no non-test caller assigned it;
+		// this closes that gap. Gated behind R1_SOW_MCP=1 because exposing
+		// extra tools to the worker is a behavioural change operators should
+		// opt into. Note: MCP exposure makes the tools AVAILABLE; the
+		// deterministic offload pre-pass (R1_SOW_OFFLOAD, sow_offload.go) is
+		// what guarantees covered codegen actually uses Substrate regardless
+		// of model discretion.
+		if os.Getenv("R1_SOW_MCP") == "1" {
+			if mcpReg, mcpServers, mcpClose, mcpErr := loadMCPRegistry(*policy); mcpErr != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠ sow: loadMCPRegistry failed: %v\n", mcpErr)
+			} else {
+				runner.MCPRegistry = mcpReg
+				defer mcpClose()
+				fmt.Printf("  🔌 sow: wired %d MCP server(s) into native runner (trusted tools exposed to worker)\n", len(mcpServers))
+			}
 		}
 
 		// Build a repo map once so every task prompt can inject the
