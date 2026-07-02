@@ -240,6 +240,12 @@ type Policy struct {
 	// governance.enabled (possibly to false)" from "section omitted." When the
 	// section is omitted, normalizePolicy defaults Governance.Enabled to true.
 	governanceExplicit bool
+
+	// honestyExplicit is true when the YAML/JSON had an honesty section.
+	// Mirrors governanceExplicit: an omitted section gets
+	// DefaultHonestyConfig() in normalizePolicy, while an explicit
+	// `honesty:` block (even all-false) is honored as written.
+	honestyExplicit bool
 }
 
 // HonestyConfig controls the 7-layer Honesty Judge.
@@ -351,6 +357,7 @@ func DefaultPolicy() Policy {
 		Files:        FilesPolicy{Protected: []string{".claude/", ".stoke/", "CLAUDE.md", ".env*", "r1.policy.yaml"}},
 		Verification: VerificationPolicy{Build: true, Tests: true, Lint: true, CrossModelReview: true, ScopeCheck: true},
 		Skills:       DefaultSkillsConfig(),
+		Honesty:      DefaultHonestyConfig(),
 	}
 }
 
@@ -425,14 +432,16 @@ func LoadPolicy(path string) (Policy, error) {
 		if err = json.Unmarshal(raw, &p); err != nil {
 			return Policy{}, err
 		}
-		// Detect whether the JSON had a verification / governance section.
+		// Detect whether the JSON had a verification / governance / honesty section.
 		var probe struct {
 			Verification *json.RawMessage `json:"verification"`
 			Governance   *json.RawMessage `json:"governance"`
+			Honesty      *json.RawMessage `json:"honesty"`
 		}
 		json.Unmarshal(raw, &probe)
 		p.verificationExplicit = probe.Verification != nil
 		p.governanceExplicit = probe.Governance != nil
+		p.honestyExplicit = probe.Honesty != nil
 		return normalizePolicy(p), nil
 	}
 	p, err := parsePolicyYAML(trimmed)
@@ -490,6 +499,16 @@ func LoadPolicy(path string) (Policy, error) {
 	}
 	p.Governance = governance
 	p.governanceExplicit = governancePresent
+	// Parse the honesty top-level block (if any) via yaml.v3; the custom
+	// line-scanner above skips its contents. Absent block yields the zero
+	// HonestyConfig; normalizePolicy substitutes DefaultHonestyConfig()
+	// when the section was omitted.
+	honesty, honestyPresent, err := parseHonestyBlock(raw)
+	if err != nil {
+		return Policy{}, err
+	}
+	p.Honesty = honesty
+	p.honestyExplicit = honestyPresent
 	return normalizePolicy(p), nil
 }
 
@@ -559,6 +578,11 @@ func normalizePolicy(p Policy) Policy {
 	if !p.governanceExplicit {
 		p.Governance.Enabled = true
 	}
+	// Honesty defaults apply when the section was never explicitly
+	// provided. An explicit honesty: block (even all-false) is honored.
+	if !p.honestyExplicit {
+		p.Honesty = d.Honesty
+	}
 	// Apply skill defaults if not explicitly configured
 	if p.Skills.TokenBudget == 0 {
 		p.Skills = d.Skills
@@ -616,6 +640,12 @@ func parsePolicyYAML(input string) (Policy, error) {
 			// the custom scanner skips its contents and leaves parsing to
 			// parseGovernanceBlock (yaml.v3). Mirrors the cortex / throttling
 			// skip pattern above.
+			continue
+		case section == "honesty":
+			// honesty is a nested-map block (honesty.enabled,
+			// honesty.check_imports, ...); the custom scanner skips its
+			// contents and leaves parsing to parseHonestyBlock (yaml.v3).
+			// Mirrors the governance skip pattern above.
 			continue
 		case section == "phases" && indent == 2 && strings.HasSuffix(text, ":"):
 			currentPhase = strings.TrimSuffix(text, ":")
