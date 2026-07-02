@@ -109,7 +109,7 @@ Complete feature inventory for r1 as of 2026-05-15. Status reflects the merged s
 | Auto-start option per OS | `tauri-plugin-autostart` | Done | `desktop/src-tauri/src/autostart.rs` |
 | Component sharing | npm workspace `packages/web-components/` (shared with web) | Done | `packages/web-components/` |
 | 110 cargo tests `-race` clean | Validates Rust host code | Done | `desktop/src-tauri/src/*_test.rs` |
-| 4 Playwright e2e | multi-session, lanes-streaming, popout-lane, daemon-discovery | Done | `desktop/tests/agent/*.spec.ts` |
+| 4 Playwright e2e | multi-session, lanes-streaming, popout-lane, daemon-discovery | Skipped (CI-2 — app has no test-mode driver surface; all four specs file-level `test.skip`; see `audit/desktop-e2e-truth-2026-06-12.md`) | `desktop/tests/e2e/*.spec.ts` |
 
 ## r1d Daemon — One Process, N Sessions (spec 5)
 
