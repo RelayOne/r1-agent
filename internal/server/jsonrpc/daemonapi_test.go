@@ -26,6 +26,8 @@ type fakeDaemon struct {
 	subReq  SessionSubscribeRequest
 	subResp SessionSubscribeResponse
 
+	interruptReq SessionInterruptRequest
+
 	listReq LanesListRequest
 	listOut LanesListResponse
 
@@ -63,6 +65,13 @@ func (f *fakeDaemon) DaemonSessionSend(ctx context.Context, req SessionSendReque
 	defer f.mu.Unlock()
 	f.sendReq = req
 	return f.sendResp, nil
+}
+
+func (f *fakeDaemon) DaemonSessionInterrupt(ctx context.Context, req SessionInterruptRequest) (SessionInterruptResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.interruptReq = req
+	return SessionInterruptResponse{InterruptedAt: "2026-05-02T02:00:00Z", WasRunning: true}, nil
 }
 
 func (f *fakeDaemon) DaemonSessionSubscribe(ctx context.Context, req SessionSubscribeRequest) (SessionSubscribeResponse, error) {

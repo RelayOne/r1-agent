@@ -18,6 +18,10 @@ type fakeSubscriptionRegistry struct {
 	stored   map[string]interface{ Close() }
 	registers atomic.Int64
 	unregisters atomic.Int64
+
+	// notifications records every $/event frame the subscribe sink
+	// delivered, mirroring *ws.Conn.WriteNotification.
+	notifications []*Notification
 }
 
 func newFakeRegistry() *fakeSubscriptionRegistry {
@@ -41,6 +45,27 @@ func (f *fakeSubscriptionRegistry) UnregisterSubscription(subID string) interfac
 	delete(f.stored, subID)
 	f.unregisters.Add(1)
 	return c
+}
+
+// WriteNotification satisfies jsonrpc.NotificationWriter so the
+// subscribe handler's real sink (audit A069) has somewhere to write.
+func (f *fakeSubscriptionRegistry) WriteNotification(_ context.Context, n *Notification) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.notifications = append(f.notifications, n)
+	return nil
+}
+
+func (f *fakeSubscriptionRegistry) notificationCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.notifications)
+}
+
+func (f *fakeSubscriptionRegistry) notificationAt(i int) *Notification {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.notifications[i]
 }
 
 func (f *fakeSubscriptionRegistry) count() int {

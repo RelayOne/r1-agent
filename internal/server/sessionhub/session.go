@@ -580,6 +580,27 @@ func (s *Session) cancelRun() {
 // next turn boundary and waits on the session's resume channel
 // before invoking the provider.
 //
+
+// Interrupt cancels the session's in-flight Run — the drop-partial
+// protocol behind the `session.interrupt` RPC verb and the web
+// client's {type:"interrupt"} frame. Cancelling the Run context
+// aborts the streaming turn mid-flight; the partial assistant message
+// is never persisted (the agent loop exits before any end-of-turn
+// journal append). Unlike SessionHub.Delete, the session STAYS
+// registered so the caller can send the next turn immediately.
+//
+// Returns true when an active Run was cancelled, false when the
+// session was idle (idempotent no-op).
+func (s *Session) Interrupt() bool {
+	s.runMu.Lock()
+	cancel := s.cancel
+	s.runMu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	return true
+}
 // Pause flips State to SessionStatePaused. Resume restores the prior
 // state or, when prior state was SessionStateRunning, leaves it at
 // "running" so observers do not see a spurious paused→active

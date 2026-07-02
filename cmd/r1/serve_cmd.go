@@ -28,9 +28,11 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -350,6 +352,34 @@ func runServeLoop(opts serveOptions) {
 			wsHandler := &ws.Handler{Dispatcher: disp, Token: opts.Token}
 			muxAlias.Handle("/v1/rpc", wsHandler)
 			fmt.Fprintf(os.Stderr, "JSON-RPC over WS mounted at /v1/rpc\n")
+
+			// Web chat surface (audit A008): POST /auth/ws-ticket
+			// mints short-lived WS tokens (bearer-authenticated), and
+			// /ws serves the typed-frame bridge the embedded SPA
+			// dials (web/src/lib/api/r1d.ts default wsUrl).
+			tickets := server.NewWSTicketStore(server.DefaultWSTicketTTL)
+			var ticketHandler http.Handler = tickets.Handler()
+			if opts.Token != "" {
+				ticketHandler = server.RequireBearer(opts.Token)(ticketHandler)
+			}
+			muxAlias.Handle("/auth/ws-ticket", ticketHandler)
+
+			daemonToken := opts.Token
+			webWS := &ws.WebHandler{
+				API: rpcHandler,
+				ValidateToken: func(tok string) bool {
+					if daemonToken == "" {
+						return true // dev mode: no bearer configured
+					}
+					if len(tok) == len(daemonToken) &&
+						subtle.ConstantTimeCompare([]byte(tok), []byte(daemonToken)) == 1 {
+						return true
+					}
+					return tickets.Validate(tok)
+				},
+			}
+			muxAlias.Handle("/ws", webWS)
+			fmt.Fprintf(os.Stderr, "web chat WS mounted at /ws (+ POST /auth/ws-ticket)\n")
 		}
 	}
 
@@ -450,4 +480,5 @@ func portFromAddr(addr string) int {
 	fmt.Sscanf(addr[idx+1:], "%d", &p)
 	return p
 }
+
 

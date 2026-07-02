@@ -51,6 +51,7 @@ import (
 	"time"
 
 	"github.com/RelayOne/r1/internal/cortex"
+	"github.com/RelayOne/r1/internal/journal"
 	"github.com/RelayOne/r1/internal/server/sessionhub"
 	"github.com/RelayOne/r1/internal/stokerr"
 )
@@ -108,6 +109,24 @@ type HubHandler struct {
 	// SetReloadConfigFunc; nil means daemon.reload_config returns
 	// ErrInternal.
 	reloadConfigFn func(path string) (string, error)
+
+	// journalPathFn resolves the per-session journal file the event
+	// pipe appends to and subscribe replays from. Installed via
+	// SetJournalPathFn (guarded by mu like the other callbacks); nil
+	// disables journaling and replay.
+	journalPathFn func(sessionID string) string
+
+	// fanout is the live subscription registry: sessionID -> SubID ->
+	// *Subscription. Guarded by fanoutMu (its own mutex - publish is
+	// hot-path and must not contend with the callback installers).
+	// See fanout.go for the publish/subscribe engine.
+	fanoutMu sync.Mutex
+	fanout   map[string]map[string]*Subscription
+
+	// journals tracks the per-session journal writers opened by
+	// attachSessionEventPipe so DaemonSessionCancel can close them.
+	journalsMu sync.Mutex
+	journals   map[string]*journal.Writer
 }
 
 // NewHubHandler constructs a production HubHandler. nil hub is a
@@ -175,6 +194,10 @@ func (h *HubHandler) DaemonSessionStart(ctx context.Context, req DaemonSessionSt
 			return DaemonSessionStartResponse{}, stokerr.Wrap(stokerr.ErrInternal, "session.start: hub.Create failed", err)
 		}
 	}
+	// Wire the session's event pipe: journal-first persistence plus
+	// live subscription fanout (fanout.go). Without this, subscribers
+	// would only ever see replayed history (audit A069).
+	h.attachSessionEventPipe(s)
 	return DaemonSessionStartResponse{
 		SessionID: s.ID,
 		StartedAt: s.StartedAt.UTC().Format(time.RFC3339Nano),
@@ -230,6 +253,7 @@ func (h *HubHandler) DaemonSessionCancel(ctx context.Context, req SessionIDReque
 	if err := h.Hub.Delete(req.SessionID); err != nil {
 		return SessionCancelResponse{}, stokerr.Wrap(stokerr.ErrInternal, "session.cancel: hub.Delete failed", err)
 	}
+	h.closeSessionJournal(req.SessionID)
 	return SessionCancelResponse{
 		CancelledAt: h.now().UTC().Format(time.RFC3339Nano),
 	}, nil
@@ -289,16 +313,17 @@ type SubscriptionRegistry interface {
 // in-process tests).
 var ConnFromContextFunc func(ctx context.Context) SubscriptionRegistry
 
-// DaemonSessionSubscribe mints a *Subscription, registers it on the
-// caller's conn (so unsubscribe can find it and connection teardown
-// drains it), and returns the SubID.
+// DaemonSessionSubscribe mints a *Subscription whose sink writes
+// JSON-RPC `$/event` notifications back to the caller's conn,
+// registers it on the conn (so unsubscribe can find it and connection
+// teardown drains it) AND in the HubHandler live fanout (fanout.go),
+// then kicks off the journal replay asynchronously so the subscribe
+// response reaches the wire before the replay frames.
 //
-// Today the Subscription is constructed but no bus bridge feeds
-// events into it — that's a follow-up that wires hub.Bus.Register
-// against the daemon's session-event stream. The shape of the surface
-// is correct (subscribe returns a sub id, unsubscribe finds it,
-// disconnect drains it); the live-event fanout pipe lights up when
-// the bus bridge lands.
+// The prior scaffold sink here wrote to /dev/null (audit A069); the
+// sink is now the real per-connection notification writer, and
+// PublishSessionEvent delivers live events for the session into every
+// registered subscription.
 func (h *HubHandler) DaemonSessionSubscribe(ctx context.Context, req SessionSubscribeRequest) (SessionSubscribeResponse, error) {
 	if _, err := h.lookupSession(req.SessionID); err != nil {
 		return SessionSubscribeResponse{}, err
@@ -312,14 +337,57 @@ func (h *HubHandler) DaemonSessionSubscribe(ctx context.Context, req SessionSubs
 		return SessionSubscribeResponse{}, stokerr.New(stokerr.ErrInternal,
 			"session.subscribe: must be invoked over a WS connection (no Conn on ctx)")
 	}
+	writer, ok := reg.(NotificationWriter)
+	if !ok {
+		return SessionSubscribeResponse{}, stokerr.New(stokerr.ErrInternal,
+			"session.subscribe: connection cannot deliver $/event notifications (no WriteNotification)")
+	}
 	subID := mintSubID()
-	// Sink: writing to /dev/null today. The bus-bridge follow-up
-	// replaces this with a sink that writes JSON-RPC `$/event`
-	// notifications back to the conn.
-	sink := func(_ context.Context, _ *SubscriptionEvent) error { return nil }
+	sink := func(sctx context.Context, ev *SubscriptionEvent) error {
+		return writer.WriteNotification(sctx, NewNotification("$/event", ev))
+	}
 	sub := NewSubscription(subID, req.SessionID, sink, req.Filter)
-	reg.RegisterSubscription(subID, sub)
+	h.registerFanout(req.SessionID, sub)
+	handle := &fanoutSubscription{sub: sub, onClose: func() {
+		h.unregisterFanout(req.SessionID, subID)
+	}}
+	reg.RegisterSubscription(subID, handle)
+
+	// Replay asynchronously: the RPC response (carrying SubID) should
+	// hit the wire before replay frames. Live events that fire while
+	// replay runs buffer inside the Subscription and flush after, per
+	// the replay-before-live contract (spec section 11.32). ctx here
+	// is the per-connection dispatch ctx, cancelled on conn teardown.
+	replayer := h.replayerFor(req.SessionID)
+	sinceSeq := req.SinceSeq
+	go func() {
+		if err := sub.Replay(ctx, sinceSeq, replayer); err != nil {
+			// Best-effort error notification, then tear down; the
+			// client re-subscribes with its last seq.
+			_ = sink(ctx, &SubscriptionEvent{SubID: subID, Type: "error",
+				Data: map[string]string{"message": err.Error()}})
+			handle.Close()
+		}
+	}()
 	return SessionSubscribeResponse{SubID: subID}, nil
+}
+
+// DaemonSessionInterrupt implements the drop-partial interrupt
+// protocol (specs/web-chat-ui.md; docs/HOW-IT-WORKS.md step 7): cancel
+// the session's in-flight Run context so the streaming turn aborts
+// and the partial assistant message is never persisted, while the
+// session itself stays registered for the next turn. Idempotent: an
+// idle session reports WasRunning=false and no error.
+func (h *HubHandler) DaemonSessionInterrupt(ctx context.Context, req SessionInterruptRequest) (SessionInterruptResponse, error) {
+	sess, err := h.lookupSession(req.SessionID)
+	if err != nil {
+		return SessionInterruptResponse{}, err
+	}
+	wasRunning := sess.Interrupt()
+	return SessionInterruptResponse{
+		InterruptedAt: h.now().UTC().Format(time.RFC3339Nano),
+		WasRunning:    wasRunning,
+	}, nil
 }
 
 // DaemonSessionUnsubscribe finds the prior subscription on the

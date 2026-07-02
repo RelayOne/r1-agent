@@ -11,6 +11,7 @@
 //	session.resume
 //	session.cancel         (sigterm + grace + kill)
 //	session.send           (write a turn)
+//	session.interrupt      (drop-partial cancel of the in-flight turn)
 //	session.subscribe      (TASK-32 — declared here, body in subscribe.go)
 //	session.unsubscribe    (TASK-32)
 //	lanes.list
@@ -113,6 +114,25 @@ type SessionSendResponse struct {
 	// the inbound turn (so the caller can correlate with subscriber
 	// events that fire as a consequence).
 	Seq uint64 `json:"seq,omitempty"`
+}
+
+// SessionInterruptRequest is the params for session.interrupt.
+// DropPartial is accepted for wire compatibility with the web client
+// contract (r1d.session.interrupt(sessionId, {drop_partial: true}));
+// the daemon's interrupt is ALWAYS drop-partial (the in-flight turn's
+// context is cancelled and the partial assistant message is never
+// persisted), so the flag is informational.
+type SessionInterruptRequest struct {
+	SessionID   string `json:"session_id"`
+	DropPartial bool   `json:"drop_partial,omitempty"`
+}
+
+// SessionInterruptResponse acknowledges the interrupt. WasRunning
+// reports whether an in-flight Run was actually cancelled (false =
+// the session was idle; the call is an idempotent no-op).
+type SessionInterruptResponse struct {
+	InterruptedAt string `json:"interrupted_at"`
+	WasRunning    bool   `json:"was_running"`
 }
 
 // SessionSubscribeRequest is the params for session.subscribe.
@@ -266,6 +286,7 @@ type DaemonAPI interface {
 	DaemonSessionResume(ctx context.Context, req SessionIDRequest) (SessionResumeResponse, error)
 	DaemonSessionCancel(ctx context.Context, req SessionIDRequest) (SessionCancelResponse, error)
 	DaemonSessionSend(ctx context.Context, req SessionSendRequest) (SessionSendResponse, error)
+	DaemonSessionInterrupt(ctx context.Context, req SessionInterruptRequest) (SessionInterruptResponse, error)
 	DaemonSessionSubscribe(ctx context.Context, req SessionSubscribeRequest) (SessionSubscribeResponse, error)
 	DaemonSessionUnsubscribe(ctx context.Context, req SessionUnsubscribeRequest) (SessionUnsubscribeResponse, error)
 
@@ -334,6 +355,13 @@ func RegisterDaemonAPI(d *Dispatcher, h DaemonAPI) {
 			return nil, err
 		}
 		return h.DaemonSessionSend(ctx, req)
+	})
+	d.Register("session.interrupt", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var req SessionInterruptRequest
+		if err := decodeParams(params, &req); err != nil {
+			return nil, err
+		}
+		return h.DaemonSessionInterrupt(ctx, req)
 	})
 	d.Register("session.subscribe", func(ctx context.Context, params json.RawMessage) (any, error) {
 		var req SessionSubscribeRequest
