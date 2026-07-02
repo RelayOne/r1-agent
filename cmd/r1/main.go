@@ -83,6 +83,7 @@ import (
 	"github.com/RelayOne/r1/internal/streamjson"
 	"github.com/RelayOne/r1/internal/subscriptions"
 	"github.com/RelayOne/r1/internal/taskstate"
+	"github.com/RelayOne/r1/internal/telemetry"
 	"github.com/RelayOne/r1/internal/testselect"
 	"github.com/RelayOne/r1/internal/tui"
 	"github.com/RelayOne/r1/internal/verify"
@@ -136,6 +137,29 @@ type BuildConfig struct {
 	// per-task worktree hides the worker's writes from the reviewer
 	// (which runs BEFORE the merge step that would synchronize them).
 	InPlace bool
+}
+
+// emitRunTelemetry surfaces + persists a run's structured telemetry
+// (O6). It prints the human-readable Format() next to the cost/progress
+// summary and writes a JSON Snapshot under
+// <repo>/.r1/telemetry/<run-id>.json so `r1 stats telemetry` can diff
+// runs. Both steps are best-effort: telemetry is diagnostic and must
+// never fail or slow a build. A nil/empty collector is a no-op (e.g.
+// --plan-only runs that never executed a task).
+func emitRunTelemetry(repo, runID string, tel *telemetry.Collector) {
+	if tel == nil || tel.EventCount() == 0 {
+		return
+	}
+	fmt.Printf("  Telemetry:\n")
+	for _, line := range strings.Split(strings.TrimRight(tel.Format(), "\n"), "\n") {
+		fmt.Printf("    %s\n", line)
+	}
+	dir := r1dir.JoinFor(repo, "telemetry")
+	if path, err := telemetry.WriteSnapshot(dir, tel.Snapshot(runID)); err != nil {
+		fmt.Fprintf(os.Stderr, "warn: telemetry snapshot not written: %v\n", err)
+	} else {
+		fmt.Printf("  Telemetry snapshot: %s\n", path)
+	}
 }
 
 // runBuild executes a build plan and returns the result.
@@ -279,6 +303,15 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	sched := scheduler.New(cfg.Workers)
 	sched.PriorityName = cfg.SchedulerAlgo
 	startTime := time.Now()
+
+	// O6: one run-level telemetry collector shared across every per-task
+	// orchestrator (injected via appCfg.Telemetry below). app.New would
+	// otherwise auto-construct a fresh per-task collector whose Summary
+	// dies with the task; sharing one aggregates task.start/task.end
+	// across the whole build so the end-of-run summary + persisted
+	// snapshot reflect the run, not the last task.
+	runTelemetry := telemetry.New()
+	runID := startTime.UTC().Format("20060102T150405.000000000Z")
 
 	// Create ONE shared worktree manager for the entire build session.
 	// The merge mutex MUST be shared across all parallel tasks to prevent
@@ -453,6 +486,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			Pools:               pools,
 			Worktrees:           sharedWorktrees,
 			State:               ts,
+			Telemetry:           runTelemetry, // O6: shared run-level collector
 			Wisdom:              wisdomStore,
 			Memory:              openCrossSessionMemory(absRepo),
 			BuildCommand:        cfg.BuildCommand,
@@ -623,6 +657,10 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		fmt.Printf("  Cost: %s\n", tracker.Summary())
 	}
 	fmt.Printf("  Progress: %s\n", estimator.Summary())
+	// O6: surface + persist the run's structured telemetry (latency
+	// percentiles, success rate, per-category cost) that the orchestrator
+	// collected but previously discarded at exit.
+	emitRunTelemetry(absRepo, runID, runTelemetry)
 
 	// Fire webhook notification on build completion (if configured).
 	if webhookURL := r1env.Get("R1_WEBHOOK_URL", "STOKE_WEBHOOK_URL"); webhookURL != "" {
@@ -1331,6 +1369,9 @@ func runCmd(args []string) {
 
 	result, err := orchestrator.Run(ctx)
 	elapsed := time.Since(startTime).Seconds()
+	// O6: surface + persist this run's telemetry regardless of outcome
+	// (task.end is already recorded by the time Run returns).
+	emitRunTelemetry(absRepo, "run-"+startTime.UTC().Format("20060102T150405.000000000Z"), orchestrator.Telemetry())
 
 	if err != nil {
 		ui.TaskComplete("task", false, elapsed, result.TotalCostUSD, 1)
