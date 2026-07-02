@@ -594,6 +594,39 @@ func TestBatchRejectsEdgeToNonexistent(t *testing.T) {
 	}
 }
 
+// TestBatchValidationFailureWritesNothing covers audit A020: a batch
+// [AddNode A, AddEdge A->missing] used to persist node A permanently
+// (store + index) and only THEN fail edge validation — despite the doc's
+// "all operations succeed or none do". Validation now runs entirely
+// before any write.
+func TestBatchValidationFailureWritesNothing(t *testing.T) {
+	l := newTestLedger(t)
+	ctx := context.Background()
+
+	n := makeNode("decision", "will-not-persist", "s1")
+	err := l.Batch(ctx, []BatchOp{
+		{OpType: BatchAddNode, Node: &n},
+		{OpType: BatchAddEdge, Edge: &Edge{
+			From: "nonexistent-from",
+			To:   "nonexistent-to",
+			Type: EdgeDependsOn,
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected error for edge with nonexistent endpoints")
+	}
+	nodes, err := l.store.ListNodes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range nodes {
+		if string(got.Content) != "" && got.MissionID == n.MissionID && got.Type == n.Type {
+			// Any node from this failed batch leaking is the A020 bug.
+			t.Fatalf("failed batch persisted node %s — validation must precede all writes", got.ID)
+		}
+	}
+}
+
 func TestBatchEmpty(t *testing.T) {
 	l := newTestLedger(t)
 	ctx := context.Background()

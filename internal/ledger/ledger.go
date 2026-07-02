@@ -507,8 +507,14 @@ func (l *Ledger) Walk(_ context.Context, id NodeID, direction WalkDirection, edg
 	return result, nil
 }
 
-// Batch atomically writes multiple nodes and edges. All operations succeed
-// or none do.
+// Batch writes multiple nodes and edges after validating EVERY operation
+// up front — validation failures (malformed ops, missing edge endpoints,
+// directionality/matrix violations) write nothing. The store is
+// append-only by design, so there is no rollback-by-deletion: a
+// mid-batch I/O failure (disk full) can leave earlier ops committed;
+// WriteNode's dedup keeps a retried batch idempotent for those.
+// (The previous doc claimed full atomicity while edges were validated
+// only AFTER all nodes were persisted — audit A020.)
 func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 	if len(ops) == 0 {
 		return nil
@@ -523,6 +529,9 @@ func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 		edge *Edge
 	}
 	var items []prepared
+	// Node IDs (and types) staged earlier in this batch — edges may
+	// reference them before they hit the store.
+	newNodeTypes := map[NodeID]string{}
 
 	for i, op := range ops {
 		switch op.OpType {
@@ -559,6 +568,7 @@ func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 				n.ContentCommitment = contentCommitment(n.Salt, n.Content)
 			}
 			n.ID = computeID(n)
+			newNodeTypes[n.ID] = n.Type
 			items = append(items, prepared{node: &n})
 		case BatchAddEdge:
 			if op.Edge == nil {
@@ -571,6 +581,31 @@ func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 			if !validEdgeTypes[e.Type] {
 				return fmt.Errorf("ledger: batch op %d: unknown edge type %q", i, e.Type)
 			}
+			// Validate endpoints + the same directionality/matrix rules
+			// AddEdge enforces, BEFORE anything is written (audit A020):
+			// endpoints must be earlier in this batch or already stored.
+			fromType, ok := newNodeTypes[e.From]
+			if !ok {
+				n, err := l.store.ReadNode(e.From)
+				if err != nil {
+					return fmt.Errorf("ledger: batch op %d: edge from %q not found: %w", i, e.From, err)
+				}
+				fromType = n.Type
+			}
+			toType, ok := newNodeTypes[e.To]
+			if !ok {
+				n, err := l.store.ReadNode(e.To)
+				if err != nil {
+					return fmt.Errorf("ledger: batch op %d: edge to %q not found: %w", i, e.To, err)
+				}
+				toType = n.Type
+			}
+			if fromType == nodeTypeDecisionRepo && toType == nodeTypeDecisionInternal {
+				return fmt.Errorf("ledger: batch op %d: directionality violation: decision_repo %q cannot have edge to decision_internal %q", i, e.From, e.To)
+			}
+			if err := validateEdgeMatrix(e.Type, fromType, toType); err != nil {
+				return fmt.Errorf("ledger: batch op %d: %w", i, err)
+			}
 			items = append(items, prepared{edge: &e})
 		default:
 			return fmt.Errorf("ledger: batch op %d: unknown op type", i)
@@ -578,8 +613,7 @@ func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 	}
 
 	// Phase 2: write all nodes first so edges can reference them.
-	// Collect new node IDs so edge validation can find them.
-	newNodeIDs := map[NodeID]bool{}
+	// All validation already happened in Phase 1.
 	for _, it := range items {
 		if it.node != nil {
 			if err := l.store.WriteNode(*it.node); err != nil {
@@ -588,23 +622,12 @@ func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 			if err := l.index.InsertNode(*it.node); err != nil {
 				return fmt.Errorf("ledger: batch index node: %w", err)
 			}
-			newNodeIDs[it.node.ID] = true
 		}
 	}
 
-	// Phase 3: write edges, verifying endpoints exist.
+	// Phase 3: write edges.
 	for _, it := range items {
 		if it.edge != nil {
-			if !newNodeIDs[it.edge.From] {
-				if _, err := l.store.ReadNode(it.edge.From); err != nil {
-					return fmt.Errorf("ledger: batch edge from %q not found: %w", it.edge.From, err)
-				}
-			}
-			if !newNodeIDs[it.edge.To] {
-				if _, err := l.store.ReadNode(it.edge.To); err != nil {
-					return fmt.Errorf("ledger: batch edge to %q not found: %w", it.edge.To, err)
-				}
-			}
 			if err := l.store.WriteEdge(*it.edge); err != nil {
 				return fmt.Errorf("ledger: batch write edge: %w", err)
 			}
