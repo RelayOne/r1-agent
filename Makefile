@@ -1,4 +1,4 @@
-.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic smoke-coderadar
+.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic smoke-coderadar test-coderadar-integration
 .PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic test-oneshot-concurrent
 
 # Default: run the CI gate
@@ -34,13 +34,23 @@ lint:
 lint-chdir:
 	./tools/lint-no-chdir.sh
 
+# CodeRadar hub-integration test (spec coderadar-dogfood.md T6).
+# Hermetic — the test spins up its own httptest ingest server; no DSN,
+# secret, or network access needed. Behind the coderadar_integration
+# build tag so the default `go test ./...` gate stays fast. Runs as a
+# prerequisite of smoke-coderadar so the Cloud Build deploy lane
+# (services/cloudbuild-deploy.yaml step smoke-coderadar) exercises the
+# six-subscriber wire-format contract on every deploy.
+test-coderadar-integration:
+	go test -tags=coderadar_integration -count=1 -timeout=60s ./internal/hub/builtin/
+
 # CodeRadar dogfood smoke (spec coderadar-dogfood.md T8).
 # Requires ENV=dev|staging|prod and either CODERADAR_DSN already set or
 # `gcloud` available to materialize the env-scoped secret. Builds only
 # the coderadar package and runs the live `service_started` round-trip
 # behind the coderadar_smoke build tag. Cloud Build invokes this step
 # after deploy-coord-api per services/cloudbuild-deploy.yaml.
-smoke-coderadar:
+smoke-coderadar: test-coderadar-integration
 	@test -n "$(ENV)" || (echo "ENV=dev|staging|prod required"; exit 1)
 	@if [ -z "$$CODERADAR_DSN" ]; then \
 	  echo "Materializing CODERADAR_DSN from Secret Manager..."; \
