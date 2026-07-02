@@ -964,19 +964,75 @@ func main() {
 
 // --- init/wizard: project configuration wizard ---
 
-func initCmd(args []string) {
-	// LINT-ALLOW chdir-cli-entry: r1 init subcommand; cwd captured once as the project default, overridable via positional arg below.
-	projectDir, _ := os.Getwd()
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		projectDir = args[0]
-	}
+// initOptions is the resolved routing for `r1 init` (audit A076).
+// Default routes to the modern wizard.RunWizard in ModeAuto (detect,
+// propose, confirm); --auto/-a selects ModeYes (CI-safe, no prompts);
+// --interactive keeps the legacy question wizard as its backend;
+// --research enables the AI research-convergence pass when a model
+// provider can be resolved.
+type initOptions struct {
+	projectDir  string
+	mode        wizard.Mode
+	interactive bool
+	research    bool
+}
 
-	autoMode := false
+// parseInitFlags resolves `r1 init` args into routing options. Split out
+// of initCmd so the flag→mode resolution is unit-testable.
+func parseInitFlags(args []string, cwd string) initOptions {
+	o := initOptions{projectDir: cwd, mode: wizard.ModeAuto}
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		o.projectDir = args[0]
+	}
 	for _, a := range args {
-		if a == "--auto" || a == "-a" {
-			autoMode = true
+		switch a {
+		case "--auto", "-a":
+			o.mode = wizard.ModeYes
+		case "--interactive", "-i":
+			o.interactive = true
+		case "--research":
+			o.research = true
 		}
 	}
+	return o
+}
+
+// wizardResearchProvider adapts the direct-API provider.Provider to the
+// wizard's minimal Chat seam (internal/wizard run.go Provider) for the
+// opt-in `r1 init --research` convergence pass (audit A076).
+type wizardResearchProvider struct {
+	p     provider.Provider
+	model string
+}
+
+func (w wizardResearchProvider) Chat(_ context.Context, system, user string) (string, error) {
+	userContent, err := json.Marshal([]map[string]any{{"type": "text", "text": user}})
+	if err != nil {
+		return "", err
+	}
+	resp, err := w.p.Chat(provider.ChatRequest{
+		Model:     w.model,
+		System:    system,
+		MaxTokens: 2000,
+		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
+	})
+	if err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	for _, c := range resp.Content {
+		if c.Type == "text" {
+			out.WriteString(c.Text)
+		}
+	}
+	return out.String(), nil
+}
+
+func initCmd(args []string) {
+	// LINT-ALLOW chdir-cli-entry: r1 init subcommand; cwd captured once as the project default, overridable via positional arg below.
+	cwd, _ := os.Getwd()
+	opts := parseInitFlags(args, cwd)
+	projectDir := opts.projectDir
 
 	// If reinitializing, verify existing ledger integrity first.
 	// Uses the dual-resolve helper so an operator reinitialising a
@@ -998,18 +1054,28 @@ func initCmd(args []string) {
 		fmt.Println("  Ledger integrity: OK (reinitializing)")
 	}
 
-	w := wizard.New(projectDir)
-
-	var err error
-	if autoMode {
-		err = w.RunAutoDetect()
-		if err == nil {
-			fmt.Printf("  r1.policy.yaml generated (auto-detect mode)\n")
+	if opts.interactive {
+		// Legacy question flow, kept solely as the --interactive
+		// backend (audit A076). Writes r1.policy.yaml itself.
+		if err := wizard.New(projectDir).Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "wizard error: %v\n", err)
+			os.Exit(1)
 		}
-	} else {
-		err = w.Run()
+		return
 	}
 
+	wopts := wizard.Opts{ProjectRoot: projectDir, Mode: opts.mode, Stdin: os.Stdin}
+	if opts.research {
+		prov, modelName, reason := resolveInspectProvider("", "", "")
+		if prov == nil {
+			fmt.Fprintf(os.Stderr, "wizard error: --research needs a model provider: %s\n", reason)
+			os.Exit(1)
+		}
+		wopts.Research = true
+		wopts.Provider = wizardResearchProvider{p: prov, model: modelName}
+	}
+
+	res, err := wizard.RunWizard(context.Background(), wopts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "wizard error: %v\n", err)
 		os.Exit(1)
@@ -1024,6 +1090,14 @@ func initCmd(args []string) {
 	} else {
 		fmt.Println("  Ledger guard pre-commit hook: installed")
 	}
+
+	fmt.Printf("  Maturity: %s (score %d/100)\n", res.Maturity.Stage, res.Maturity.Score)
+	fmt.Printf("  Written: r1.policy.yaml, %s\n", filepath.Join(r1dir.JoinFor(projectDir), "config.yaml"))
+	fmt.Printf("  Rationale: %s\n", filepath.Join(r1dir.JoinFor(projectDir), "wizard-rationale.md"))
+	if len(res.Skills) > 0 {
+		fmt.Printf("  Skills: %s\n", strings.Join(res.Skills, ", "))
+	}
+	fmt.Printf("\n  Run `r1 build` to start.\n")
 }
 
 // --- mcp-serve: start MCP codebase tool server ---
