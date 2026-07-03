@@ -78,6 +78,10 @@ type RunConfig struct {
 	TestGraph        *testselect.Graph   // dependency-aware test selection (nil = run all)
 	RepoMap          *repomap.RepoMap    // ranked codebase map for context (nil = disabled)
 	PlanOnly         bool
+	// SkipMerge stops the workflow after merge validation: the verified
+	// worktree is returned via workflow.Result.Handle and the caller
+	// owns merge/discard. See workflow.Engine.SkipMerge.
+	SkipMerge        bool
 	BuildCommand     string
 	TestCommand      string
 	LintCommand      string
@@ -439,6 +443,7 @@ func (o *Orchestrator) Run(ctx context.Context) (res workflow.Result, err error)
 		TestGraph:        o.cfg.TestGraph,
 		RepoMap:          o.cfg.RepoMap,
 		PlanOnly:                   o.cfg.PlanOnly,
+		SkipMerge:                  o.cfg.SkipMerge,
 		Convergence:                o.cfg.Convergence,
 		ConvergenceIgnores:         o.cfg.ConvergenceIgnores,
 		ConvergenceRepeats:         o.cfg.ConvergenceRepeats,
