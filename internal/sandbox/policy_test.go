@@ -31,6 +31,34 @@ func TestModeFromEnv(t *testing.T) {
 	}
 }
 
+func TestEngageFromEnv(t *testing.T) {
+	cases := []struct {
+		name        string
+		r1          string
+		wantMode    string
+		wantEngaged bool
+	}{
+		{"unset does not engage (opt-in)", "", ModeOff, false},
+		{"off does not engage", "off", ModeOff, false},
+		{"on aliases auto and engages", "on", ModeAuto, true},
+		{"explicit bwrap engages", "bwrap", ModeBwrap, true},
+		{"explicit landlock engages", "landlock", ModeLandlock, true},
+		{"explicit docker engages", "docker", ModeDocker, true},
+		{"case and space normalized", "  ON  ", ModeAuto, true},
+		{"typo engages and passes through for Select to reject", "bwarp", "bwarp", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("R1_NATIVE_SANDBOX", tc.r1)
+			t.Setenv("STOKE_NATIVE_SANDBOX", "")
+			mode, engaged := EngageFromEnv()
+			if mode != tc.wantMode || engaged != tc.wantEngaged {
+				t.Errorf("EngageFromEnv() = (%q, %v), want (%q, %v)", mode, engaged, tc.wantMode, tc.wantEngaged)
+			}
+		})
+	}
+}
+
 func TestEgressFromEnv(t *testing.T) {
 	cases := []struct {
 		name string
