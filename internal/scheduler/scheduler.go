@@ -451,6 +451,16 @@ type SpecExecConfig struct {
 	// as by prompt. Empty = every rollout uses the build default.
 	Models []string
 
+	// OnWinnerMerged is invoked with the REAL task ID after a winning
+	// rollout's branch merges successfully. Rollouts run base() under
+	// synthetic "<task.ID>-spec-<strategy>" IDs, so the executor's own
+	// markTask/SaveState never persist completion for the real task —
+	// without this hook a resumed run re-executes an already-merged
+	// task. The caller wires it to markTask(StatusDone)+SaveState under
+	// the real ID. Nil = no persistence callback (the merge still
+	// happens; only resume bookkeeping is skipped).
+	OnWinnerMerged func(taskID string)
+
 	// Selector optionally overrides the deterministic score-sorted
 	// winner with a comparative judgment over all outcomes (the seam
 	// for an LLM judge; see specexec.Selector). It augments the Scorer,
@@ -777,6 +787,13 @@ func runFullRollouts(ctx context.Context, base ExecuteFunc, cfg SpecExecConfig, 
 				winRes.TaskID = task.ID
 				winRes.CostUSD = speculationCost
 				winRes.Worktree = worktree.Handle{}
+				// Persist completion under the REAL task ID: the rollouts
+				// ran under synthetic spec IDs, so the executor never
+				// recorded this task done. Skipping it makes a resumed
+				// run re-execute an already-merged task.
+				if cfg.OnWinnerMerged != nil {
+					cfg.OnWinnerMerged(task.ID)
+				}
 				return winRes
 			}
 			// Merge failure (e.g. a sibling task merged a conflicting

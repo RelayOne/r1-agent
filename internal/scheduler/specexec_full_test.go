@@ -137,6 +137,41 @@ func TestWithSpecExecFullSelectsByTestSignal(t *testing.T) {
 	}
 }
 
+// TestWithSpecExecFullRecordsWinnerCompletion pins the resume-correctness
+// fix: rollouts run under synthetic "-spec-" IDs, so the executor never
+// records the real task done. OnWinnerMerged must fire with the REAL task
+// ID on merge success so a resumed run doesn't re-execute an already-merged
+// task. It must NOT fire on the merge-failure fallback (that path re-runs
+// the real task through base, which records completion itself).
+func TestWithSpecExecFullRecordsWinnerCompletion(t *testing.T) {
+	rec := &rolloutRecorder{}
+	passing := fakeHandle(t, "wt-pass")
+
+	base := func(ctx context.Context, task plan.Task) TaskResult {
+		rec.record(task)
+		return TaskResult{TaskID: task.ID, Success: true, TestsPassed: 1, DiffLines: 10, Worktree: passing}
+	}
+
+	var recorded []string
+	wrapped := WithSpecExec(base, SpecExecConfig{
+		Approaches:     []string{"approach A", "approach B"},
+		MaxParallel:    2,
+		Timeout:        5 * time.Second,
+		FullExecution:  true,
+		MergeWinner:    rec.mergeWinner,
+		DiscardRollout: rec.discardRollout,
+		OnWinnerMerged: func(taskID string) { recorded = append(recorded, taskID) },
+	})
+
+	result := wrapped(context.Background(), plan.Task{ID: "T7", Description: explicitDesc})
+	if !result.Success {
+		t.Fatalf("expected success, got: %v", result.Error)
+	}
+	if len(recorded) != 1 || recorded[0] != "T7" {
+		t.Errorf("OnWinnerMerged fired with %v, want exactly [T7] (the real task ID, not a -spec- ID)", recorded)
+	}
+}
+
 func TestWithSpecExecFullMergeFailureFallsBack(t *testing.T) {
 	rec := &rolloutRecorder{mergeErr: fmt.Errorf("merge-tree conflict with sibling task")}
 	hA := fakeHandle(t, "wt-a")

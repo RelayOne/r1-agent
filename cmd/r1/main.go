@@ -689,6 +689,15 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			seCfg.MergeWinner = sharedWorktrees.Merge
 			seCfg.DiscardRollout = sharedWorktrees.Cleanup
 			seCfg.Models = specRunnerModels(cfg.RunnerMode)
+			// Rollouts run base() under synthetic spec IDs, so the
+			// executor's markTask above never fires for the real task.
+			// Persist completion under the real ID on merge success —
+			// mirrors lines 666-667 — so a resumed run does not
+			// re-execute an already-merged task.
+			seCfg.OnWinnerMerged = func(taskID string) {
+				markTask(p, taskID, plan.StatusDone)
+				store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
+			}
 		}
 		execFn = scheduler.WithSpecExec(execFn, seCfg)
 	}
