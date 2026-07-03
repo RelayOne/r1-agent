@@ -487,6 +487,7 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 		case <-ctx.Done():
 			result.StopReason = "cancelled"
 			result.Turns = turn
+			result.Messages = messages
 			return result, ctx.Err()
 		default:
 		}
@@ -499,6 +500,7 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 			if err := l.config.PreTurnHook(ctx, turn, messages); err != nil {
 				result.StopReason = "cancelled"
 				result.Turns = turn
+				result.Messages = messages
 				return result, err
 			}
 		}
@@ -533,6 +535,8 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 			}
 		})
 		if err != nil {
+			result.Turns = turn
+			result.Messages = messages
 			return result, fmt.Errorf("turn %d API call: %w", turn, err)
 		}
 
