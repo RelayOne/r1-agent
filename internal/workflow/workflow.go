@@ -633,6 +633,10 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	// from; the RewindOnRetry restore target. Empty when rewind is off or
 	// the baseline capture failed (retry then rebuilds per §7).
 	var rewindBaseline string
+	// Branch HEAD the current attempt started from; the RewindOnRetry
+	// target for undoing intermediate agent commits. Empty when rewind is
+	// off or the capture failed.
+	var rewindHead string
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// Budget gate: stop before spending more if over budget.
@@ -668,6 +672,22 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			lastDiff = worktree.DiffSummary(ctx, handle)
 			rewound := false
 			if e.RewindOnRetry && rewindBaseline != "" {
+				// Undo any intermediate commits the failed attempt made on
+				// the branch BEFORE restoring files. RestoreFiles rewinds
+				// the working tree but deliberately leaves HEAD, so without
+				// this an agent `git commit` would survive the rewind and
+				// pollute diff BaseCommit..HEAD, the scope gate, and the
+				// merge. Soft reset so the following RestoreFiles still owns
+				// the working-tree normalization; failure is non-fatal.
+				if rewindHead != "" {
+					if cur := worktree.HeadSHA(ctx, handle); cur != "" && cur != rewindHead {
+						if resetErr := worktree.ResetBranchSoft(ctx, handle, rewindHead); resetErr != nil {
+							log.Warn("rewind branch reset failed; intermediate commits may survive", "error", resetErr)
+						} else {
+							log.Info("rewind dropped intermediate attempt commits", "attempt", attempt, "from", cur, "to", rewindHead)
+						}
+					}
+				}
 				if restoreErr := worktree.RestoreFiles(ctx, handle, rewindBaseline); restoreErr != nil {
 					log.Warn("rewind-on-retry restore failed; rebuilding worktree", "error", restoreErr)
 				} else {
@@ -698,7 +718,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		// tree is cheap (cached stat info). Failure downgrades this
 		// attempt's retry to the rebuild path — never fatal.
 		rewindBaseline = ""
+		rewindHead = ""
 		if e.RewindOnRetry && !e.InPlace && !e.DryRun {
+			// Capture the branch tip too, so a rewind can drop commits the
+			// agent makes during this attempt — not just its file edits.
+			rewindHead = worktree.HeadSHA(ctx, handle)
 			if sha, ckErr := worktree.ShadowCheckpoint(ctx, handle, 0); ckErr != nil {
 				log.Warn("rewind baseline checkpoint failed; a retry will rebuild the worktree", "error", ckErr)
 			} else {

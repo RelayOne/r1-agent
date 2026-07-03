@@ -204,6 +204,40 @@ func TestRestoreFilesPreservesIgnored(t *testing.T) {
 	}
 }
 
+// TestRestoreFilesCleansIgnoredWithEnv: the R1_REWIND_CLEAN_IGNORED=1
+// opt-in extends the rewind clean to gitignored files (-fdx), so a failed
+// attempt's ignored artifacts don't leak into the retry.
+func TestRestoreFilesCleansIgnoredWithEnv(t *testing.T) {
+	t.Setenv(EnvRewindCleanIgnored, "1")
+	h := newShadowTestHandle(t)
+	ctx := context.Background()
+
+	writeFileT(t, h.Path, ".gitignore", "deps/\n")
+	gitOut(t, h.Path, "add", ".gitignore")
+	gitOut(t, h.Path, "commit", "-m", "ignore deps")
+
+	sha, err := ShadowCheckpoint(ctx, h, 1)
+	if err != nil {
+		t.Fatalf("ShadowCheckpoint: %v", err)
+	}
+
+	writeFileT(t, h.Path, "deps/lib.txt", "installed")
+	writeFileT(t, h.Path, "scratch.txt", "scratch")
+
+	if err := RestoreFiles(ctx, h, sha); err != nil {
+		t.Fatalf("RestoreFiles: %v", err)
+	}
+
+	// With the opt-in, BOTH the ignored artifact and the plain untracked
+	// file are removed.
+	if _, err := os.Stat(filepath.Join(h.Path, "deps", "lib.txt")); !os.IsNotExist(err) {
+		t.Errorf("ignored deps/lib.txt should be cleaned with opt-in (err %v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(h.Path, "scratch.txt")); !os.IsNotExist(err) {
+		t.Errorf("scratch.txt should be cleaned (err %v)", err)
+	}
+}
+
 func TestRestoreFilesFailsClosedOnMissingCheckpoint(t *testing.T) {
 	h := newShadowTestHandle(t)
 	ctx := context.Background()

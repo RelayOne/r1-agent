@@ -18,6 +18,7 @@ package engine
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -90,12 +91,77 @@ type transcriptWriter struct {
 
 // newTranscriptWriter opens (append/create) the transcript file. The
 // parent directory must exist — mirroring the WorkerLogPath contract.
+//
+// Before returning it repairs a torn trailing line left by a crash
+// mid-append: O_APPEND writes land at EOF, so an unrepaired partial line
+// would have the next entry glued directly onto it, producing a malformed
+// line in the MIDDLE of the file. readTranscriptEntries only tolerates a
+// torn line as the LAST line, so that glued corruption would fail the
+// whole transcript. Trimming the partial line here keeps each crash to at
+// most one lost (final) entry instead of a poisoned file. Repair is
+// best-effort: if it fails, the file is no worse than before.
 func newTranscriptWriter(path string) (*transcriptWriter, error) {
+	_ = repairTornTail(path)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, err
 	}
 	return &transcriptWriter{f: f}, nil
+}
+
+// repairTornTail trims a trailing partial line (bytes with no terminating
+// newline) so a subsequent O_APPEND write cannot concatenate onto it. A
+// well-formed transcript always ends in '\n'; anything else is the residue
+// of a crash between Write and the newline landing. Missing/empty files
+// and clean tails are no-ops.
+func repairTornTail(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Size() == 0 {
+		return nil
+	}
+	rf, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer rf.Close()
+
+	last := make([]byte, 1)
+	if _, err := rf.ReadAt(last, info.Size()-1); err != nil {
+		return err
+	}
+	if last[0] == '\n' {
+		return nil // clean tail — nothing torn
+	}
+
+	// Scan backwards in bounded chunks for the last newline; everything
+	// after it is the torn partial line. Chunked so a single huge final
+	// line (whole-file tool result) never forces the file into memory.
+	const chunk = 64 * 1024
+	buf := make([]byte, chunk)
+	off := info.Size()
+	cut := int64(0) // no newline anywhere ⇒ the whole file is one torn line
+	for off > 0 {
+		readSize := int64(chunk)
+		if off < readSize {
+			readSize = off
+		}
+		start := off - readSize
+		if _, err := rf.ReadAt(buf[:readSize], start); err != nil {
+			return err
+		}
+		if idx := bytes.LastIndexByte(buf[:readSize], '\n'); idx >= 0 {
+			cut = start + int64(idx) + 1
+			break
+		}
+		off = start
+	}
+	return os.Truncate(path, cut)
 }
 
 // writeEntryLocked marshals and appends one line, then fsyncs so a

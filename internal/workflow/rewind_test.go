@@ -6,6 +6,7 @@ package workflow
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -207,5 +208,68 @@ func TestBuildSpecTranscriptWiring(t *testing.T) {
 	e.InPlace = true
 	if spec := e.buildSpec(phase, handle); spec.ShadowCheckpoints {
 		t.Error("ShadowCheckpoints must stay off for in-place runs")
+	}
+}
+
+// committingProbeRunner writes AND commits a build-breaking probe on the
+// FIRST execute call, advancing the branch HEAD. The rewind must undo both
+// the file AND the commit so attempt 2 starts from a genuinely clean branch
+// (not just a clean working tree with a polluting commit still on HEAD).
+type committingProbeRunner struct {
+	*mockRunner
+	executeCalls int
+}
+
+func (r *committingProbeRunner) Run(ctx context.Context, spec engine.RunSpec, onEvent engine.OnEventFunc) (engine.RunResult, error) {
+	if spec.Phase.Name == "execute" {
+		r.executeCalls++
+		if r.executeCalls == 1 {
+			if err := os.WriteFile(filepath.Join(spec.WorktreeDir, rewindProbeFile), []byte("junk\n"), 0o644); err != nil {
+				return engine.RunResult{}, err
+			}
+			for _, args := range [][]string{{"add", "-A"}, {"commit", "-m", "intermediate agent commit"}} {
+				cmd := exec.Command("git", append([]string{"-C", spec.WorktreeDir}, args...)...)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					return engine.RunResult{}, fmt.Errorf("git %v: %v\n%s", args, err, out)
+				}
+			}
+		}
+	}
+	return r.mockRunner.Run(ctx, spec, onEvent)
+}
+
+// TestRewindOnRetryResetsBranch is the regression guard for the rewind
+// branch-reset fix: an intermediate commit made during a failed attempt
+// must not survive into the retry.
+func TestRewindOnRetryResetsBranch(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := &trackingManager{stubManager: stubManager{repo: repo}}
+	runner := &committingProbeRunner{mockRunner: newMockRunner()}
+
+	wf := newRewindEngine(repo, true, mgr, runner)
+	result, err := wf.Run(context.Background())
+	if err != nil && !strings.Contains(err.Error(), "merge") {
+		t.Fatalf("workflow failed (non-merge): %v", err)
+	}
+	if runner.executeCalls != 2 {
+		t.Errorf("execute calls = %d, want 2 (fail once, pass on retry)", runner.executeCalls)
+	}
+	if mgr.prepareCalls != 1 {
+		t.Errorf("Prepare calls = %d, want 1 (rewind must not rebuild)", mgr.prepareCalls)
+	}
+	wt := result.WorktreePath
+	// The probe committed by attempt 1 is gone from the working tree.
+	if _, serr := os.Stat(filepath.Join(wt, rewindProbeFile)); !os.IsNotExist(serr) {
+		t.Errorf("probe file survived the rewind (err %v)", serr)
+	}
+	// And the intermediate commit is gone from the branch history.
+	if out, gerr := exec.Command("git", "-C", wt, "log", "--oneline").CombinedOutput(); gerr == nil {
+		if strings.Contains(string(out), "intermediate agent commit") {
+			t.Errorf("intermediate attempt commit survived the rewind:\n%s", out)
+		}
+	}
+	// The committed blob must not be reachable from HEAD.
+	if err := exec.Command("git", "-C", wt, "cat-file", "-e", "HEAD:"+rewindProbeFile).Run(); err == nil {
+		t.Errorf("probe blob still reachable from HEAD after rewind — branch not reset")
 	}
 }
