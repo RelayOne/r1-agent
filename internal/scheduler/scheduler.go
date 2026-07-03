@@ -441,6 +441,15 @@ type SpecExecConfig struct {
 	// Wired to (*worktree.Manager).Cleanup.
 	DiscardRollout func(ctx context.Context, h worktree.Handle) error
 
+	// DiscardRolloutByName removes a rollout worktree/branch by its
+	// deterministic name when the live Handle was lost. A strategy that
+	// times out (Spec.Timeout) or a run that is cancelled returns a
+	// zero-valued Handle, so DiscardRollout (which needs a Handle) cannot
+	// reach the worktree and it leaks. The wrapper passes the synthetic
+	// spec task ID it created the rollout under; wired to
+	// (*worktree.Manager).CleanupByName. Nil disables the by-name fallback.
+	DiscardRolloutByName func(ctx context.Context, name string) error
+
 	// Tracker gates rollout spend: OverBudget() skips speculation for
 	// the task entirely, and a nearly exhausted budget (<20% remaining)
 	// clamps the rollout count to 2. Nil = no budget constraints.
@@ -637,6 +646,12 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 // to the comparative Selector prompt (the selector re-caps per block).
 const rolloutDiffCap = 64 * 1024
 
+// rolloutCleanupTimeout bounds the worktree/branch cleanup of one rollout.
+// Cleanup runs several git subcommands; 2 minutes mirrors the worktree
+// package's own merge timeout. Cleanup runs on a Background-derived ctx so
+// run cancellation cannot disable it, hence it needs its own deadline.
+const rolloutCleanupTimeout = 2 * time.Minute
+
 // rolloutCount decides how many full-execution rollouts a task earns.
 // Full rollouts cost N× tokens plus N× verify CPU, so N tracks task
 // difficulty instead of being hardcoded: trivial tasks skip speculation
@@ -753,15 +768,33 @@ func runFullRollouts(ctx context.Context, base ExecuteFunc, cfg SpecExecConfig, 
 	}
 	mu.Unlock()
 
+	// Rollout cleanup runs on a Background-derived, separately-bounded ctx:
+	// a cancelled run (Ctrl-C / timeout) or a strategy that blew Spec.Timeout
+	// must NOT also disable cleanup, or the rollout worktrees and branches
+	// leak. The run ctx is only used for the productive work above.
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), rolloutCleanupTimeout)
+	defer cancelCleanup()
+
 	discard := func(strategyID string) {
 		mu.Lock()
 		r, ok := rollouts[strategyID]
 		mu.Unlock()
-		if !ok || r.Worktree.Name == "" {
+		if ok && r.Worktree.Name != "" {
+			if derr := cfg.DiscardRollout(cleanupCtx, r.Worktree); derr != nil {
+				insights = append(insights, fmt.Sprintf("discard rollout %s: %v", strategyID, derr))
+			}
 			return
 		}
-		if derr := cfg.DiscardRollout(ctx, r.Worktree); derr != nil {
-			insights = append(insights, fmt.Sprintf("discard rollout %s: %v", strategyID, derr))
+		// No live Handle: the strategy timed out or was cancelled and
+		// returned a zero-valued Handle (or produced a zero-diff result),
+		// but base() may still have created the worktree on disk under the
+		// deterministic name derived from the spec task ID. Clean it up by
+		// that name so a timed-out/cancelled rollout cannot leak.
+		if cfg.DiscardRolloutByName != nil {
+			specID := fmt.Sprintf("%s-spec-%s", task.ID, strategyID)
+			if derr := cfg.DiscardRolloutByName(cleanupCtx, specID); derr != nil {
+				insights = append(insights, fmt.Sprintf("discard rollout %s by name: %v", strategyID, derr))
+			}
 		}
 	}
 

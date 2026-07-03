@@ -716,6 +716,12 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			seCfg.Tracker = tracker
 			seCfg.MergeWinner = sharedWorktrees.Merge
 			seCfg.DiscardRollout = sharedWorktrees.Cleanup
+			// By-name fallback so a rollout that timed out or was cancelled
+			// (zero-valued Handle) still gets its worktree/branch cleaned up
+			// instead of leaking. Rollouts run under WorktreeName == task.ID
+			// (see the execFn above), so the deterministic name the wrapper
+			// reconstructs matches what base() created.
+			seCfg.DiscardRolloutByName = sharedWorktrees.CleanupByName
 			seCfg.Models = specRunnerModels(cfg.RunnerMode, cfg.ClaudeBinary, cfg.CodexBinary)
 			// Rollouts run base() under synthetic spec IDs, so the
 			// executor's markTask above never fires for the real task.
