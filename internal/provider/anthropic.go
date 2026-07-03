@@ -352,8 +352,36 @@ func (p *AnthropicProvider) ChatStream(req ChatRequest, onEvent func(stream.Even
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var result ChatResponse
-	var fullText strings.Builder
-	var thinkingContent []ResponseContent
+
+	// Index-ordered content-block accumulation. Anthropic streams each
+	// assistant content block (thinking, text, tool_use) under a stable
+	// wire index; interleaved order must be preserved because the API
+	// replays the assistant message verbatim on the next turn (extended
+	// thinking + tool use requires thinking/tool_use/text blocks in their
+	// original order). The old logic bucketed by type — hoisting all
+	// thinking to the front and merging all text — which reordered blocks
+	// and broke that contract. We key by wire index and emit in
+	// first-appearance (== wire) order instead.
+	blockOrder := make([]int, 0, 8)
+	textBuf := make(map[int]*strings.Builder)
+	blocks := make(map[int]*ResponseContent)
+	synthetic := 0 // decreasing keys for events lacking a block index
+	blockKey := func(p *int) int {
+		if p != nil {
+			return *p
+		}
+		synthetic--
+		return synthetic
+	}
+	seen := func(idx int) {
+		if _, ok := textBuf[idx]; ok {
+			return
+		}
+		if _, ok := blocks[idx]; ok {
+			return
+		}
+		blockOrder = append(blockOrder, idx)
+	}
 
 	// Read line by line and feed to SSE parser
 	var lineBuffer strings.Builder
@@ -378,17 +406,22 @@ func (p *AnthropicProvider) ChatStream(req ChatRequest, onEvent func(stream.Even
 				// and thinking deltas are assembled into their own
 				// blocks and must not merge into prose.
 				if ev.DeltaType == "text_delta" && ev.DeltaText != "" {
-					fullText.WriteString(ev.DeltaText)
+					idx := blockKey(ev.BlockIndex)
+					seen(idx)
+					b := textBuf[idx]
+					if b == nil {
+						b = &strings.Builder{}
+						textBuf[idx] = b
+					}
+					b.WriteString(ev.DeltaText)
 				}
 				for _, tb := range ev.ThinkingBlocks {
+					idx := blockKey(ev.BlockIndex)
+					seen(idx)
 					if tb.Redacted {
-						thinkingContent = append(thinkingContent, ResponseContent{
-							Type: blockTypeRedactedThinking, Data: tb.Data,
-						})
+						blocks[idx] = &ResponseContent{Type: blockTypeRedactedThinking, Data: tb.Data}
 					} else {
-						thinkingContent = append(thinkingContent, ResponseContent{
-							Type: blockTypeThinking, Thinking: tb.Text, Signature: tb.Signature,
-						})
+						blocks[idx] = &ResponseContent{Type: blockTypeThinking, Thinking: tb.Text, Signature: tb.Signature}
 					}
 				}
 				if ev.Tokens.Input > 0 || ev.Tokens.Output > 0 {
@@ -405,10 +438,19 @@ func (p *AnthropicProvider) ChatStream(req ChatRequest, onEvent func(stream.Even
 					result.StopReason = ev.StopReason
 				}
 				if len(ev.ToolUses) > 0 {
-					for _, tu := range ev.ToolUses {
-						result.Content = append(result.Content, ResponseContent{
+					for i, tu := range ev.ToolUses {
+						// One tool_use per content_block_stop event on the
+						// Anthropic path, so BlockIndex maps 1:1. Guard the
+						// rare multi-tool event by giving extras synthetic
+						// keys so they neither collide nor lose order.
+						idx := blockKey(ev.BlockIndex)
+						if i > 0 {
+							idx = blockKey(nil)
+						}
+						seen(idx)
+						blocks[idx] = &ResponseContent{
 							Type: blockTypeToolUse, ID: tu.ID, Name: tu.Name, Input: tu.Input,
-						})
+						}
 					}
 				}
 			}
@@ -425,17 +467,21 @@ func (p *AnthropicProvider) ChatStream(req ChatRequest, onEvent func(stream.Even
 		}
 	}
 
-	// Assemble content in API order: thinking blocks first, then the
-	// text block, then tool_use blocks (already in result.Content).
-	// Preserving this order matters — assistant messages are replayed
-	// verbatim on the next turn, and the API expects thinking to
-	// precede the tool calls it justified.
-	head := append([]ResponseContent(nil), thinkingContent...)
-	if text := fullText.String(); text != "" {
-		head = append(head, ResponseContent{Type: blockTypeText, Text: text})
-	}
-	if len(head) > 0 {
-		result.Content = append(head, result.Content...)
+	// Emit content blocks in original wire order. blockOrder records the
+	// first-appearance order of each content-block index, which mirrors
+	// the order Anthropic streamed them — so interleaved
+	// thinking / text / tool_use round-trips verbatim.
+	result.Content = make([]ResponseContent, 0, len(blockOrder))
+	for _, idx := range blockOrder {
+		if b, ok := textBuf[idx]; ok {
+			if text := b.String(); text != "" {
+				result.Content = append(result.Content, ResponseContent{Type: blockTypeText, Text: text})
+			}
+			continue
+		}
+		if rc, ok := blocks[idx]; ok {
+			result.Content = append(result.Content, *rc)
+		}
 	}
 
 	return &result, nil

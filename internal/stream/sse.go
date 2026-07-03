@@ -292,7 +292,8 @@ func (p *SSEParser) parseContentBlockDelta(payload string) (*Event, error) {
 		return nil, fmt.Errorf("parse content_block_delta: %w", err)
 	}
 
-	ev := &Event{Type: "stream_event", Raw: []byte(payload)}
+	idx := delta.Index
+	ev := &Event{Type: "stream_event", Raw: []byte(payload), BlockIndex: &idx}
 	switch delta.Delta.Type {
 	case "text_delta":
 		ev.DeltaType = "text_delta"
@@ -333,11 +334,13 @@ func (p *SSEParser) parseContentBlockStop(payload string) (*Event, error) {
 	if err := json.Unmarshal([]byte(payload), &stop); err != nil {
 		return nil, nil
 	}
+	stopIdx := stop.Index
 	if pth, ok := p.pendingThinking[stop.Index]; ok {
 		delete(p.pendingThinking, stop.Index)
 		return &Event{
-			Type: "assistant",
-			Raw:  []byte(payload),
+			Type:       "assistant",
+			Raw:        []byte(payload),
+			BlockIndex: &stopIdx,
 			ThinkingBlocks: []ThinkingBlock{{
 				Text:      pth.Text.String(),
 				Signature: pth.Signature.String(),
@@ -363,8 +366,9 @@ func (p *SSEParser) parseContentBlockStop(payload string) (*Event, error) {
 	}
 
 	return &Event{
-		Type: "assistant",
-		Raw:  []byte(payload),
+		Type:       "assistant",
+		Raw:        []byte(payload),
+		BlockIndex: &stopIdx,
 		ToolUses: []ToolUse{{
 			ID:    pt.ID,
 			Name:  pt.Name,
