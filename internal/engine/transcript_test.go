@@ -160,6 +160,67 @@ func TestTranscriptToleratesTornTrailingLine(t *testing.T) {
 	}
 }
 
+// TestTranscriptAppendReopenRepairsTornTail: a crash leaves a torn
+// trailing line, then a retry-with-rewind reopens the SAME file (meta is a
+// dispatch boundary) and appends. Without torn-tail repair the new entry
+// would glue onto the partial line, poisoning a mid-file line and failing
+// the whole transcript. The repair must trim the partial line so the
+// second dispatch loads cleanly.
+func TestTranscriptAppendReopenRepairsTornTail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.jsonl")
+	w := mustWriter(t, path)
+	w.meta(map[string]any{"attempt": 1})
+	w.appendNew([]agentloop.Message{tUser("first"), tAssistant("one")}, 1)
+	w.Close()
+
+	// Simulate a crash mid-append: torn partial JSON, no newline.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"type":"message","turn":9,"mess`); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	// Reopen and append a second dispatch, exactly as a rewound retry does.
+	second := []agentloop.Message{tUser("second"), tAssistant("two")}
+	w2 := mustWriter(t, path)
+	w2.meta(map[string]any{"attempt": 2})
+	w2.appendNew(second, 1)
+	w2.end("end_turn")
+	w2.Close()
+
+	got, err := LoadTranscript(path)
+	if err != nil {
+		t.Fatalf("LoadTranscript after append-reopen: %v", err)
+	}
+	// meta is a dispatch boundary: replay yields only the last dispatch.
+	if !reflect.DeepEqual(got, second) {
+		t.Errorf("append-reopen corrupted replay:\ngot:  %+v\nwant: %+v", got, second)
+	}
+}
+
+// TestRepairTornTailNoNewline: a file that is a single unterminated line
+// (crash before the very first newline) must be trimmed to empty, not left
+// to poison the next append.
+func TestRepairTornTailNoNewline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"meta","partial`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := repairTornTail(path); err != nil {
+		t.Fatalf("repairTornTail: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != 0 {
+		t.Errorf("single torn line not trimmed: size = %d", info.Size())
+	}
+}
+
 func TestTranscriptFailsClosedOnMidFileCorruption(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "t.jsonl")
 	lines := []string{
