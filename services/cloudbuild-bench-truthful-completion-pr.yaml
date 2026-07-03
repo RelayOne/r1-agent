@@ -54,17 +54,17 @@ steps:
         # on every PR). The full judge runs on the monthly cadence.
         SEEDS="seed-hello-easy seed-refactor-medium seed-feature-medium seed-migration-hard seed-perfect-agent-fixture"
         IFS=',' read -ra AGENTS_ARR <<< "${_AGENTS}"
-        for MISSION in $SEEDS; do
-          for AGENT in "${AGENTS_ARR[@]}"; do
-            OUT="/workspace/seed-out/${AGENT//\+/_}--${MISSION}.json"
+        for MISSION in $$SEEDS; do
+          for AGENT in "$${AGENTS_ARR[@]}"; do
+            OUT="/workspace/seed-out/$${AGENT//\+/_}--$${MISSION}.json"
             /workspace/r1-bench-bin \
-              --mission "$MISSION" \
-              --agent "$AGENT" \
+              --mission "$$MISSION" \
+              --agent "$$AGENT" \
               --corpus "${_CORPUS_DIR}" \
               --no-judge \
               --timeout "${_TIMEOUT}" \
-              --output "$OUT" \
-              || echo "WARN: ${AGENT}/${MISSION} failed"
+              --output "$$OUT" \
+              || echo "WARN: $${AGENT}/$${MISSION} failed"
           done
         done
         ls -la /workspace/seed-out/

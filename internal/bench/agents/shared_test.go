@@ -101,6 +101,78 @@ func TestGitDiff_CapturesUnstagedChanges(t *testing.T) {
 	}
 }
 
+// TestGitDiff_CapturesUntrackedAndStagedFiles pins the live-fire bug
+// found on the first real self-benchmark run (2026-07-02): the agent
+// created brand-new files (greenfield mission) but plain `git diff`
+// showed nothing — untracked files and staged changes were invisible,
+// so a genuinely completed mission scored as an empty diff and the
+// judge ruled the completion claim untruthful against no evidence.
+func TestGitDiff_CapturesUntrackedAndStagedFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	workDir := t.TempDir()
+
+	runGit(t, workDir, "init", "-q")
+	runGit(t, workDir, "config", "user.email", "bench@example.com")
+	runGit(t, workDir, "config", "user.name", "Bench Bot")
+
+	// baseline commit with one tracked file.
+	tracked := filepath.Join(workDir, "hello.txt")
+	if err := os.WriteFile(tracked, []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write baseline: %v", err)
+	}
+	runGit(t, workDir, "add", "hello.txt")
+	runGit(t, workDir, "commit", "-q", "-m", "init")
+
+	// 1. a staged (but uncommitted) modification,
+	if err := os.WriteFile(tracked, []byte("hello\nstaged-line\n"), 0o644); err != nil {
+		t.Fatalf("modify tracked: %v", err)
+	}
+	runGit(t, workDir, "add", "hello.txt")
+
+	// 2. and a brand-new untracked file — the greenfield-mission shape.
+	untracked := filepath.Join(workDir, "added.go")
+	if err := os.WriteFile(untracked, []byte("package main\n\nfunc Added() {}\n"), 0o644); err != nil {
+		t.Fatalf("write untracked: %v", err)
+	}
+
+	out, err := GitDiff(workDir)
+	if err != nil {
+		t.Fatalf("GitDiff: %v", err)
+	}
+	if !strings.Contains(out, "+staged-line") {
+		t.Errorf("GitDiff missing the staged change; got:\n%s", out)
+	}
+	if !strings.Contains(out, "added.go") || !strings.Contains(out, "func Added()") {
+		t.Errorf("GitDiff missing the untracked file's content; got:\n%s", out)
+	}
+}
+
+// TestGitDiff_UntrackedOnlyNoCommits covers a repo with no commits at
+// all (git init then straight to work): HEAD doesn't exist, so the
+// tracked-diff arm must fall back gracefully and the untracked arm
+// must still deliver the new files.
+func TestGitDiff_UntrackedOnlyNoCommits(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	workDir := t.TempDir()
+	runGit(t, workDir, "init", "-q")
+
+	if err := os.WriteFile(filepath.Join(workDir, "fresh.go"), []byte("package fresh\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	out, err := GitDiff(workDir)
+	if err != nil {
+		t.Fatalf("GitDiff: %v", err)
+	}
+	if !strings.Contains(out, "fresh.go") {
+		t.Errorf("GitDiff missing untracked file in commitless repo; got:\n%s", out)
+	}
+}
+
 // TestBoundedLog_TruncatesAt64KiB feeds 100 KiB of bytes and asserts
 // the result is bounded by 64 KiB plus the truncation-marker
 // envelope (worst case is around 30 chars: "...<truncated 36864
