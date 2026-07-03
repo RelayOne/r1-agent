@@ -47,7 +47,7 @@ const (
 // Registry manages available tools and tracks state (e.g., which files have been read).
 type Registry struct {
 	workDir   string
-	readFiles sync.Map // tracks files that have been read (for Edit guard)
+	readFiles sync.Map        // tracks files that have been read (for Edit guard)
 	environ   env.Environment // optional execution environment (nil = no env tools)
 	envHandle *env.Handle     // optional environment handle
 
@@ -56,7 +56,7 @@ type Registry struct {
 	todos    *todoStore
 
 	// memory_store / memory_recall / memory_forget state (T-R1P-013).
-	memOnce sync.Once
+	memOnce  sync.Once
 	memStore *toolMemoryStore
 
 	// mcpRegistry is an optional MCP registry used by mcp_tool_search,
@@ -432,8 +432,8 @@ func (r *Registry) Definitions() []provider.ToolDef {
 			InputSchema: mustJSON(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"query":      map[string]string{"type": "string", "description": "Search query — matched against tool names and descriptions"},
-					"server":     map[string]string{"type": "string", "description": "Optional: restrict search to a specific MCP server name"},
+					"query":       map[string]string{"type": "string", "description": "Search query — matched against tool names and descriptions"},
+					"server":      map[string]string{"type": "string", "description": "Optional: restrict search to a specific MCP server name"},
 					"max_results": map[string]interface{}{"type": "integer", "description": "Max results to return (default 20)"},
 				},
 				"required": []string{"query"},
@@ -1048,6 +1048,14 @@ func (r *Registry) handleBash(ctx context.Context, input json.RawMessage) (strin
 	output, err := cmd.CombinedOutput()
 	result := string(output)
 
+	// A shell command can mutate the tree in ways the write_file/edit_file
+	// hooks never see (git checkout, sed -i, codegen). Coarsely invalidate
+	// the code-graph index so the next graph tool call re-reads from disk
+	// instead of serving pre-command results. Fires on every exit path
+	// (success, non-zero exit, timeout) since a partially-run command can
+	// still have changed files.
+	r.noteShellMutation()
+
 	// Truncate if too long (preserve first and last portions)
 	if len(result) > MaxBashOutput {
 		half := MaxBashOutput / 2
@@ -1209,6 +1217,10 @@ func (r *Registry) handleEnvExec(ctx context.Context, input json.RawMessage) (st
 	if err != nil {
 		return "", fmt.Errorf("env exec: %w", err)
 	}
+
+	// Coarsely invalidate the code-graph index: an env command can mutate
+	// the tree without going through the write hooks (see noteShellMutation).
+	r.noteShellMutation()
 
 	output := result.CombinedOutput()
 	if len(output) > MaxBashOutput {
