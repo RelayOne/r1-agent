@@ -633,6 +633,10 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	// from; the RewindOnRetry restore target. Empty when rewind is off or
 	// the baseline capture failed (retry then rebuilds per §7).
 	var rewindBaseline string
+	// Branch HEAD the current attempt started from; the RewindOnRetry
+	// target for undoing intermediate agent commits. Empty when rewind is
+	// off or the capture failed.
+	var rewindHead string
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// Budget gate: stop before spending more if over budget.
@@ -668,6 +672,22 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			lastDiff = worktree.DiffSummary(ctx, handle)
 			rewound := false
 			if e.RewindOnRetry && rewindBaseline != "" {
+				// Undo any intermediate commits the failed attempt made on
+				// the branch BEFORE restoring files. RestoreFiles rewinds
+				// the working tree but deliberately leaves HEAD, so without
+				// this an agent `git commit` would survive the rewind and
+				// pollute diff BaseCommit..HEAD, the scope gate, and the
+				// merge. Soft reset so the following RestoreFiles still owns
+				// the working-tree normalization; failure is non-fatal.
+				if rewindHead != "" {
+					if cur := worktree.HeadSHA(ctx, handle); cur != "" && cur != rewindHead {
+						if resetErr := worktree.ResetBranchSoft(ctx, handle, rewindHead); resetErr != nil {
+							log.Warn("rewind branch reset failed; intermediate commits may survive", "error", resetErr)
+						} else {
+							log.Info("rewind dropped intermediate attempt commits", "attempt", attempt, "from", cur, "to", rewindHead)
+						}
+					}
+				}
 				if restoreErr := worktree.RestoreFiles(ctx, handle, rewindBaseline); restoreErr != nil {
 					log.Warn("rewind-on-retry restore failed; rebuilding worktree", "error", restoreErr)
 				} else {
@@ -698,7 +718,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		// tree is cheap (cached stat info). Failure downgrades this
 		// attempt's retry to the rebuild path — never fatal.
 		rewindBaseline = ""
+		rewindHead = ""
 		if e.RewindOnRetry && !e.InPlace && !e.DryRun {
+			// Capture the branch tip too, so a rewind can drop commits the
+			// agent makes during this attempt — not just its file edits.
+			rewindHead = worktree.HeadSHA(ctx, handle)
 			if sha, ckErr := worktree.ShadowCheckpoint(ctx, handle, 0); ckErr != nil {
 				log.Warn("rewind baseline checkpoint failed; a retry will rebuild the worktree", "error", ckErr)
 			} else {
@@ -1099,6 +1123,35 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			if e.Policy.Verification.CrossModelReview {
 				reviewFiles, reviewErr := e.runCrossModelReview(ctx, name, handle, verifyPhase, preReviewFiles, preReviewTree, &evidence, &result, attempt, attemptStart, execRunnerName, execResult)
 				if reviewErr != nil {
+					// A blocking second-critic dissent routes through the
+					// attempt/retry loop (secondcritic.go contract) rather than
+					// killing the task on attempt 1 and discarding both the
+					// remaining attempts and the critic's requested change.
+					// runCrossModelReview left the worktree and state intact for
+					// exactly this. Every other review error already cleaned up
+					// and failed closed inside runCrossModelReview.
+					var dissent *criticDissentError
+					if errors.As(reviewErr, &dissent) {
+						if attempt < maxAttempts {
+							// Mirror the convergence-retry transition: the primary
+							// review passed (Verified->Reviewed), the adversarial
+							// critic blocked, so retry from Claimed with the
+							// requested change folded into the retry brief.
+							_ = e.advanceState(taskstate.Reviewed, "primary review approved; second-critic dissent -> retry")
+							_ = e.advanceState(taskstate.Claimed, "second-opinion dissent retry")
+							lastFailure = &failure.Analysis{
+								Class: failure.Incomplete,
+								Summary: fmt.Sprintf(
+									"An adversarial second reviewer blocked the previous change; it must be revised before merge.\nReasoning: %s\nRequested change: %s",
+									dissent.reasoning, dissent.requestedChange),
+								RootCause: "second-opinion critic dissent",
+							}
+							continue
+						}
+						// Attempts exhausted: now terminal. Fail closed.
+						e.Worktrees.Cleanup(ctx, handle)
+						_ = e.advanceState(taskstate.Failed, "second-opinion dissent unresolved after retries")
+					}
 					return result, reviewErr
 				}
 				postReviewFiles = reviewFiles
@@ -1756,9 +1809,18 @@ func (e Engine) runCrossModelReview(
 				})
 			}
 			e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
-			e.Worktrees.Cleanup(ctx, handle)
-			_ = e.advanceState(taskstate.Failed, "second-opinion dissent unresolved")
-			return nil, fmt.Errorf("second-opinion dissent (blocking, %d findings): %s", len(cv.Findings), cv.Reasoning)
+			// Do NOT clean the worktree or fail terminally here. A blocking
+			// dissent is a merge-gate failure like a convergence block: the
+			// caller's attempt/retry loop resolves it (folding the critic's
+			// RequestedChange into the retry brief) and only converts it to a
+			// hard error once the attempt budget is exhausted. Returning a
+			// terminal error here discarded every remaining attempt AND the
+			// actionable RequestedChange on attempt 1.
+			return nil, &criticDissentError{
+				reasoning:       cv.Reasoning,
+				requestedChange: cv.RequestedChange,
+				findings:        len(cv.Findings),
+			}
 		}
 		// Advisory dissent proceeds; its audit trail is the
 		// EventVerifySecondOpinion emitted above (evidence.Findings is

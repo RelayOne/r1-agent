@@ -138,13 +138,13 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	//
 	// OPT-IN for now: the sandbox engages only when the operator sets
 	// R1_NATIVE_SANDBOX explicitly (on|auto|bwrap|landlock|docker).
-	// Default runs stay unsandboxed because current containment only
-	// wraps the bash tool — notebook_cell_run and cron_create still exec
-	// on the host, and a sandboxed bash cannot run git in a linked
-	// worktree — so a default-on sandbox would be false assurance. Once
-	// engaged it is still fail-closed: if the requested backend cannot be
-	// enforced we refuse to dispatch rather than silently degrade. Config
-	// is env-first for the same reason as the policy gate
+	// Host-exec tools that can't be wrapped (notebook_cell_run/cron_create)
+	// are denied while engaged, and the worktree's real .git is allow-listed
+	// so git works; the sandbox stays opt-in only because egress is
+	// boolean-allow by default (no per-domain filtering). Once engaged it is
+	// still fail-closed: if the requested backend cannot be enforced we
+	// refuse to dispatch rather than silently degrade. Config is env-first
+	// for the same reason as the policy gate
 	// (policy_gate.go): NewNativeRunner has too many call sites to thread
 	// new fields through. See docs/native-sandbox.md.
 	if spec.SandboxEnabled {
@@ -152,10 +152,17 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 			slog.Info("native sandbox not engaged (opt-in via R1_NATIVE_SANDBOX=on)", "phase", spec.Phase.Name)
 		} else {
 			home, _ := os.UserHomeDir()
+			// A linked worktree's real .git lives OUTSIDE the worktree
+			// (the parent repo's common dir). Grant it write access so
+			// `git` works inside the sandbox — otherwise git status/commit
+			// fail closed. Nil for a normal checkout (its .git is already
+			// under the worktree AllowWrite grant).
+			allowWrite := append([]string(nil), spec.SandboxAllowWrite...)
+			allowWrite = append(allowWrite, sandbox.WorktreeGitDirs(spec.WorktreeDir)...)
 			pol := sandbox.Policy{
 				Mode:       mode,
 				AllowRead:  spec.SandboxAllowRead,
-				AllowWrite: spec.SandboxAllowWrite,
+				AllowWrite: allowWrite,
 				DenyRead: append(sandbox.DefaultDenyRead(home),
 					sandbox.WorkDirDenyRead(spec.WorktreeDir)...),
 				WriteCaches: sandbox.DefaultWriteCaches(home),
@@ -419,16 +426,15 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 				fmt.Fprintln(workerLog, string(b))
 			}
 		}
-		// Shadow checkpoint after each successful mutating tool call.
-		// take() serializes the git window internally (agentloop runs
-		// parallel tool_use blocks in goroutines); a failure is logged
-		// once and never fails the tool call.
+		// Mark the turn dirty when a mutating tool succeeds. The shadow
+		// checkpoint is deferred to the top of the NEXT turn
+		// (flushCheckpoint): by then every parallel sibling tool has
+		// returned (a settled tree, never a half-written file) and the
+		// turn's tool_use/tool_result messages are recorded, so the
+		// checkpoint marker lands AFTER the tool_use it captures — the
+		// correct rewind target.
 		if err == nil && shadow.eligible(name, writableTools) {
-			if rec, ckErr := shadow.take(ctx, name); ckErr != nil {
-				shadow.warnFailure(ckErr)
-			} else {
-				tw.checkpoint(rec)
-			}
+			shadow.markDirty(name)
 		}
 		return result, err
 	}
@@ -453,14 +459,34 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		ThinkingBudget:     spec.Phase.ThinkingBudget,
 	}
 
+	// flushCheckpoint records the PREVIOUS turn's shadow checkpoint (when
+	// a mutating tool ran) AFTER that turn's messages are persisted, so
+	// the checkpoint marker is a valid rewind target and never captures a
+	// file a concurrent sibling tool is still writing. nil-safe on both
+	// sides: shadow.flush no-ops (and reports false) when shadow is nil,
+	// tw.checkpoint no-ops when the transcript is nil.
+	flushCheckpoint := func(ctx context.Context) {
+		rec, ok, ckErr := shadow.flush(ctx)
+		if ckErr != nil {
+			shadow.warnFailure(ckErr)
+			return
+		}
+		if ok {
+			tw.checkpoint(rec)
+		}
+	}
+
 	// Transcript capture rides the PreTurnHook, which fires with the
 	// full history at the top of every turn — BEFORE compaction, so
 	// entries reflect the raw stream (the wrapped compactor below
 	// records rewrites). The final assistant message is appended after
 	// the last PreTurnHook ever fires; the post-Run flush catches it.
-	if tw != nil {
-		cfg.PreTurnHook = func(_ context.Context, turn int, messages []agentloop.Message) error {
+	// The checkpoint flush runs AFTER appendNew so its marker follows the
+	// messages it captures.
+	if tw != nil || shadow != nil {
+		cfg.PreTurnHook = func(ctx context.Context, turn int, messages []agentloop.Message) error {
 			tw.appendNew(messages, turn)
+			flushCheckpoint(ctx)
 			return nil
 		}
 	}
@@ -622,7 +648,14 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		// silently diverge from what the model actually saw otherwise.
 		cfg.CompactFn = func(messages []agentloop.Message, estimatedTokens int) []agentloop.Message {
 			out := condense(messages, estimatedTokens)
-			tw.compaction(out)
+			// Only record a rewrite the condenser actually made. Once over
+			// threshold the loop calls CompactFn before EVERY turn, and an
+			// already-condensed (or too-short) history comes back as the
+			// SAME slice, unchanged — recording it each time would bloat
+			// the transcript with identical full-history entries.
+			if !sameMessageSlice(out, messages) {
+				tw.compaction(out)
+			}
 			return out
 		}
 	}
@@ -656,6 +689,9 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	// assistant turn) and seal the transcript with the stop reason.
 	if result != nil {
 		tw.appendNew(result.Messages, result.Turns)
+		// The final turn has no subsequent PreTurnHook — flush its
+		// checkpoint here so a last-turn mutation is still rewindable.
+		flushCheckpoint(ctx)
 		tw.end(result.StopReason)
 	}
 

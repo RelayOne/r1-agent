@@ -34,6 +34,11 @@ import (
 // checkpointRefPrefix is the ref namespace for shadow checkpoints.
 const checkpointRefPrefix = "refs/r1-checkpoints/"
 
+// EnvRewindCleanIgnored, when set to "1", makes RestoreFiles ALSO delete
+// gitignored files during a rewind (git clean -fdx). Default (unset)
+// preserves them — see RestoreFiles for the dep-preservation rationale.
+const EnvRewindCleanIgnored = "R1_REWIND_CLEAN_IGNORED"
+
 // CheckpointRef describes one shadow checkpoint ref. Seq -1 marks the
 // pre-restore safety checkpoint RestoreFiles takes before rewinding.
 type CheckpointRef struct {
@@ -165,9 +170,10 @@ func ShadowCheckpoint(ctx context.Context, handle Handle, seq int) (string, erro
 
 // RestoreFiles rewinds the working tree to a shadow checkpoint's state:
 // tracked files are reset to the checkpoint tree, files created after
-// the checkpoint are removed (gitignored files survive — the checkpoint
-// never captured them, and deleting a symlinked node_modules would be
-// destructive), and files deleted after the checkpoint come back.
+// the checkpoint are removed (gitignored files survive by default — the
+// checkpoint never captured them, and deleting a symlinked node_modules
+// would be destructive; set R1_REWIND_CLEAN_IGNORED=1 to clean them too),
+// and files deleted after the checkpoint come back.
 // HEAD and the branch never move; the index ends reset to HEAD so
 // status / diff-vs-BaseCommit behave exactly as before the restore.
 //
@@ -197,11 +203,24 @@ func RestoreFiles(ctx context.Context, handle Handle, sha string) error {
 
 	// Drop untracked files created after the checkpoint. The checkpoint
 	// staged every then-untracked file (add -A), so anything untracked
-	// now is post-checkpoint residue. No -x: ignored files survive.
-	cleanCmd := exec.CommandContext(ctx, gitBin, "clean", "-fd") // #nosec G204 -- git binary with literal subcommand arguments, no external input.
+	// now is post-checkpoint residue.
+	//
+	// Ignored files are PRESERVED by default (no -x): the clean-worktree
+	// contract treats gitignored paths as expensive, reusable deps
+	// (node_modules, build caches, a symlinked vendor dir) that should
+	// survive a rewind so the retry needn't re-fetch or re-symlink them,
+	// and blowing away a symlinked node_modules would be destructive. The
+	// accepted tradeoff is that a failed attempt's ignored *build
+	// artifacts* also survive; set R1_REWIND_CLEAN_IGNORED=1 to opt into a
+	// pristine -fdx clean when that matters more than dep preservation.
+	cleanArgs := []string{"clean", "-fd"}
+	if os.Getenv(EnvRewindCleanIgnored) == "1" {
+		cleanArgs = append(cleanArgs, "-x")
+	}
+	cleanCmd := exec.CommandContext(ctx, gitBin, cleanArgs...) // #nosec G204 -- git binary with literal clean subcommand flags, no external input.
 	cleanCmd.Dir = handle.Path
 	if out, err := cleanCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("restore: git clean -fd: %w: %s", err, out)
+		return fmt.Errorf("restore: git %s: %w: %s", strings.Join(cleanArgs, " "), err, out)
 	}
 
 	// Reset the index back to HEAD so subsequent status / diff calls see
@@ -251,4 +270,32 @@ func shortSHA(sha string) string {
 		return sha[:8]
 	}
 	return sha
+}
+
+// HeadSHA returns the worktree branch's current HEAD commit SHA, or ""
+// on error (non-fatal). Callers capture the pre-attempt branch tip so a
+// rewind can undo intermediate agent commits, not just working-tree edits.
+func HeadSHA(ctx context.Context, handle Handle) string {
+	cmd := exec.CommandContext(ctx, gitBinaryFor(handle), "rev-parse", gitHEAD) // #nosec G204 -- git binary with literal subcommand arguments, no external input.
+	cmd.Dir = handle.Path
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// ResetBranchSoft moves the worktree's branch pointer to sha WITHOUT
+// touching the working tree or index (git reset --soft). RewindOnRetry
+// uses it to drop intermediate commits an agent made during a failed
+// attempt; a following RestoreFiles then normalizes the working tree and
+// reindexes to the restored HEAD. Resetting to the current HEAD is a
+// harmless no-op. sha is a git-produced SHA captured by HeadSHA.
+func ResetBranchSoft(ctx context.Context, handle Handle, sha string) error {
+	cmd := exec.CommandContext(ctx, gitBinaryFor(handle), "reset", "--soft", sha) // #nosec G204 -- git binary; sha is a git-produced HEAD SHA captured by HeadSHA.
+	cmd.Dir = handle.Path
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("reset --soft %s: %w: %s", shortSHA(sha), err, out)
+	}
+	return nil
 }

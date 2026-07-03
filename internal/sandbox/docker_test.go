@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"os"
+	"strconv"
 	"testing"
 )
 
@@ -59,5 +61,21 @@ func TestDockerArgs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestDockerArgsRunsAsHostUser pins that the container runs as the invoking
+// host uid:gid, so files it creates in the bind-mounted worktree stay owned
+// by the host user (root-owned files break the host-side shadow-checkpoint /
+// commit / cleanup that runs after the sandboxed command returns).
+func TestDockerArgsRunsAsHostUser(t *testing.T) {
+	uid := os.Getuid()
+	if uid < 0 {
+		t.Skip("no numeric uid on this platform (Windows); --user flag intentionally omitted")
+	}
+	args := dockerArgs("true", t.TempDir(), Policy{DockerImage: "img"})
+	want := strconv.Itoa(uid) + ":" + strconv.Itoa(os.Getgid())
+	if !hasSeq(args, "--user", want) {
+		t.Errorf("argv missing [--user %s]\nargs: %v", want, args)
 	}
 }

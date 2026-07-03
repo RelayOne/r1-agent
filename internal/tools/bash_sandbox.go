@@ -2,11 +2,31 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 
 	"github.com/RelayOne/r1/internal/sandbox"
 )
+
+// errSandboxDeniedCron / errSandboxDeniedNotebook are returned by the
+// cron_create and notebook_cell_run handlers when the OS sandbox is engaged.
+// Both tools exec on the host OUTSIDE the containment wrapped around the bash
+// tool (cron runs later via crontab; notebook_cell_run shells out to
+// jupyter), so allowing them while a sandbox is active would be a silent
+// escape hatch. Denying is the fail-closed choice; the operator drops the
+// sandbox (R1_NATIVE_SANDBOX=off) to use them. See docs/native-sandbox.md.
+var (
+	errSandboxDeniedCron = errors.New(
+		"cron_create is disabled while the native OS sandbox is engaged: a cron entry runs later on the host, outside the sandbox. Set R1_NATIVE_SANDBOX=off to schedule jobs.")
+	errSandboxDeniedNotebook = errors.New(
+		"notebook_cell_run is disabled while the native OS sandbox is engaged: it executes on the host via jupyter, outside the sandbox. Run Python through the bash tool (which IS sandboxed), or set R1_NATIVE_SANDBOX=off.")
+)
+
+// sandboxActive reports whether an OS-level sandbox is wired on the registry
+// (set via SetSandbox with a non-off policy). Handlers that exec OUTSIDE the
+// bash containment consult it to fail closed rather than silently escape.
+func (r *Registry) sandboxActive() bool { return r.sbx != nil }
 
 // SetSandbox wires OS-level containment around the bash tool. Backend
 // selection runs eagerly so an unenforceable policy fails here — at wiring

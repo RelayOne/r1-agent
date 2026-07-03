@@ -152,6 +152,13 @@ func (r *Registry) handleNotebookRead(input json.RawMessage) (string, error) {
 // the whole notebook in-place using `jupyter nbconvert --execute --inplace`.
 // Gracefully returns "jupyter not available" when the binary is absent.
 func (r *Registry) handleNotebookCellRun(ctx context.Context, input json.RawMessage) (string, error) {
+	// Denied while the OS sandbox is engaged: this shells out to `jupyter
+	// nbconvert --execute` on the host, outside the containment wrapped
+	// around the bash tool — executing notebook code that way would bypass
+	// the sandbox. See docs/native-sandbox.md (containment completion).
+	if r.sandboxActive() {
+		return "", errSandboxDeniedNotebook
+	}
 	var args struct {
 		Path   string `json:"path"`
 		Source string `json:"source"`

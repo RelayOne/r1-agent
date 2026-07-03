@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 )
 
 // dockerWrapper is the coarse container fallback, modeled on the hardened
@@ -41,6 +42,15 @@ func dockerArgs(shellCmd, workDir string, p Policy) []string {
 		"run", "--rm",
 		"--security-opt=no-new-privileges",
 		"--cap-drop=ALL",
+	}
+	// Run as the invoking host user so files the command creates in the
+	// bind-mounted worktree are owned by that user, not root. A root-owned
+	// worktree breaks the host-side shadow-checkpoint / commit / cleanup
+	// that runs after the sandboxed command returns. On Windows Getuid
+	// returns -1; skip the flag there (docker-for-windows maps ownership
+	// differently and a negative uid is invalid).
+	if uid := os.Getuid(); uid >= 0 {
+		args = append(args, "--user", strconv.Itoa(uid)+":"+strconv.Itoa(os.Getgid()))
 	}
 	if p.AllowEgress {
 		args = append(args, "--network=bridge")

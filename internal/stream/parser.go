@@ -41,6 +41,14 @@ type Event struct {
 	// user-visible text accumulation, and thinking must round-trip
 	// into the assistant message verbatim, not leak into prose.
 	ThinkingBlocks []ThinkingBlock `json:"-"`
+	// BlockIndex is the Anthropic content-block index this event belongs
+	// to (from content_block_delta / content_block_stop). It is nil for
+	// events not tied to a specific content block (message_start,
+	// message_delta, errors). Consumers reassembling an assistant message
+	// use it to preserve original wire ordering of interleaved
+	// thinking / text / tool_use blocks, which the API requires to be
+	// replayed verbatim on the next turn.
+	BlockIndex *int `json:"-"`
 }
 
 // ThinkingBlock is an assembled extended-thinking content block from a

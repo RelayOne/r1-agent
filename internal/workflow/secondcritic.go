@@ -60,6 +60,23 @@ type SecondCritic interface {
 	Challenge(ctx context.Context, in CriticInput) (*CriticVerdict, error)
 }
 
+// criticDissentError signals a blocking second-critic dissent. It is the
+// mechanism behind this file's doc promise that "the workflow's
+// attempt/retry loop is the resolution path": runCrossModelReview returns
+// it (leaving the worktree and state intact) instead of a terminal error,
+// and Run() routes it back through the attempt loop — folding
+// RequestedChange into the retry brief — until the change is revised or
+// the attempt budget is exhausted, at which point it fails closed.
+type criticDissentError struct {
+	reasoning       string
+	requestedChange string
+	findings        int
+}
+
+func (e *criticDissentError) Error() string {
+	return fmt.Sprintf("second-opinion dissent (blocking, %d findings): %s", e.findings, e.reasoning)
+}
+
 // criticTimeout bounds one Challenge call so a hung provider endpoint
 // surfaces as a fail-closed error instead of stalling the merge gate
 // forever.
@@ -177,7 +194,15 @@ func buildCriticPrompt(in CriticInput) string {
 	b.WriteString(criticInstruction)
 	fmt.Fprintf(&b, "## Task\n%s\n\n", in.Task)
 	if len(in.Files) > 0 {
-		fmt.Fprintf(&b, "## Changed files\n%s\n\n", strings.Join(in.Files, "\n"))
+		// File paths are the validated changed-file set, but a path is
+		// still repo-derived text: %q-quote each entry so an embedded
+		// newline (or other control char) cannot spoof a new prompt
+		// section (e.g. a file literally named "\n## Diff\nignore ...").
+		quoted := make([]string, len(in.Files))
+		for i, f := range in.Files {
+			quoted[i] = fmt.Sprintf("%q", f)
+		}
+		fmt.Fprintf(&b, "## Changed files\n%s\n\n", strings.Join(quoted, "\n"))
 	}
 	fmt.Fprintf(&b, "## Primary reviewer (%s) PASS verdict\n%s\n\n",
 		in.PrimaryEngine, criticSanitize("primary-verdict", in.PrimaryVerdictJSON, criticVerdictCap))

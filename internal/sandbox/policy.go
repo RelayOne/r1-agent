@@ -27,6 +27,7 @@
 package sandbox
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -104,19 +105,19 @@ func ModeFromEnv() string {
 
 // EngageFromEnv decides whether the native OS sandbox should wrap tool
 // execution and, if so, in which mode. It is OPT-IN: an unset
-// R1_NATIVE_SANDBOX means "do not engage" (engaged=false), because the
-// current containment only wraps the bash tool — notebook_cell_run and
-// cron_create still exec on the host, and a sandboxed bash cannot run
-// git in a linked worktree — so a default-on sandbox would be false
-// assurance. Engaging requires an explicit non-"off" value:
+// R1_NATIVE_SANDBOX means "do not engage" (engaged=false). Engaging
+// requires an explicit non-"off" value:
 //
 //	R1_NATIVE_SANDBOX=on|auto|bwrap|landlock|docker  -> engaged, that mode
 //	                                          ("on" is an alias for auto)
 //	R1_NATIVE_SANDBOX=off  or unset            -> not engaged
 //
-// Flipping this to default-on is gated on completing containment (route
-// or deny notebook_cell_run/cron_create when engaged; allowlist the
-// worktree's real .git). See docs/native-sandbox.md.
+// Containment is otherwise complete: host-exec tools that can't be wrapped
+// (notebook_cell_run/cron_create) are denied while engaged, and the
+// worktree's real .git (common dir) is allow-listed so git works. The one
+// remaining reason it stays opt-in rather than default-on is the network
+// posture: egress defaults to allow (module fetches) and no backend can do
+// per-domain filtering. See docs/native-sandbox.md.
 func EngageFromEnv() (mode string, engaged bool) {
 	v := strings.ToLower(strings.TrimSpace(r1env.Get("R1_NATIVE_SANDBOX", "STOKE_NATIVE_SANDBOX")))
 	switch v {
@@ -148,15 +149,41 @@ func ImageFromEnv() string {
 	return strings.TrimSpace(r1env.Get("R1_SANDBOX_IMAGE", "STOKE_SANDBOX_IMAGE"))
 }
 
-// DefaultDenyRead returns the credential paths masked from sandboxed
-// commands. This is a blocklist over an otherwise-readable host fs (bwrap
-// backend), so it can never be complete — secrets outside this list (e.g.
-// /etc/secrets) remain readable there; the Landlock backend's allow-list
-// is stricter. Returns nil when home is unknown so an empty $HOME can
-// never expand an entry to a filesystem root.
+// DefaultDenySockets returns well-known daemon control sockets to mask from
+// sandboxed commands. These are AF_UNIX endpoints, and egress denial
+// (--unshare-net for bwrap, Landlock's TCP-only net restriction) does NOT
+// cover unix sockets — so a reachable /run/docker.sock is a full host
+// escape regardless of the network posture. The bwrap backend masks each
+// (tmpfs over a dir, /dev/null over a socket file); the Landlock backend
+// cannot rely on this list (it is allow-list-only) and instead keeps these
+// paths out of its read baseline (see landlockROPaths / the narrowed /run
+// grant). Paths are absolute and $HOME-independent, so they are masked even
+// when home is unknown.
+func DefaultDenySockets() []string {
+	return []string{
+		"/run/docker.sock",
+		"/var/run/docker.sock",
+		"/run/containerd",     // dir: containerd.sock + .ttrpc live here
+		"/var/run/containerd", // symlink twin on some distros
+		"/run/podman",         // podman.sock
+		"/run/crio",           // crio.sock
+		"/run/dbus/system_bus_socket",
+		"/run/systemd/private",
+	}
+}
+
+// DefaultDenyRead returns the credential paths (and daemon sockets) masked
+// from sandboxed commands. This is a blocklist over an otherwise-readable
+// host fs (bwrap backend), so it can never be complete — secrets outside
+// this list (e.g. /etc/secrets) remain readable there; the Landlock
+// backend's allow-list is stricter. The home-relative credential entries
+// are omitted when home is unknown so an empty $HOME can never expand an
+// entry to a filesystem root; the absolute daemon sockets are always
+// included (see DefaultDenySockets).
 func DefaultDenyRead(home string) []string {
+	out := DefaultDenySockets()
 	if home == "" {
-		return nil
+		return out
 	}
 	rel := []string{
 		".ssh", ".aws", ".gnupg", ".netrc", ".docker", ".kube",
@@ -164,7 +191,6 @@ func DefaultDenyRead(home string) []string {
 		filepath.Join(".config", "gh"),
 		filepath.Join(".config", "gcloud"),
 	}
-	out := make([]string, 0, len(rel))
 	for _, r := range rel {
 		out = append(out, filepath.Join(home, r))
 	}
@@ -183,6 +209,77 @@ func WorkDirDenyRead(workDir string) []string {
 		filepath.Join(workDir, ".env"),
 		filepath.Join(workDir, ".env.local"),
 	}
+}
+
+// WorktreeGitDirs returns the git directories a sandboxed command needs
+// writable to run `git` inside a LINKED worktree. A linked worktree's `.git`
+// is a FILE ("gitdir: <parent>/.git/worktrees/<name>"), not a directory, and
+// the real object store / refs / config live in the parent repo's `.git`
+// (the "common dir") which is OUTSIDE the worktree tree — so without these
+// grants `git status`/`git commit` fail closed inside the sandbox.
+//
+// Returns the per-worktree gitdir AND the common dir (both need to be
+// writable: git writes HEAD/index/logs under the worktree gitdir and objects
+// under the common dir). Returns nil for a normal checkout (`.git` is a
+// directory already under workDir, hence already covered by the AllowWrite
+// worktree grant) or when workDir has no `.git` at all. Pure file parsing —
+// no `git` subprocess, so it works offline and with no git installed.
+func WorktreeGitDirs(workDir string) []string {
+	if workDir == "" {
+		return nil
+	}
+	dotGit := filepath.Join(workDir, ".git")
+	info, err := os.Lstat(dotGit)
+	if err != nil {
+		return nil
+	}
+	if info.IsDir() {
+		// Normal checkout: the object store is under workDir/.git, already
+		// inside the worktree AllowWrite grant. Nothing extra to add.
+		return nil
+	}
+	// Linked worktree: `.git` is a file "gitdir: <path>".
+	data, err := os.ReadFile(dotGit)
+	if err != nil {
+		return nil
+	}
+	line := strings.TrimSpace(string(data))
+	const prefix = "gitdir:"
+	if !strings.HasPrefix(line, prefix) {
+		return nil
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	if gitDir == "" {
+		return nil
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(workDir, gitDir)
+	}
+	gitDir = filepath.Clean(gitDir)
+	out := []string{gitDir}
+
+	// Resolve the common dir. Prefer the authoritative `commondir` file the
+	// worktree gitdir carries (usually "../.." relative to gitDir); fall
+	// back to the structural default <parent>/.git = dirname(dirname(gitDir))
+	// (gitDir is <parent>/.git/worktrees/<name>).
+	commonDir := ""
+	if cd, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
+		rel := strings.TrimSpace(string(cd))
+		if rel != "" {
+			if filepath.IsAbs(rel) {
+				commonDir = filepath.Clean(rel)
+			} else {
+				commonDir = filepath.Clean(filepath.Join(gitDir, rel))
+			}
+		}
+	}
+	if commonDir == "" {
+		commonDir = filepath.Dir(filepath.Dir(gitDir))
+	}
+	if commonDir != "" && commonDir != gitDir {
+		out = append(out, commonDir)
+	}
+	return out
 }
 
 // DefaultWriteCaches returns the toolchain cache paths kept writable so

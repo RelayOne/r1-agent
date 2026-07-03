@@ -17,11 +17,13 @@ import (
 // rolloutRecorder captures every base invocation plus the merge/discard
 // callback traffic so tests can assert the full-execution contract.
 type rolloutRecorder struct {
-	mu        sync.Mutex
-	calls     []plan.Task
-	merged    []worktree.Handle
-	discarded []worktree.Handle
-	mergeErr  error
+	mu                 sync.Mutex
+	calls              []plan.Task
+	merged             []worktree.Handle
+	discarded          []worktree.Handle
+	discardedByName    []string
+	byNameCtxCancelled bool
+	mergeErr           error
 }
 
 func (r *rolloutRecorder) record(task plan.Task) {
@@ -68,6 +70,18 @@ func (r *rolloutRecorder) discardRollout(_ context.Context, h worktree.Handle) e
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.discarded = append(r.discarded, h)
+	return nil
+}
+
+func (r *rolloutRecorder) discardByName(ctx context.Context, name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ctx.Err() != nil {
+		// Cleanup must run on a live, Background-derived ctx even when the
+		// run ctx was cancelled — otherwise cancellation disables cleanup.
+		r.byNameCtxCancelled = true
+	}
+	r.discardedByName = append(r.discardedByName, name)
 	return nil
 }
 
@@ -405,6 +419,56 @@ func TestWithSpecExecFullAllFailDiscardsAll(t *testing.T) {
 	}
 	if len(rec.discarded) != 2 {
 		t.Errorf("discarded = %d handles, want all 2", len(rec.discarded))
+	}
+}
+
+// A rollout that timed out (Spec.Timeout) or whose run was cancelled
+// returns a zero-valued Handle, so the Handle-based DiscardRollout can't
+// reach its worktree and it leaks. The wrapper must fall back to cleaning
+// up by the deterministic spec task ID — and that cleanup must survive a
+// cancelled run ctx (it runs on a Background-derived, separately-bounded
+// ctx).
+func TestWithSpecExecFullLeakedRolloutsCleanedByName(t *testing.T) {
+	rec := &rolloutRecorder{}
+	base := func(ctx context.Context, task plan.Task) TaskResult {
+		rec.record(task)
+		if !strings.Contains(task.ID, "-spec-") {
+			return TaskResult{TaskID: task.ID, Success: true}
+		}
+		// Timed-out / cancelled rollout: failed, and no Handle to discard.
+		return TaskResult{TaskID: task.ID, Success: false, Error: context.DeadlineExceeded}
+	}
+	wrapped := WithSpecExec(base, SpecExecConfig{
+		Approaches:           []string{"a", "b"},
+		MaxParallel:          2,
+		Timeout:              5 * time.Second,
+		FullExecution:        true,
+		MergeWinner:          rec.mergeWinner,
+		DiscardRollout:       rec.discardRollout,
+		DiscardRolloutByName: rec.discardByName,
+	})
+
+	// Cancel the run ctx up front: cleanup must still happen.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result := wrapped(ctx, plan.Task{ID: "T1", Description: explicitDesc})
+	if result.Success {
+		t.Fatal("expected failure when every rollout fails")
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.discarded) != 0 {
+		t.Errorf("handle-based discards = %v, want none (all rollouts returned zero handles)", rec.discarded)
+	}
+	got := map[string]bool{}
+	for _, n := range rec.discardedByName {
+		got[n] = true
+	}
+	if !got["T1-spec-strategy-1"] || !got["T1-spec-strategy-2"] {
+		t.Errorf("by-name discards = %v, want both T1-spec-strategy-1 and T1-spec-strategy-2 (leak swept)", rec.discardedByName)
+	}
+	if rec.byNameCtxCancelled {
+		t.Error("cleanup ran on the cancelled run ctx; a cancelled run must not disable rollout cleanup")
 	}
 }
 

@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -94,6 +95,9 @@ func TestDefaultDenyRead(t *testing.T) {
 		filepath.Join(home, ".netrc"):           true,
 		filepath.Join(home, ".config", "gh"):    true,
 		filepath.Join(home, ".config", "gcloud"): true,
+		// Daemon control sockets are masked regardless of home.
+		"/run/docker.sock":     true,
+		"/var/run/docker.sock": true,
 	}
 	found := map[string]bool{}
 	for _, p := range got {
@@ -104,10 +108,96 @@ func TestDefaultDenyRead(t *testing.T) {
 			t.Errorf("DefaultDenyRead missing %s", p)
 		}
 	}
-	if DefaultDenyRead("") != nil {
-		t.Error("DefaultDenyRead(\"\") must be nil so empty $HOME cannot mask filesystem roots")
+	// Empty $HOME still masks the absolute daemon sockets (home-independent),
+	// but must NOT emit any home-relative entry that could expand to a fs
+	// root. Every returned path must be one of the fixed daemon sockets.
+	socketSet := map[string]bool{}
+	for _, s := range DefaultDenySockets() {
+		socketSet[s] = true
+	}
+	emptyHome := DefaultDenyRead("")
+	if len(emptyHome) == 0 {
+		t.Fatal("DefaultDenyRead(\"\") must still mask daemon sockets")
+	}
+	for _, p := range emptyHome {
+		if !socketSet[p] {
+			t.Errorf("DefaultDenyRead(\"\") leaked a non-socket path %q (empty $HOME must not expand home-relative entries)", p)
+		}
+	}
+	if !socketSet["/run/docker.sock"] {
+		t.Error("DefaultDenySockets must include /run/docker.sock")
 	}
 	if DefaultWriteCaches("") != nil {
 		t.Error("DefaultWriteCaches(\"\") must be nil")
 	}
+}
+
+func TestWorktreeGitDirs(t *testing.T) {
+	t.Run("normal checkout returns nil", func(t *testing.T) {
+		work := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(work, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if got := WorktreeGitDirs(work); got != nil {
+			t.Errorf("normal checkout: want nil, got %v", got)
+		}
+	})
+
+	t.Run("no .git returns nil", func(t *testing.T) {
+		if got := WorktreeGitDirs(t.TempDir()); got != nil {
+			t.Errorf("want nil, got %v", got)
+		}
+		if got := WorktreeGitDirs(""); got != nil {
+			t.Errorf("empty workDir: want nil, got %v", got)
+		}
+	})
+
+	t.Run("linked worktree resolves gitdir and common dir", func(t *testing.T) {
+		parent := t.TempDir()
+		commonDir := filepath.Join(parent, ".git")
+		gitDir := filepath.Join(commonDir, "worktrees", "wt1")
+		if err := os.MkdirAll(gitDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// Authoritative commondir file points back at the parent .git.
+		if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		work := t.TempDir()
+		if err := os.WriteFile(filepath.Join(work, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got := WorktreeGitDirs(work)
+		gotSet := map[string]bool{}
+		for _, p := range got {
+			gotSet[p] = true
+		}
+		if !gotSet[gitDir] {
+			t.Errorf("missing worktree gitdir %q in %v", gitDir, got)
+		}
+		if !gotSet[commonDir] {
+			t.Errorf("missing common dir %q in %v", commonDir, got)
+		}
+	})
+
+	t.Run("linked worktree without commondir file falls back structurally", func(t *testing.T) {
+		parent := t.TempDir()
+		commonDir := filepath.Join(parent, ".git")
+		gitDir := filepath.Join(commonDir, "worktrees", "wt1")
+		if err := os.MkdirAll(gitDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		work := t.TempDir()
+		if err := os.WriteFile(filepath.Join(work, ".git"), []byte("gitdir: "+gitDir), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got := WorktreeGitDirs(work)
+		gotSet := map[string]bool{}
+		for _, p := range got {
+			gotSet[p] = true
+		}
+		if !gotSet[commonDir] {
+			t.Errorf("structural fallback missing common dir %q in %v", commonDir, got)
+		}
+	})
 }

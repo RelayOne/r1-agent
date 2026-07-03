@@ -26,6 +26,29 @@ func TestLandlockFSMaskClamping(t *testing.T) {
 	}
 }
 
+// TestLandlockRODoesNotGrantRunWholesale pins that the read baseline does
+// NOT grant all of /run — that directory holds daemon control sockets
+// (/run/docker.sock, /run/containerd/*) whose reachability is a full host
+// escape, and Landlock's allow-list is the only lever for this backend (the
+// bwrap DenyRead socket mask does not apply). Only the narrow DNS-resolver
+// runtime path is allowed.
+func TestLandlockRODoesNotGrantRunWholesale(t *testing.T) {
+	for _, p := range landlockROPaths {
+		if p == "/run" {
+			t.Fatalf("landlockROPaths must not grant /run wholesale (exposes daemon sockets); paths: %v", landlockROPaths)
+		}
+	}
+	found := false
+	for _, p := range landlockROPaths {
+		if p == "/run/systemd/resolve" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("landlockROPaths should keep the narrow DNS-resolver runtime path; paths: %v", landlockROPaths)
+	}
+}
+
 func TestLandlockFileAccessSubsetOfMask(t *testing.T) {
 	for abi := 1; abi <= 6; abi++ {
 		fileBits := landlockFileAccess(abi)

@@ -48,6 +48,15 @@ var DefaultExtensions = []string{".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".r
 // writes; only failures need throttling to avoid a walk-the-tree retry storm.
 const rebuildRetryInterval = 5 * time.Second
 
+// defaultListLimit caps the per-list render size of the flat listing queries
+// (GetDependencies, GetFileSymbols, ImpactAnalysis) when the caller passes a
+// non-positive limit. A wide file — a "god" package imported everywhere, or a
+// generated file with thousands of symbols — would otherwise render an
+// unbounded wall of text (tens of thousands of tokens) that only the 200KB
+// loop sanitizer would clip. Overrun is elided with a "... and N more" line,
+// mirroring GetCallGraph.
+const defaultListLimit = 50
+
 // Index bundles the four codebase indexes behind one query surface.
 // The zero value answers every query with "not available" text.
 type Index struct {
@@ -289,18 +298,23 @@ func (ix *Index) searchSymbolsLocked(query, kind string, limit int) (string, err
 	return sb.String(), nil
 }
 
-// GetDependencies renders a file's imports and reverse dependencies.
-func (ix *Index) GetDependencies(file string) (string, error) {
+// GetDependencies renders a file's imports and reverse dependencies. limit
+// caps each of the two lists independently; a non-positive limit falls back
+// to defaultListLimit.
+func (ix *Index) GetDependencies(file string, limit int) (string, error) {
 	if file == "" {
 		return "", fmt.Errorf("file is required")
+	}
+	if limit <= 0 {
+		limit = defaultListLimit
 	}
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 	ix.refreshLocked()
-	return ix.getDependenciesLocked(file)
+	return ix.getDependenciesLocked(file, limit)
 }
 
-func (ix *Index) getDependenciesLocked(file string) (string, error) {
+func (ix *Index) getDependenciesLocked(file string, limit int) (string, error) {
 	if ix.dep == nil {
 		return msgDepGraphUnavailable, nil
 	}
@@ -312,12 +326,20 @@ func (ix *Index) getDependenciesLocked(file string) (string, error) {
 	fmt.Fprintf(&sb, "File: %s\n\n", file)
 
 	fmt.Fprintf(&sb, "Imports (%d):\n", len(deps))
-	for _, d := range deps {
+	for i, d := range deps {
+		if i >= limit {
+			fmt.Fprintf(&sb, "  ... and %d more\n", len(deps)-limit)
+			break
+		}
 		fmt.Fprintf(&sb, "  %s\n", d)
 	}
 
 	fmt.Fprintf(&sb, "\nImported by (%d):\n", len(dependents))
-	for _, d := range dependents {
+	for i, d := range dependents {
+		if i >= limit {
+			fmt.Fprintf(&sb, "  ... and %d more\n", len(dependents)-limit)
+			break
+		}
 		fmt.Fprintf(&sb, "  %s\n", d)
 	}
 
@@ -376,18 +398,22 @@ func (ix *Index) searchContentLocked(query string, limit int) (string, error) {
 	return sb.String(), nil
 }
 
-// GetFileSymbols lists every symbol defined in one file.
-func (ix *Index) GetFileSymbols(file string) (string, error) {
+// GetFileSymbols lists every symbol defined in one file. limit caps the
+// listing; a non-positive limit falls back to defaultListLimit.
+func (ix *Index) GetFileSymbols(file string, limit int) (string, error) {
 	if file == "" {
 		return "", fmt.Errorf("file is required")
+	}
+	if limit <= 0 {
+		limit = defaultListLimit
 	}
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 	ix.refreshLocked()
-	return ix.getFileSymbolsLocked(file)
+	return ix.getFileSymbolsLocked(file, limit)
 }
 
-func (ix *Index) getFileSymbolsLocked(file string) (string, error) {
+func (ix *Index) getFileSymbolsLocked(file string, limit int) (string, error) {
 	if ix.sym == nil {
 		return msgSymbolIndexUnavailable, nil
 	}
@@ -398,7 +424,11 @@ func (ix *Index) getFileSymbolsLocked(file string) (string, error) {
 	}
 
 	var sb strings.Builder
-	for _, sym := range symbols {
+	for i, sym := range symbols {
+		if i >= limit {
+			fmt.Fprintf(&sb, "  ... and %d more\n", len(symbols)-limit)
+			break
+		}
 		fmt.Fprintf(&sb, "  L%-4d %s %s", sym.Line, sym.Kind, sym.Name)
 		if sym.Exported {
 			sb.WriteString(" [exported]")
@@ -408,18 +438,22 @@ func (ix *Index) getFileSymbolsLocked(file string) (string, error) {
 	return sb.String(), nil
 }
 
-// ImpactAnalysis renders the transitive dependent set of a file.
-func (ix *Index) ImpactAnalysis(file string) (string, error) {
+// ImpactAnalysis renders the transitive dependent set of a file. limit caps
+// the listing; a non-positive limit falls back to defaultListLimit.
+func (ix *Index) ImpactAnalysis(file string, limit int) (string, error) {
 	if file == "" {
 		return "", fmt.Errorf("file is required")
+	}
+	if limit <= 0 {
+		limit = defaultListLimit
 	}
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 	ix.refreshLocked()
-	return ix.impactAnalysisLocked(file)
+	return ix.impactAnalysisLocked(file, limit)
 }
 
-func (ix *Index) impactAnalysisLocked(file string) (string, error) {
+func (ix *Index) impactAnalysisLocked(file string, limit int) (string, error) {
 	if ix.dep == nil {
 		return msgDepGraphUnavailable, nil
 	}
@@ -431,7 +465,11 @@ func (ix *Index) impactAnalysisLocked(file string) (string, error) {
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Files impacted by changes to %s (%d):\n", file, len(impact))
-	for _, f := range impact {
+	for i, f := range impact {
+		if i >= limit {
+			fmt.Fprintf(&sb, "  ... and %d more\n", len(impact)-limit)
+			break
+		}
 		fmt.Fprintf(&sb, "  %s", f)
 		// Show key exports so the model understands what each consumer provides
 		if ix.sym != nil {

@@ -172,25 +172,53 @@ func emitRunTelemetry(repo, runID string, tel *telemetry.Collector) {
 // specRunnerModels returns the runner names speculative rollouts
 // round-robin across, derived from the model router's refactor route so
 // engine diversity follows the same benchmark-backed ordering as normal
-// routing. Only wired execution runners count as available: the claude
-// and codex CLIs always exist, while in native mode the native runner
-// is the only credentialed engine — rollouts pin to it rather than
-// betting on possibly unauthenticated CLI binaries.
-func specRunnerModels(runnerMode string) []string {
+// routing. In native mode the native runner is the only credentialed
+// engine, so rollouts pin to it. Otherwise only engines whose CLI is
+// actually on PATH are included (same exec.LookPath check app.Doctor
+// uses): the old code claimed claude+codex "always exist" and
+// round-robined dead runners into the rollout set, so a host with only
+// one engine installed silently degraded best-of-N into best-of-1 with
+// N-1 pipelines failing on a missing binary. When neither CLI is present
+// the list is empty, which leaves Strategy.Model blank so every rollout
+// uses the build default; when exactly one is present the list has one
+// entry (best-of-N on a single, real engine).
+func specRunnerModels(runnerMode, claudeBin, codexBin string) []string {
 	if runnerMode == "native" {
 		return []string{string(model.ProviderNative)}
 	}
-	avail := func(p model.Provider) bool {
-		return p == model.ProviderClaude || p == model.ProviderCodex
+	if claudeBin == "" {
+		claudeBin = "claude"
 	}
-	primary := model.Resolve(model.TaskTypeRefactor, avail)
-	models := []string{string(primary)}
-	seen := map[model.Provider]bool{primary: true}
-	for _, fb := range model.Routes[model.TaskTypeRefactor].FallbackChain {
-		if !seen[fb] && avail(fb) {
-			seen[fb] = true
-			models = append(models, string(fb))
+	if codexBin == "" {
+		codexBin = "codex"
+	}
+	installed := func(p model.Provider) bool {
+		switch p {
+		case model.ProviderClaude:
+			_, err := exec.LookPath(claudeBin)
+			return err == nil
+		case model.ProviderCodex:
+			_, err := exec.LookPath(codexBin)
+			return err == nil
+		default:
+			// OpenRouter/DirectAPI/etc. are not wired as workflow runners
+			// (CLAUDE.md decision #15), so they never count for rollouts.
+			return false
 		}
+	}
+	var models []string
+	seen := map[model.Provider]bool{}
+	add := func(p model.Provider) {
+		if !seen[p] && installed(p) {
+			seen[p] = true
+			models = append(models, string(p))
+		}
+	}
+	// Preserve the router's ordering (primary first, then fallback chain)
+	// but keep only genuinely-usable engines.
+	add(model.Resolve(model.TaskTypeRefactor, installed))
+	for _, fb := range model.Routes[model.TaskTypeRefactor].FallbackChain {
+		add(fb)
 	}
 	return models
 }
@@ -522,10 +550,10 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		ts := planState.Get(task.ID)
 
 		appCfg := app.RunConfig{
-			RepoRoot:            absRepo,
-			PolicyPath:          cfg.PolicyPath,
-			Task:                task.Description,
-			TaskType:            task.Type,
+			RepoRoot:   absRepo,
+			PolicyPath: cfg.PolicyPath,
+			Task:       task.Description,
+			TaskType:   task.Type,
 			// Name worktrees by task ID, not description slug: parallel
 			// speculative strategies share a 32-char description prefix,
 			// and slug collisions made Prepare's already-exists recovery
@@ -686,9 +714,20 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			// more headroom than a plan-only exploration.
 			seCfg.Timeout = 30 * time.Minute
 			seCfg.Tracker = tracker
-			seCfg.MergeWinner = sharedWorktrees.Merge
+			// Refresh the shared repomap for the winner's files after a
+			// successful merge. The best-of-N winner-merge path lands a
+			// pre-verified branch straight onto main, bypassing the
+			// workflow's own refreshRepoMap; without this every later task
+			// plans against a view that predates the merged change.
+			seCfg.MergeWinner = repomapRefreshingMerge(sharedWorktrees.Merge, repoMap)
 			seCfg.DiscardRollout = sharedWorktrees.Cleanup
-			seCfg.Models = specRunnerModels(cfg.RunnerMode)
+			// By-name fallback so a rollout that timed out or was cancelled
+			// (zero-valued Handle) still gets its worktree/branch cleaned up
+			// instead of leaking. Rollouts run under WorktreeName == task.ID
+			// (see the execFn above), so the deterministic name the wrapper
+			// reconstructs matches what base() created.
+			seCfg.DiscardRolloutByName = sharedWorktrees.CleanupByName
+			seCfg.Models = specRunnerModels(cfg.RunnerMode, cfg.ClaudeBinary, cfg.CodexBinary)
 			// Rollouts run base() under synthetic spec IDs, so the
 			// executor's markTask above never fires for the real task.
 			// Persist completion under the real ID on merge success —
@@ -7682,4 +7721,32 @@ func createOrchestrator(repoRoot, dataDir string) (*orchestrate.Orchestrator, er
 		StoreDir: absData,
 		EventBus: newEventBus(),
 	})
+}
+
+// repomapRefreshingMerge wraps a worktree-merge func so a successful merge
+// also refreshes the shared repomap for the merged files. The
+// --specexec-full winner-merge path lands a pre-verified rollout branch
+// straight onto main, bypassing the workflow's own refreshRepoMap; without
+// this every later task plans against a repomap that predates the merged
+// change. The changed-file set is snapshotted BEFORE the merge because
+// worktree.Manager.Merge self-cleans the winning worktree on success, after
+// which the diff is gone. When rm is nil (repomap disabled or its build
+// failed) this is a transparent passthrough. A diff error is best-effort:
+// it drops the refresh, never aborts the merge.
+func repomapRefreshingMerge(merge func(context.Context, worktree.Handle, string) error, rm *repomap.RepoMap) func(context.Context, worktree.Handle, string) error {
+	return func(ctx context.Context, h worktree.Handle, msg string) error {
+		var changed []string
+		if rm != nil {
+			changed, _ = worktree.ModifiedFiles(ctx, h)
+		}
+		if err := merge(ctx, h, msg); err != nil {
+			return err
+		}
+		if rm != nil {
+			for _, f := range changed {
+				rm.Invalidate(f)
+			}
+		}
+		return nil
+	}
 }
