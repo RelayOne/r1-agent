@@ -368,6 +368,7 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		MaxConsecutiveErrs: 3,
 		MaxTokens:          16000,
 		SystemPrompt:       systemPrompt,
+		ThinkingBudget:     spec.Phase.ThinkingBudget,
 	}
 
 	// Pre-end-turn build verification (Cline/Aider pattern).

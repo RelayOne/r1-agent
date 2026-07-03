@@ -1976,6 +1976,25 @@ func taskComplexity(task string) planpkg.Complexity {
 	}
 }
 
+// thinkingBudgetForClass maps the heuristic intent classification to an
+// extended-thinking budget hint for the native runner (SOTA gap #12).
+// Mechanical work (trivial / explicit) gets none — thinking only adds
+// latency and cost there. Investigation and design work gets reasoning
+// depth, scaled by how open the problem is. Values must stay well below
+// the native runner's per-turn MaxTokens (16000): on legacy models the
+// budget counts against max_tokens, so 8192 already halves the visible
+// output headroom.
+func thinkingBudgetForClass(c intent.Class) int {
+	switch c {
+	case intent.ClassExploratory, intent.ClassAmbiguous:
+		return 4096
+	case intent.ClassOpenEnded:
+		return 8192
+	default: // trivial, explicit, unknown — fail closed to today's behavior
+		return 0
+	}
+}
+
 func buildPhases(e Engine) []engine.PhaseSpec {
 	plan := e.Policy.Phases["plan"]
 	execute := e.Policy.Phases["execute"]
@@ -1988,6 +2007,12 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 	if intent.RequiresGate(classification) {
 		intentGate = intent.GatePrompt(e.Task, classification) + "\n\n"
 	}
+
+	// Extended thinking is modulated by the same classification: plan
+	// and execute get the budget; verify stays at 0 (review reads
+	// diffs against a checklist — cheaper and just as reliable
+	// without thinking).
+	thinkingBudget := thinkingBudgetForClass(classification.Class)
 
 	return []engine.PhaseSpec{
 		{
@@ -2004,8 +2029,9 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			// only (same task should produce behaviorally equivalent
 			// plans across runs; wording will vary). Routes to GPU
 			// inference.
-			Determinism: engine.DeterminismSemantic,
-			Affinity:    engine.ComputeGPUInference,
+			Determinism:    engine.DeterminismSemantic,
+			Affinity:       engine.ComputeGPUInference,
+			ThinkingBudget: thinkingBudget,
 		},
 		{
 			Name:         "execute",
@@ -2022,8 +2048,9 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			// overall because the LLM portion dominates reproducibility
 			// properties. Affinity=Any because it genuinely spans CPU
 			// + GPU; no single substrate is preferred.
-			Determinism: engine.DeterminismSemantic,
-			Affinity:    engine.ComputeAny,
+			Determinism:    engine.DeterminismSemantic,
+			Affinity:       engine.ComputeAny,
+			ThinkingBudget: thinkingBudget,
 		},
 		{
 			Name:         "verify",
