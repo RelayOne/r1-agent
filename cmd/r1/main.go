@@ -522,10 +522,10 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		ts := planState.Get(task.ID)
 
 		appCfg := app.RunConfig{
-			RepoRoot:            absRepo,
-			PolicyPath:          cfg.PolicyPath,
-			Task:                task.Description,
-			TaskType:            task.Type,
+			RepoRoot:   absRepo,
+			PolicyPath: cfg.PolicyPath,
+			Task:       task.Description,
+			TaskType:   task.Type,
 			// Name worktrees by task ID, not description slug: parallel
 			// speculative strategies share a 32-char description prefix,
 			// and slug collisions made Prepare's already-exists recovery
@@ -686,7 +686,12 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			// more headroom than a plan-only exploration.
 			seCfg.Timeout = 30 * time.Minute
 			seCfg.Tracker = tracker
-			seCfg.MergeWinner = sharedWorktrees.Merge
+			// Refresh the shared repomap for the winner's files after a
+			// successful merge. The best-of-N winner-merge path lands a
+			// pre-verified branch straight onto main, bypassing the
+			// workflow's own refreshRepoMap; without this every later task
+			// plans against a view that predates the merged change.
+			seCfg.MergeWinner = repomapRefreshingMerge(sharedWorktrees.Merge, repoMap)
 			seCfg.DiscardRollout = sharedWorktrees.Cleanup
 			seCfg.Models = specRunnerModels(cfg.RunnerMode)
 			// Rollouts run base() under synthetic spec IDs, so the
@@ -7682,4 +7687,32 @@ func createOrchestrator(repoRoot, dataDir string) (*orchestrate.Orchestrator, er
 		StoreDir: absData,
 		EventBus: newEventBus(),
 	})
+}
+
+// repomapRefreshingMerge wraps a worktree-merge func so a successful merge
+// also refreshes the shared repomap for the merged files. The
+// --specexec-full winner-merge path lands a pre-verified rollout branch
+// straight onto main, bypassing the workflow's own refreshRepoMap; without
+// this every later task plans against a repomap that predates the merged
+// change. The changed-file set is snapshotted BEFORE the merge because
+// worktree.Manager.Merge self-cleans the winning worktree on success, after
+// which the diff is gone. When rm is nil (repomap disabled or its build
+// failed) this is a transparent passthrough. A diff error is best-effort:
+// it drops the refresh, never aborts the merge.
+func repomapRefreshingMerge(merge func(context.Context, worktree.Handle, string) error, rm *repomap.RepoMap) func(context.Context, worktree.Handle, string) error {
+	return func(ctx context.Context, h worktree.Handle, msg string) error {
+		var changed []string
+		if rm != nil {
+			changed, _ = worktree.ModifiedFiles(ctx, h)
+		}
+		if err := merge(ctx, h, msg); err != nil {
+			return err
+		}
+		if rm != nil {
+			for _, f := range changed {
+				rm.Invalidate(f)
+			}
+		}
+		return nil
+	}
 }
