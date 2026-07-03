@@ -19,8 +19,9 @@ import (
 // The parser buffers tool use metadata and partial_json fragments per
 // content block index, then emits a complete ToolUse event on stop.
 type SSEParser struct {
-	buffer       []byte
-	pendingTools map[int]*pendingTool // keyed by content_block index
+	buffer          []byte
+	pendingTools    map[int]*pendingTool     // keyed by content_block index
+	pendingThinking map[int]*pendingThinking // keyed by content_block index
 }
 
 // pendingTool holds in-progress tool_use streaming state.
@@ -30,10 +31,23 @@ type pendingTool struct {
 	JSONFrags strings.Builder
 }
 
+// pendingThinking holds in-progress thinking / redacted_thinking
+// streaming state. Text arrives via thinking_delta chunks, the
+// signature via signature_delta chunks; redacted blocks carry their
+// opaque data on content_block_start. The assembled block is emitted
+// on content_block_stop (mirrors the pendingTool lifecycle).
+type pendingThinking struct {
+	Text      strings.Builder
+	Signature strings.Builder
+	Redacted  bool
+	Data      string
+}
+
 // NewSSEParser creates an SSE parser.
 func NewSSEParser() *SSEParser {
 	return &SSEParser{
-		pendingTools: make(map[int]*pendingTool),
+		pendingTools:    make(map[int]*pendingTool),
+		pendingThinking: make(map[int]*pendingThinking),
 	}
 }
 
@@ -214,14 +228,32 @@ func (p *SSEParser) parseContentBlockStart(payload string) (*Event, error) {
 	var block struct {
 		Index        int `json:"index"`
 		ContentBlock struct {
-			Type  string          `json:"type"`
-			ID    string          `json:"id"`
-			Name  string          `json:"name"`
-			Input json.RawMessage `json:"input"`
+			Type     string          `json:"type"`
+			ID       string          `json:"id"`
+			Name     string          `json:"name"`
+			Input    json.RawMessage `json:"input"`
+			Thinking string          `json:"thinking"`
+			Data     string          `json:"data"`
 		} `json:"content_block"`
 	}
 	if err := json.Unmarshal([]byte(payload), &block); err != nil {
 		return nil, fmt.Errorf("parse content_block_start: %w", err)
+	}
+
+	switch block.ContentBlock.Type {
+	case blockTypeThinking, blockTypeRedactedThinking:
+		// Buffer like tool_use: thinking text arrives in thinking_delta
+		// chunks and the signature in signature_delta chunks; the
+		// assembled block is emitted on content_block_stop. Redacted
+		// blocks arrive complete (opaque data on start, no deltas).
+		pth := &pendingThinking{
+			Redacted: block.ContentBlock.Type == blockTypeRedactedThinking,
+			Data:     block.ContentBlock.Data,
+		}
+		// Some implementations send full content here (non-streamed).
+		pth.Text.WriteString(block.ContentBlock.Thinking)
+		p.pendingThinking[block.Index] = pth
+		return nil, nil
 	}
 
 	if block.ContentBlock.Type == blockTypeToolUse {
@@ -251,6 +283,9 @@ func (p *SSEParser) parseContentBlockDelta(payload string) (*Event, error) {
 			Text string `json:"text"`
 			// For tool_use input streaming
 			PartialJSON string `json:"partial_json"`
+			// For extended-thinking streaming
+			Thinking  string `json:"thinking"`
+			Signature string `json:"signature"`
 		} `json:"delta"`
 	}
 	if err := json.Unmarshal([]byte(payload), &delta); err != nil {
@@ -270,6 +305,20 @@ func (p *SSEParser) parseContentBlockDelta(payload string) (*Event, error) {
 		if pt, ok := p.pendingTools[delta.Index]; ok {
 			pt.JSONFrags.WriteString(delta.Delta.PartialJSON)
 		}
+	case "thinking_delta":
+		// DeltaText stays empty on purpose: consumers treat DeltaText
+		// as user-visible prose, and thinking must not merge into the
+		// text block (or the streamed display).
+		ev.DeltaType = "thinking_delta"
+		if pth, ok := p.pendingThinking[delta.Index]; ok {
+			pth.Text.WriteString(delta.Delta.Thinking)
+		}
+	case "signature_delta":
+		// Signatures are integrity material, never display text.
+		if pth, ok := p.pendingThinking[delta.Index]; ok {
+			pth.Signature.WriteString(delta.Delta.Signature)
+		}
+		return nil, nil
 	}
 	return ev, nil
 }
@@ -283,6 +332,19 @@ func (p *SSEParser) parseContentBlockStop(payload string) (*Event, error) {
 	}
 	if err := json.Unmarshal([]byte(payload), &stop); err != nil {
 		return nil, nil
+	}
+	if pth, ok := p.pendingThinking[stop.Index]; ok {
+		delete(p.pendingThinking, stop.Index)
+		return &Event{
+			Type: "assistant",
+			Raw:  []byte(payload),
+			ThinkingBlocks: []ThinkingBlock{{
+				Text:      pth.Text.String(),
+				Signature: pth.Signature.String(),
+				Redacted:  pth.Redacted,
+				Data:      pth.Data,
+			}},
+		}, nil
 	}
 	pt, ok := p.pendingTools[stop.Index]
 	if !ok {

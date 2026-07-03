@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -31,8 +32,10 @@ import (
 // strings used in the Messages API; centralised so the various switches
 // in this file stay in sync.
 const (
-	blockText    = "text"
-	blockToolUse = "tool_use"
+	blockText             = "text"
+	blockToolUse          = "tool_use"
+	blockThinking         = "thinking"
+	blockRedactedThinking = "redacted_thinking"
 )
 
 // CortexHook is the agentloop's view into a parallel-cognition substrate.
@@ -51,8 +54,14 @@ type Config struct {
 	MaxConsecutiveErrs int           // consecutive tool errors before abort (default 3)
 	MaxTokens          int           // max output tokens per turn (default 16000)
 	SystemPrompt       string        // static system prompt (cached)
-	ThinkingBudget     int           // extended thinking budget (0 = disabled)
-	Timeout            time.Duration // per-turn timeout
+	// ThinkingBudget enables extended thinking. 0 = disabled (today's
+	// behavior for every existing call site). The value is a hint:
+	// adaptive-thinking models get {"type":"adaptive"} and ignore the
+	// number; legacy models get it as budget_tokens, which counts
+	// against MaxTokens — keep it well below MaxTokens or the visible
+	// output headroom collapses. Kill switch: R1_DISABLE_THINKING=1.
+	ThinkingBudget int
+	Timeout        time.Duration // per-turn timeout
 
 	// Correlation IDs (AL-1 / SEAM-22). When set, the loop copies them
 	// into every outbound ChatRequest.Metadata so the provider adapter
@@ -312,6 +321,7 @@ type ContentBlock struct {
 	IsError   bool            `json:"is_error,omitempty"`    // tool_result error flag
 	Thinking  string          `json:"thinking,omitempty"`    // thinking content
 	Signature string          `json:"signature,omitempty"`   // thinking signature
+	Data      string          `json:"data,omitempty"`        // redacted_thinking opaque payload
 }
 
 // Message is a conversation message with typed content blocks.
@@ -568,9 +578,15 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 					inputJSON, _ := json.Marshal(rc.Input)
 					block.Input = inputJSON
 				}
-			case "thinking":
-				block.Text = rc.Text // thinking content
-				// Signature would be preserved from raw response
+			case blockThinking:
+				// Thinking + signature must survive into history
+				// verbatim: with extended thinking + tool use, the API
+				// requires the assistant turn's thinking blocks to be
+				// replayed unchanged on the next request.
+				block.Thinking = rc.Thinking
+				block.Signature = rc.Signature
+			case blockRedactedThinking:
+				block.Data = rc.Data
 			}
 			assistantBlocks = append(assistantBlocks, block)
 		}
@@ -735,6 +751,15 @@ func (l *Loop) buildRequest(messages []Message) provider.ChatRequest {
 		}
 	}
 
+	// Extended thinking: emitted only when a positive budget is
+	// configured AND the kill switch is off. The provider adapter is
+	// responsible for model-correct wire shape (adaptive vs
+	// budget_tokens) and fails closed on unknown models.
+	var thinking *provider.ThinkingSpec
+	if l.config.ThinkingBudget > 0 && os.Getenv("R1_DISABLE_THINKING") != "1" {
+		thinking = &provider.ThinkingSpec{BudgetTokens: l.config.ThinkingBudget}
+	}
+
 	return provider.ChatRequest{
 		Model:        l.config.Model,
 		SystemRaw:    systemJSON,
@@ -743,6 +768,7 @@ func (l *Loop) buildRequest(messages []Message) provider.ChatRequest {
 		Tools:        sortedTools,
 		CacheEnabled: true,
 		Metadata:     meta,
+		Thinking:     thinking,
 	}
 }
 

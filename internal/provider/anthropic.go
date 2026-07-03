@@ -43,6 +43,13 @@ type ChatRequest struct {
 	Temperature  *float64          `json:"temperature,omitempty"`
 	CacheEnabled bool              `json:"-"` // if true, adds cache_control to last tool definition
 	Metadata     map[string]string `json:"-"` // not sent to API
+
+	// Thinking requests extended thinking. nil = never emitted (wire
+	// bytes unchanged). The Anthropic adapter maps it to the
+	// model-correct parameter shape (see anthropicThinkingParam); all
+	// other providers (openai-compat, gemini, ember, codex,
+	// claudecode) build their own bodies and ignore it by construction.
+	Thinking *ThinkingSpec `json:"-"`
 }
 
 // ChatMessage is a single message in a chat.
@@ -79,8 +86,10 @@ const (
 	roleAssistant = "assistant"
 
 	// Content block type literals.
-	blockTypeText    = "text"
-	blockTypeToolUse = "tool_use"
+	blockTypeText             = "text"
+	blockTypeToolUse          = "tool_use"
+	blockTypeThinking         = "thinking"
+	blockTypeRedactedThinking = "redacted_thinking"
 
 	// Stop-reason literals (normalized and as emitted by upstream).
 	stopReasonEndTurn = "end_turn"
@@ -104,6 +113,7 @@ type ResponseContent struct {
 	Text      string                 `json:"text,omitempty"`
 	Thinking  string                 `json:"thinking,omitempty"`
 	Signature string                 `json:"signature,omitempty"`
+	Data      string                 `json:"data,omitempty"` // redacted_thinking opaque payload
 	ID        string                 `json:"id,omitempty"`
 	Name      string                 `json:"name,omitempty"`
 	Input     map[string]interface{} `json:"input,omitempty"`
@@ -343,6 +353,7 @@ func (p *AnthropicProvider) ChatStream(req ChatRequest, onEvent func(stream.Even
 
 	var result ChatResponse
 	var fullText strings.Builder
+	var thinkingContent []ResponseContent
 
 	// Read line by line and feed to SSE parser
 	var lineBuffer strings.Builder
@@ -362,9 +373,23 @@ func (p *AnthropicProvider) ChatStream(req ChatRequest, onEvent func(stream.Even
 				if onEvent != nil {
 					onEvent(ev)
 				}
-				// Accumulate into result
-				if ev.DeltaText != "" {
+				// Accumulate into result. Only text_delta feeds the
+				// text block — input_json_delta (tool input fragments)
+				// and thinking deltas are assembled into their own
+				// blocks and must not merge into prose.
+				if ev.DeltaType == "text_delta" && ev.DeltaText != "" {
 					fullText.WriteString(ev.DeltaText)
+				}
+				for _, tb := range ev.ThinkingBlocks {
+					if tb.Redacted {
+						thinkingContent = append(thinkingContent, ResponseContent{
+							Type: blockTypeRedactedThinking, Data: tb.Data,
+						})
+					} else {
+						thinkingContent = append(thinkingContent, ResponseContent{
+							Type: blockTypeThinking, Thinking: tb.Text, Signature: tb.Signature,
+						})
+					}
 				}
 				if ev.Tokens.Input > 0 || ev.Tokens.Output > 0 {
 					if ev.Tokens.Input > result.Usage.Input {
@@ -400,8 +425,17 @@ func (p *AnthropicProvider) ChatStream(req ChatRequest, onEvent func(stream.Even
 		}
 	}
 
+	// Assemble content in API order: thinking blocks first, then the
+	// text block, then tool_use blocks (already in result.Content).
+	// Preserving this order matters — assistant messages are replayed
+	// verbatim on the next turn, and the API expects thinking to
+	// precede the tool calls it justified.
+	head := append([]ResponseContent(nil), thinkingContent...)
 	if text := fullText.String(); text != "" {
-		result.Content = append([]ResponseContent{{Type: blockTypeText, Text: text}}, result.Content...)
+		head = append(head, ResponseContent{Type: blockTypeText, Text: text})
+	}
+	if len(head) > 0 {
+		result.Content = append(head, result.Content...)
 	}
 
 	return &result, nil
@@ -445,6 +479,12 @@ func (p *AnthropicProvider) buildRequestBody(req ChatRequest, streaming bool) ma
 
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
+	}
+	if tp, ok := anthropicThinkingParam(req.Model, req.Thinking, req.MaxTokens); ok {
+		body["thinking"] = tp
+		// The API requires default sampling while thinking is active —
+		// a request carrying both thinking and temperature is a 400.
+		delete(body, "temperature")
 	}
 	if streaming {
 		body["stream"] = true
@@ -503,14 +543,25 @@ func wrapMessageMaybeCache(m ChatMessage, attach bool) map[string]interface{} {
 	var blocks []interface{}
 	if err := json.Unmarshal(m.Content, &blocks); err == nil && len(blocks) > 0 {
 		if attach {
-			last := blocks[len(blocks)-1]
-			if asMap, ok := last.(map[string]interface{}); ok {
+			for i := len(blocks) - 1; i >= 0; i-- {
+				asMap, ok := blocks[i].(map[string]interface{})
+				if !ok {
+					blocks = append(blocks, map[string]interface{}{
+						"type": "text", "text": "", "cache_control": cacheControl,
+					})
+					break
+				}
+				// cache_control on thinking / redacted_thinking blocks
+				// is rejected by the API — walk back to the previous
+				// block. A thinking-only message gets no breakpoint at
+				// all: losing one breakpoint is harmless, sending it
+				// is a 400 on every subsequent turn.
+				if t, _ := asMap["type"].(string); t == blockTypeThinking || t == blockTypeRedactedThinking {
+					continue
+				}
 				asMap["cache_control"] = cacheControl
-				blocks[len(blocks)-1] = asMap
-			} else {
-				blocks = append(blocks, map[string]interface{}{
-					"type": "text", "text": "", "cache_control": cacheControl,
-				})
+				blocks[i] = asMap
+				break
 			}
 		}
 		return map[string]interface{}{"role": m.Role, "content": blocks}

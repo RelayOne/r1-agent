@@ -134,6 +134,13 @@ type PhaseSpec struct {
 	// today buys optionality when probabilistic / neuromorphic
 	// substrates become available without forcing a codebase sweep.
 	Affinity ComputeAffinity
+
+	// ThinkingBudget enables extended thinking in the native runner's
+	// agentloop. 0 = disabled. The value is a hint: adaptive-thinking
+	// models get {"type":"adaptive"} while legacy models get it as
+	// budget_tokens (which counts against the loop's per-turn
+	// MaxTokens). CLI-subprocess runners ignore it.
+	ThinkingBudget int
 }
 
 // PreparedCommand holds the fully resolved binary, arguments, environment, and working directory for an engine invocation.
