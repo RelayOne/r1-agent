@@ -26,6 +26,13 @@ const r1CronMarker = "# r1-cron:"
 // handleCronCreate adds a new cron job to the current user's crontab.
 // The cron expression follows standard 5-field format: min hour dom month dow.
 func (r *Registry) handleCronCreate(ctx context.Context, input json.RawMessage) (string, error) {
+	// Denied while the OS sandbox is engaged: cron entries run later, on the
+	// host, wholly outside the containment wrapped around the bash tool —
+	// scheduling one would be an unsandboxed-execution escape hatch. See
+	// docs/native-sandbox.md (containment completion).
+	if r.sandboxActive() {
+		return "", errSandboxDeniedCron
+	}
 	var args struct {
 		ID         string `json:"id"`         // unique identifier for this cron entry
 		Schedule   string `json:"schedule"`   // cron expression, e.g. "0 9 * * 1"
