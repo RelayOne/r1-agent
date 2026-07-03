@@ -1,6 +1,7 @@
 package codegraph
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,12 +82,12 @@ func TestBuildAndQueries(t *testing.T) {
 		},
 		{
 			name: "GetFileSymbols lists Bar in b.go",
-			call: func() (string, error) { return ix.GetFileSymbols("b.go") },
+			call: func() (string, error) { return ix.GetFileSymbols("b.go", 0) },
 			want: []string{"Bar"},
 		},
 		{
 			name: "GetDependencies renders both sections",
-			call: func() (string, error) { return ix.GetDependencies("a.go") },
+			call: func() (string, error) { return ix.GetDependencies("a.go", 0) },
 			want: []string{"File: a.go", "Imports", "Imported by"},
 		},
 		{
@@ -122,10 +123,10 @@ func TestArgValidation(t *testing.T) {
 		call func() (string, error)
 	}{
 		{"SearchSymbols empty query", func() (string, error) { return ix.SearchSymbols("", "", 0) }},
-		{"GetDependencies empty file", func() (string, error) { return ix.GetDependencies("") }},
+		{"GetDependencies empty file", func() (string, error) { return ix.GetDependencies("", 0) }},
 		{"SearchContent empty query", func() (string, error) { return ix.SearchContent("", 0) }},
-		{"GetFileSymbols empty file", func() (string, error) { return ix.GetFileSymbols("") }},
-		{"ImpactAnalysis empty file", func() (string, error) { return ix.ImpactAnalysis("") }},
+		{"GetFileSymbols empty file", func() (string, error) { return ix.GetFileSymbols("", 0) }},
+		{"ImpactAnalysis empty file", func() (string, error) { return ix.ImpactAnalysis("", 0) }},
 		{"FindSymbolUsages empty symbol", func() (string, error) { return ix.FindSymbolUsages("", 0) }},
 		{"TraceEntryPoints empty file", func() (string, error) { return ix.TraceEntryPoints("") }},
 		{"SemanticSearch empty query", func() (string, error) { return ix.SemanticSearch("", 0) }},
@@ -150,7 +151,7 @@ func TestZeroValueIndexDegradesGracefully(t *testing.T) {
 		want string
 	}{
 		{"SearchSymbols", func() (string, error) { return ix.SearchSymbols("x", "", 0) }, "Symbol index not available"},
-		{"GetDependencies", func() (string, error) { return ix.GetDependencies("x.go") }, "Dependency graph not available"},
+		{"GetDependencies", func() (string, error) { return ix.GetDependencies("x.go", 0) }, "Dependency graph not available"},
 		{"SearchContent", func() (string, error) { return ix.SearchContent("x", 0) }, "Content search index not available"},
 		{"SemanticSearch", func() (string, error) { return ix.SemanticSearch("x", 0) }, "Semantic search index not available"},
 		{"GetCallGraph", func() (string, error) { return ix.GetCallGraph("x", "", 0) }, "Symbol index not available"},
@@ -165,6 +166,48 @@ func TestZeroValueIndexDegradesGracefully(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestListQueriesElideBeyondLimit pins the bounded-output guard on the three
+// flat listing queries: a file with more symbols/deps than the limit renders
+// exactly limit entries plus a "... and N more" line instead of an unbounded
+// wall of text.
+func TestListQueriesElideBeyondLimit(t *testing.T) {
+	dir := t.TempDir()
+	var big strings.Builder
+	big.WriteString("package main\n\n")
+	for i := 0; i < 8; i++ {
+		fmt.Fprintf(&big, "func Fn%d() {}\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "big.go"), []byte(big.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ix, err := Build(dir)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	got, err := ix.GetFileSymbols("big.go", 3)
+	if err != nil {
+		t.Fatalf("GetFileSymbols: %v", err)
+	}
+	if !strings.Contains(got, "... and 5 more") {
+		t.Errorf("GetFileSymbols(limit=3) missing elision; got:\n%s", got)
+	}
+	if n := strings.Count(got, "Fn"); n != 3 {
+		t.Errorf("GetFileSymbols(limit=3) rendered %d symbols, want 3; got:\n%s", n, got)
+	}
+
+	full, err := ix.GetFileSymbols("big.go", 0)
+	if err != nil {
+		t.Fatalf("GetFileSymbols default: %v", err)
+	}
+	if strings.Contains(full, "... and") {
+		t.Errorf("GetFileSymbols(limit=0) should render all under defaultListLimit; got:\n%s", full)
+	}
+	if n := strings.Count(full, "Fn"); n != 8 {
+		t.Errorf("GetFileSymbols(limit=0) rendered %d symbols, want 8", n)
 	}
 }
 
@@ -183,7 +226,7 @@ func TestImpactAnalysisFollowsDependents(t *testing.T) {
 	}
 	// depgraph keys edges by import specifier, so the impact query uses
 	// the path app.ts imports ("./util"), not the target's file name.
-	got, err := ix.ImpactAnalysis("./util")
+	got, err := ix.ImpactAnalysis("./util", 0)
 	if err != nil {
 		t.Fatalf("ImpactAnalysis: %v", err)
 	}

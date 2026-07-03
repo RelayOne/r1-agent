@@ -70,6 +70,39 @@ func (r *Registry) noteFileWrite(absPath string) {
 	}
 }
 
+// shellIndexInvalidationDisabledEnv is the kill switch for coarse code-index
+// invalidation after shell commands (R1_DISABLE_* convention). Shell commands
+// mutate the tree in ways the write_file/edit_file hooks never observe — git
+// checkout/pull/stash, `sed -i`, code generators, `go run` scaffolding — so
+// without invalidation the graph tools serve pre-command results. Set to "1"
+// to skip it on runs that never interleave shell mutation with graph queries
+// and want to avoid the full-tree rebuild on the next graph call.
+const shellIndexInvalidationDisabledEnv = "R1_DISABLE_SHELL_INDEX_INVALIDATION"
+
+func shellIndexInvalidationDisabled() bool {
+	return strings.TrimSpace(os.Getenv(shellIndexInvalidationDisabledEnv)) == "1"
+}
+
+// noteShellMutation coarsely invalidates the lazily-built code index after a
+// shell command (bash/env_exec) that may have mutated the tree. Unlike
+// noteFileWrite there is no path list — a shell command can touch anything —
+// so it marks the whole tree dirty; refreshLocked rebuilds from disk on the
+// next graph query regardless of which paths actually changed. Only touches an
+// already-built index (an unbuilt one walks the current tree on first query
+// anyway). Gated by the kill switch. Does NOT fire the repomap write observer:
+// the observer is keyed on a concrete written path, which a shell command does
+// not provide.
+func (r *Registry) noteShellMutation() {
+	if shellIndexInvalidationDisabled() {
+		return
+	}
+	r.codeMu.Lock()
+	if r.code != nil {
+		r.code.MarkDirty(".")
+	}
+	r.codeMu.Unlock()
+}
+
 // codeIndex lazily builds the codebase-graph index over the registry's
 // working directory. The build result (or error) is cached for the life of
 // the registry — one registry serves one dispatch, so a broken tree fails
@@ -147,7 +180,8 @@ func codeToolDefs() []provider.ToolDef {
 			InputSchema: mustJSON(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"file": map[string]string{"type": "string", "description": "File path relative to the working directory"},
+					"file":  map[string]string{"type": "string", "description": "File path relative to the working directory"},
+					"limit": map[string]interface{}{"type": "integer", "description": "Maximum files listed before eliding the rest (default 50)"},
 				},
 				"required": []string{"file"},
 			}),
@@ -158,7 +192,8 @@ func codeToolDefs() []provider.ToolDef {
 			InputSchema: mustJSON(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"file": map[string]string{"type": "string", "description": "File path relative to the working directory"},
+					"file":  map[string]string{"type": "string", "description": "File path relative to the working directory"},
+					"limit": map[string]interface{}{"type": "integer", "description": "Maximum entries per list (imports, imported-by) before eliding the rest (default 50)"},
 				},
 				"required": []string{"file"},
 			}),
@@ -169,7 +204,8 @@ func codeToolDefs() []provider.ToolDef {
 			InputSchema: mustJSON(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"file": map[string]string{"type": "string", "description": "File path relative to the working directory"},
+					"file":  map[string]string{"type": "string", "description": "File path relative to the working directory"},
+					"limit": map[string]interface{}{"type": "integer", "description": "Maximum symbols listed before eliding the rest (default 50)"},
 				},
 				"required": []string{"file"},
 			}),
@@ -234,37 +270,40 @@ func (r *Registry) handleFindSymbolUsages(input json.RawMessage) (string, error)
 
 func (r *Registry) handleImpactAnalysis(input json.RawMessage) (string, error) {
 	var args struct {
-		File string `json:"file"`
+		File  string `json:"file"`
+		Limit int    `json:"limit"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 	return r.runCodeTool(func(ix *codegraph.Index) (string, error) {
-		return ix.ImpactAnalysis(args.File)
+		return ix.ImpactAnalysis(args.File, args.Limit)
 	})
 }
 
 func (r *Registry) handleGetDependencies(input json.RawMessage) (string, error) {
 	var args struct {
-		File string `json:"file"`
+		File  string `json:"file"`
+		Limit int    `json:"limit"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 	return r.runCodeTool(func(ix *codegraph.Index) (string, error) {
-		return ix.GetDependencies(args.File)
+		return ix.GetDependencies(args.File, args.Limit)
 	})
 }
 
 func (r *Registry) handleGetFileSymbols(input json.RawMessage) (string, error) {
 	var args struct {
-		File string `json:"file"`
+		File  string `json:"file"`
+		Limit int    `json:"limit"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 	return r.runCodeTool(func(ix *codegraph.Index) (string, error) {
-		return ix.GetFileSymbols(args.File)
+		return ix.GetFileSymbols(args.File, args.Limit)
 	})
 }
 

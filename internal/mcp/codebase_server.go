@@ -133,7 +133,8 @@ func (s *CodebaseServer) ToolDefinitions() []ToolDefinition {
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"file": {"type": "string", "description": "File path relative to repo root"}
+					"file": {"type": "string", "description": "File path relative to repo root"},
+					"limit": {"type": "integer", "description": "Maximum entries per list before eliding the rest (default 50)", "default": 50}
 				},
 				"required": ["file"]
 			}`),
@@ -156,7 +157,8 @@ func (s *CodebaseServer) ToolDefinitions() []ToolDefinition {
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"file": {"type": "string", "description": "File path relative to repo root"}
+					"file": {"type": "string", "description": "File path relative to repo root"},
+					"limit": {"type": "integer", "description": "Maximum symbols listed before eliding the rest (default 50)", "default": 50}
 				},
 				"required": ["file"]
 			}`),
@@ -167,7 +169,8 @@ func (s *CodebaseServer) ToolDefinitions() []ToolDefinition {
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"file": {"type": "string", "description": "File path relative to repo root"}
+					"file": {"type": "string", "description": "File path relative to repo root"},
+					"limit": {"type": "integer", "description": "Maximum files listed before eliding the rest (default 50)", "default": 50}
 				},
 				"required": ["file"]
 			}`),
@@ -252,13 +255,13 @@ func (s *CodebaseServer) HandleToolCall(toolName string, args map[string]interfa
 	case "search_symbols":
 		return g.SearchSymbols(stringArg(args, "query"), stringArg(args, "kind"), intArg(args, "limit", 20))
 	case "get_dependencies":
-		return g.GetDependencies(stringArg(args, "file"))
+		return g.GetDependencies(stringArg(args, "file"), intArg(args, "limit", 50))
 	case "search_content":
 		return g.SearchContent(stringArg(args, "query"), intArg(args, "limit", 10))
 	case "get_file_symbols":
-		return g.GetFileSymbols(stringArg(args, "file"))
+		return g.GetFileSymbols(stringArg(args, "file"), intArg(args, "limit", 50))
 	case "impact_analysis":
-		return g.ImpactAnalysis(stringArg(args, "file"))
+		return g.ImpactAnalysis(stringArg(args, "file"), intArg(args, "limit", 50))
 	case "find_symbol_usages":
 		return g.FindSymbolUsages(stringArg(args, "symbol"), intArg(args, "limit", 20))
 	case "trace_entry_points":
