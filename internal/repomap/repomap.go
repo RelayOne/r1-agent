@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/RelayOne/r1/internal/depgraph"
 	"github.com/RelayOne/r1/internal/goast"
@@ -47,7 +48,13 @@ type FileNode struct {
 }
 
 // RepoMap is a ranked view of the codebase.
+//
+// One *RepoMap is typically built at startup and shared across parallel
+// scheduler workers, while Invalidate mutates it mid-run as tasks land
+// files — so every exported entry point serializes on mu. Rendering takes
+// the write lock too: RenderRelevantQuery temporarily mutates node ranks.
 type RepoMap struct {
+	mu      sync.RWMutex
 	Root    string               `json:"root"`
 	Files   map[string]*FileNode `json:"files"`
 	Symbols []Symbol             `json:"symbols"` // all symbols, sorted by rank
@@ -306,6 +313,13 @@ func parseGoFile(path, rel string) (*FileNode, error) {
 // Render produces a human-readable map within a token budget.
 // Each symbol line ~= 10 tokens. Budget 0 means unlimited.
 func (rm *RepoMap) Render(budget int) string {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+	return rm.renderLocked(budget)
+}
+
+// renderLocked is Render's body; callers must hold mu (read or write).
+func (rm *RepoMap) renderLocked(budget int) string {
 	if budget <= 0 {
 		budget = 100000
 	}
@@ -377,6 +391,20 @@ func (rm *RepoMap) Render(budget int) string {
 
 // RenderRelevant produces a map focused on files related to the given paths.
 func (rm *RepoMap) RenderRelevant(relevantFiles []string, budget int) string {
+	return rm.RenderRelevantQuery(relevantFiles, nil, budget)
+}
+
+// RenderRelevantQuery is RenderRelevant conditioned on a task query:
+// queryScores maps root-relative paths to relevance scores (e.g. TF-IDF
+// cosine scores against the task text, ~0..1). Scored files get their rank
+// multiplied by (1 + 2*score) on top of the file/neighbor boost, so the
+// rendered map leads with the files the CURRENT task is about rather than
+// the repo's static all-time ranking. Nil/empty scores render identically
+// to RenderRelevant.
+func (rm *RepoMap) RenderRelevantQuery(relevantFiles []string, queryScores map[string]float64, budget int) string {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
 	// Boost rank for relevant files and their neighbors
 	boosted := make(map[string]bool)
 	for _, f := range relevantFiles {
@@ -404,6 +432,16 @@ func (rm *RepoMap) RenderRelevant(relevantFiles []string, budget int) string {
 			node.Rank *= 3.0 // 3x boost for relevant files
 		}
 	}
+	for path, score := range queryScores {
+		node, ok := rm.Files[path]
+		if !ok || score <= 0 {
+			continue
+		}
+		if _, saved := originalRanks[path]; !saved {
+			originalRanks[path] = node.Rank
+		}
+		node.Rank *= 1.0 + 2.0*score
+	}
 	defer func() {
 		for path, rank := range originalRanks {
 			rm.Files[path].Rank = rank
@@ -411,7 +449,52 @@ func (rm *RepoMap) RenderRelevant(relevantFiles []string, budget int) string {
 	}()
 
 	rm.collectSymbols()
-	return rm.Render(budget)
+	return rm.renderLocked(budget)
+}
+
+// Invalidate re-reads one root-relative path from disk into the map so a
+// startup-built map follows files the run itself changes. A vanished file
+// is dropped; a changed Go file is re-parsed (an unparseable mid-edit file
+// keeps its previous node). Per-file refresh is Go-only — non-Go trees are
+// built by whole-tree symindex extraction, so a changed non-Go file is
+// left as-is rather than half-merged. Reverse edges, ranks, and the symbol
+// ordering are recomputed; CalledBy survives from the original whole-tree
+// call-graph analysis (recomputing it needs a full re-analysis, and stale
+// call counts only dampen ranking, never break rendering).
+func (rm *RepoMap) Invalidate(relPath string) {
+	if relPath == "" {
+		return
+	}
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	abs := filepath.Join(rm.Root, relPath)
+	if _, err := os.Stat(abs); err != nil {
+		if _, ok := rm.Files[relPath]; !ok {
+			return
+		}
+		delete(rm.Files, relPath)
+	} else {
+		if !strings.HasSuffix(relPath, ".go") {
+			return
+		}
+		node, err := parseGoFile(abs, relPath)
+		if err != nil {
+			return
+		}
+		if old, ok := rm.Files[relPath]; ok {
+			node.CalledBy = old.CalledBy
+		}
+		rm.Files[relPath] = node
+	}
+
+	// buildReverseEdges appends, so reset reverse edges before rebuilding.
+	for _, n := range rm.Files {
+		n.ImportedBy = nil
+	}
+	rm.buildReverseEdges()
+	rm.rankFiles()
+	rm.collectSymbols()
 }
 
 // --- Internal ---
