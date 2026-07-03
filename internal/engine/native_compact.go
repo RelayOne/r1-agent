@@ -29,6 +29,17 @@ import (
 // (default 6 if 0). summaryChars is the maximum characters a
 // summarized tool_result keeps (default 200 if 0).
 func buildNativeCompactor(keepRecent, summaryChars int) agentloop.CompactFunc {
+	return buildNativeCompactorExempt(keepRecent, summaryChars, condensedSentinel)
+}
+
+// buildNativeCompactorExempt is buildNativeCompactor with an explicit
+// narration-truncation exempt prefix. The LLM condenser passes its
+// nonce-bound run sentinel so that ONLY its own rolling summary survives
+// verbatim on a fallback pass; a forged "[CONDENSED-CONTEXT-SUMMARY...]"
+// block landed via tool output lacks the nonce and is truncated like any
+// other narration. The bare buildNativeCompactor keeps the family prefix
+// for standalone use.
+func buildNativeCompactorExempt(keepRecent, summaryChars int, exemptPrefix string) agentloop.CompactFunc {
 	if keepRecent <= 0 {
 		keepRecent = 6
 	}
@@ -72,7 +83,7 @@ func buildNativeCompactor(keepRecent, summaryChars int) agentloop.CompactFunc {
 					// here, truncating it to summaryChars would amputate the
 					// only surviving record of the tool_results it already
 					// replaced with pointers, so its loss is unrecoverable.
-					if len(block.Text) > summaryChars*2 && !strings.HasPrefix(block.Text, condensedSentinel) {
+					if len(block.Text) > summaryChars*2 && !strings.HasPrefix(block.Text, exemptPrefix) {
 						nb.Text = block.Text[:summaryChars] + "... (narration truncated)"
 					}
 				}
