@@ -80,6 +80,10 @@ type RunConfig struct {
 	RepoMap          *repomap.RepoMap    // ranked codebase map for context (nil = disabled)
 	TFIDF            *tfidf.Index        // task-text file scoring that conditions the repomap per task (nil = static ranking)
 	PlanOnly         bool
+	// SkipMerge stops the workflow after merge validation: the verified
+	// worktree is returned via workflow.Result.Handle and the caller
+	// owns merge/discard. See workflow.Engine.SkipMerge.
+	SkipMerge        bool
 	BuildCommand     string
 	TestCommand      string
 	LintCommand      string
@@ -442,6 +446,7 @@ func (o *Orchestrator) Run(ctx context.Context) (res workflow.Result, err error)
 		RepoMap:          o.cfg.RepoMap,
 		TFIDF:            o.cfg.TFIDF,
 		PlanOnly:                   o.cfg.PlanOnly,
+		SkipMerge:                  o.cfg.SkipMerge,
 		Convergence:                o.cfg.Convergence,
 		ConvergenceIgnores:         o.cfg.ConvergenceIgnores,
 		ConvergenceRepeats:         o.cfg.ConvergenceRepeats,
@@ -476,6 +481,21 @@ func (o *Orchestrator) Run(ctx context.Context) (res workflow.Result, err error)
 		if judgeProv := buildJudgeProvider(o.cfg); judgeProv != nil {
 			wf.OverrideJudge = &convergence.LLMOverrideJudge{
 				Provider: judgeProv,
+				Model:    o.cfg.NativeModel,
+			}
+		}
+	}
+	// Adversarial second critic at the merge gate: challenges a PASS
+	// verdict from the primary cross-model reviewer. Constructed only
+	// when the policy enables it AND a judge provider exists, so
+	// offline / no-key runs keep today's single-reviewer behavior.
+	// Kill-switches: `verification.second_opinion: false` in the
+	// policy, or R1_DISABLE_SECOND_OPINION=1 for a one-off run.
+	if o.policy.Verification.SecondOpinion && o.policy.Verification.CrossModelReview &&
+		os.Getenv("R1_DISABLE_SECOND_OPINION") != "1" {
+		if critProv := buildJudgeProvider(o.cfg); critProv != nil {
+			wf.SecondCritic = &workflow.LLMSecondCritic{
+				Provider: critProv,
 				Model:    o.cfg.NativeModel,
 			}
 		}

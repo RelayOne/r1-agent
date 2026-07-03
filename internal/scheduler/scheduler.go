@@ -9,8 +9,11 @@ import (
 
 	"github.com/RelayOne/r1/internal/agentmsg"
 	"github.com/RelayOne/r1/internal/branch"
+	"github.com/RelayOne/r1/internal/costtrack"
+	"github.com/RelayOne/r1/internal/intent"
 	"github.com/RelayOne/r1/internal/plan"
 	"github.com/RelayOne/r1/internal/specexec"
+	"github.com/RelayOne/r1/internal/worktree"
 )
 
 // TaskResult is the outcome of one task execution.
@@ -32,6 +35,13 @@ type TaskResult struct {
 	// specexec.Outcome.PlanText so the plan-aware scorer can rank
 	// speculative strategies by plan quality instead of raw speed.
 	PlanOutput string
+
+	// Worktree is the live worktree handle carrying a verified,
+	// committed, but UNMERGED change when the task ran with
+	// plan.Task.NoMerge (full-execution rollouts). Zero-valued
+	// (Worktree.Name == "") otherwise. The wrapper that requested the
+	// rollout owns merge/discard of the handle.
+	Worktree worktree.Handle
 }
 
 // ExecuteFunc is the callback the scheduler invokes to run one task.
@@ -410,6 +420,43 @@ type SpecExecConfig struct {
 	// ShouldSpeculate decides whether a task should use speculative execution.
 	// If nil, all tasks use speculative execution.
 	ShouldSpeculate func(task plan.Task) bool
+
+	// FullExecution switches speculation from plan-only exploration to
+	// best-of-N FULL rollouts: each strategy runs the real pipeline
+	// (plan/execute/verify/commit) in its own isolated worktree with
+	// plan.Task.NoMerge set, outcomes are scored on real build/test
+	// signal (specexec.DefaultScorer), only the winning worktree is
+	// merged via MergeWinner, and every other rollout is discarded.
+	// Requires MergeWinner and DiscardRollout — when either is missing
+	// the wrapper FAILS CLOSED to the plan-only behavior so no rollout
+	// worktree can ever be created without a discard path.
+	FullExecution bool
+
+	// MergeWinner lands the winning rollout's verified branch on main.
+	// Wired to (*worktree.Manager).Merge, which serializes all merges
+	// on its mergeMu and self-cleans the worktree on success.
+	MergeWinner func(ctx context.Context, h worktree.Handle, msg string) error
+
+	// DiscardRollout removes a losing rollout's worktree and branch.
+	// Wired to (*worktree.Manager).Cleanup.
+	DiscardRollout func(ctx context.Context, h worktree.Handle) error
+
+	// Tracker gates rollout spend: OverBudget() skips speculation for
+	// the task entirely, and a nearly exhausted budget (<20% remaining)
+	// clamps the rollout count to 2. Nil = no budget constraints.
+	Tracker *costtrack.Tracker
+
+	// Models are runner names ("claude"|"codex"|"native") round-robined
+	// into Strategy.Model so parallel rollouts differ by engine as well
+	// as by prompt. Empty = every rollout uses the build default.
+	Models []string
+
+	// Selector optionally overrides the deterministic score-sorted
+	// winner with a comparative judgment over all outcomes (the seam
+	// for an LLM judge; see specexec.Selector). It augments the Scorer,
+	// never replaces it — nil or any selector failure keeps the
+	// deterministic winner.
+	Selector specexec.Selector
 }
 
 // WithSpecExec wraps an ExecuteFunc to use speculative parallel execution
@@ -435,10 +482,23 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 5 * time.Minute
 	}
+	// Fail closed: full execution without both callbacks would leak
+	// rollout worktrees (no discard path) or strand the winner (no
+	// merge path). Degrade to plan-only speculation instead.
+	if cfg.FullExecution && (cfg.MergeWinner == nil || cfg.DiscardRollout == nil) {
+		cfg.FullExecution = false
+	}
 
 	return func(ctx context.Context, task plan.Task) TaskResult {
 		if cfg.ShouldSpeculate != nil && !cfg.ShouldSpeculate(task) {
 			return base(ctx, task)
+		}
+
+		// Best-of-N full rollouts. A task that is itself plan-only
+		// never escalates into full execution (contract mirrored from
+		// the plan-only branch below).
+		if cfg.FullExecution && !task.PlanOnly {
+			return runFullRollouts(ctx, base, cfg, task)
 		}
 
 		// Build strategies from approaches
@@ -470,6 +530,7 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 			EarlyStop:     true,
 			StopThreshold: specexec.PlanStopThreshold,
 			Scorer:        specexec.PlanScorer,
+			Selector:      cfg.Selector,
 		}
 
 		// PHASE 1: Run plan-only explorations in parallel.
@@ -559,5 +620,212 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 			DurationMs: result.Duration.Milliseconds(),
 			Error:      bestErr,
 		}
+	}
+}
+
+// rolloutDiffCap bounds how much unified diff each rollout contributes
+// to the comparative Selector prompt (the selector re-caps per block).
+const rolloutDiffCap = 64 * 1024
+
+// rolloutCount decides how many full-execution rollouts a task earns.
+// Full rollouts cost N× tokens plus N× verify CPU, so N tracks task
+// difficulty instead of being hardcoded: trivial tasks skip speculation
+// entirely (0 = run the task normally), explicit specs get 2, tasks
+// needing investigation or interpretation get 3, and open-ended tasks
+// use every configured approach. When less than 20% of the cost budget
+// remains, N clamps to 2 so best-of-N never burns the budget's tail.
+func rolloutCount(desc string, tracker *costtrack.Tracker, max int) int {
+	if max <= 0 {
+		return 0
+	}
+	var n int
+	switch intent.Classify(desc).Class {
+	case intent.ClassTrivial:
+		return 0
+	case intent.ClassExplicit:
+		n = 2
+	case intent.ClassOpenEnded:
+		n = max
+	default: // exploratory / ambiguous: worth comparing interpretations
+		n = 3
+	}
+	if n > max {
+		n = max
+	}
+	if tracker != nil {
+		// BudgetRemaining() returns -1 for unlimited budgets; only a
+		// real cap participates in the clamp.
+		if remaining := tracker.BudgetRemaining(); remaining >= 0 {
+			if budget := remaining + tracker.Total(); budget > 0 && remaining/budget < 0.2 && n > 2 {
+				n = 2
+			}
+		}
+	}
+	return n
+}
+
+// runFullRollouts executes the best-of-N full-execution branch: N
+// strategies run the REAL pipeline in isolated worktrees (NoMerge, so
+// each stops after merge validation), outcomes are scored on actual
+// build/test results, the winner's already-verified branch is merged
+// through the caller's mergeMu-serialized path, and the losers are
+// discarded. Every failure mode degrades to a single normal execution
+// so the task is never left unattempted.
+func runFullRollouts(ctx context.Context, base ExecuteFunc, cfg SpecExecConfig, task plan.Task) TaskResult {
+	// Over budget: no speculation spend at all.
+	if cfg.Tracker != nil && cfg.Tracker.OverBudget() {
+		return base(ctx, task)
+	}
+	n := rolloutCount(task.Description, cfg.Tracker, len(cfg.Approaches))
+	if n <= 0 {
+		return base(ctx, task)
+	}
+
+	strategies := specexec.GenerateStrategiesWithModels(task.Description, cfg.Approaches[:n], cfg.Models)
+
+	// Stash each rollout's full TaskResult (including its worktree
+	// handle) so the winner can be merged and the losers discarded.
+	var mu sync.Mutex
+	rollouts := make(map[string]TaskResult, len(strategies))
+
+	executor := func(ctx context.Context, strategy specexec.Strategy) specexec.Outcome {
+		specTask := task
+		specTask.ID = fmt.Sprintf("%s-spec-%s", task.ID, strategy.ID)
+		specTask.Description = strategy.Prompt
+		specTask.PlanOnly = false
+		specTask.NoMerge = true // rollout stops before merge; only the winner merges
+		specTask.Runner = strategy.Model
+
+		start := time.Now()
+		res := base(ctx, specTask)
+		mu.Lock()
+		rollouts[strategy.ID] = res
+		mu.Unlock()
+
+		outcome := specexec.Outcome{
+			StrategyID:  strategy.ID,
+			Success:     res.Success,
+			Duration:    time.Since(start),
+			TestsPassed: res.TestsPassed,
+			TestsFailed: res.TestsFailed,
+			DiffLines:   res.DiffLines,
+		}
+		if res.Worktree.Name != "" {
+			outcome.Artifacts = []string{res.Worktree.Path}
+			// Real patch hunks for the comparative Selector; numeric
+			// signals above are what DefaultScorer consumes.
+			outcome.DiffText = worktree.DiffText(ctx, res.Worktree, rolloutDiffCap)
+		}
+		if res.Error != nil {
+			outcome.Error = res.Error.Error()
+		}
+		return outcome
+	}
+
+	spec := specexec.Spec{
+		Strategies:  strategies,
+		MaxParallel: cfg.MaxParallel,
+		Timeout:     cfg.Timeout,
+		// EarlyStop stays OFF: every rollout must run to completion so
+		// its worktree is deterministically tracked for discard below.
+		Scorer:   specexec.DefaultScorer,
+		Selector: cfg.Selector,
+	}
+	result := specexec.Run(ctx, spec, executor)
+	insights := specexec.ExtractInsights(result)
+
+	// Sum speculation spend so the returned TaskResult reports the true
+	// cost of the task, not just the surviving rollout's share.
+	var speculationCost float64
+	mu.Lock()
+	for _, r := range rollouts {
+		speculationCost += r.CostUSD
+	}
+	mu.Unlock()
+
+	discard := func(strategyID string) {
+		mu.Lock()
+		r, ok := rollouts[strategyID]
+		mu.Unlock()
+		if !ok || r.Worktree.Name == "" {
+			return
+		}
+		if derr := cfg.DiscardRollout(ctx, r.Worktree); derr != nil {
+			insights = append(insights, fmt.Sprintf("discard rollout %s: %v", strategyID, derr))
+		}
+	}
+
+	if result.Winner != nil {
+		winID := result.Winner.StrategyID
+		mu.Lock()
+		winRes, ok := rollouts[winID]
+		mu.Unlock()
+
+		// Losers are discarded regardless of what happens to the winner.
+		for _, s := range strategies {
+			if s.ID != winID {
+				discard(s.ID)
+			}
+		}
+
+		if ok && winRes.Worktree.Name != "" {
+			msg := fmt.Sprintf("feat(specexec-bestof%d): %s [strategy %s]", n, task.ID, winID)
+			mergeErr := cfg.MergeWinner(ctx, winRes.Worktree, msg)
+			if mergeErr == nil {
+				// MergeWinner (worktree.Manager.Merge) self-cleans the
+				// winning worktree on success.
+				winRes.TaskID = task.ID
+				winRes.CostUSD = speculationCost
+				winRes.Worktree = worktree.Handle{}
+				return winRes
+			}
+			// Merge failure (e.g. a sibling task merged a conflicting
+			// change while the rollouts ran): the rollout branch is
+			// stale, so discard it and fall through to a normal
+			// re-execution of the winning approach below.
+			insights = append(insights, fmt.Sprintf("winning rollout %s failed to merge: %v", winID, mergeErr))
+			discard(winID)
+		}
+
+		// No mergeable worktree (zero-diff rollout) or merge failure:
+		// re-execute the winning approach through the normal pipeline
+		// (with merge), carrying learnings from all rollouts.
+		var winningPrompt string
+		for _, s := range strategies {
+			if s.ID == winID {
+				winningPrompt = s.Prompt
+				break
+			}
+		}
+		if winningPrompt == "" {
+			winningPrompt = task.Description
+		}
+		realTask := task
+		realTask.Description = winningPrompt
+		if len(insights) > 0 {
+			realTask.Description += "\n\nLearnings from other explored approaches:\n- " +
+				strings.Join(insights, "\n- ")
+		}
+		final := base(ctx, realTask)
+		final.CostUSD += speculationCost
+		return final
+	}
+
+	// All rollouts failed: discard every live worktree and surface the
+	// collected insights to the workflow retry loop.
+	for _, s := range strategies {
+		discard(s.ID)
+	}
+	bestErr := fmt.Errorf("all %d full-execution rollouts failed", len(result.Outcomes))
+	if len(insights) > 0 {
+		bestErr = fmt.Errorf("all %d full-execution rollouts failed; insights: %s",
+			len(result.Outcomes), strings.Join(insights, "; "))
+	}
+	return TaskResult{
+		TaskID:     task.ID,
+		Success:    false,
+		CostUSD:    speculationCost,
+		DurationMs: result.Duration.Milliseconds(),
+		Error:      bestErr,
 	}
 }

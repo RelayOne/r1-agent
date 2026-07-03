@@ -153,8 +153,16 @@ type Engine struct {
 	RepoMapBudget   int                // token budget for repomap (0 = default 2000)
 	TFIDF           *tfidf.Index       // task-text file scoring that conditions the repomap on the current task (nil = static ranking only)
 	CriticConfig    *critic.Config     // per-project critic configuration (nil = defaults)
-	PlanOnly        bool
-	RunnerOverride  engine.CommandRunner   // if set, used for all phases (testing only)
+	PlanOnly bool
+	// SkipMerge runs the FULL pipeline (plan/execute/verify/review/
+	// commit) in the isolated worktree but stops after merge validation
+	// succeeds: the worktree and its verified commit stay alive and are
+	// returned via Result.Handle, and the CALLER owns the merge/discard
+	// decision. Used by best-of-N speculative rollouts where only the
+	// winning worktree may merge. Ignored when InPlace is set (in-place
+	// runs have no worktree to hand back).
+	SkipMerge      bool
+	RunnerOverride engine.CommandRunner // if set, used for all phases (testing only)
 	Boulder         *boulder.Enforcer      // idle detection (nil = disabled)
 	Convergence     *convergence.Validator // adversarial self-audit: blocks merge if blocking findings (nil = skip)
 	// ConvergenceIgnores persists CTO-approved ignore entries that
@@ -174,6 +182,11 @@ type Engine struct {
 	// threshold is crossed. When nil, the override flow is skipped and
 	// convergence failures propagate normally.
 	OverrideJudge convergence.OverrideJudge
+	// SecondCritic is the adversarial reviewer that challenges a PASS
+	// verdict at the merge gate (nil = disabled). Active only when
+	// Policy.Verification.SecondOpinion is also true, so the policy
+	// file stays the kill-switch even when a critic is injected.
+	SecondCritic  SecondCritic
 	EventBus      *hub.Bus        // unified event bus (nil = no events)
 	SkillRegistry *skill.Registry // skill library for prompt injection (nil = auto-create from RepoRoot)
 	StackMatches  []string        // pre-computed stack-matched skill names from RepoProfile
@@ -206,6 +219,13 @@ type Result struct {
 	Verification []verify.Outcome
 	TotalCostUSD float64
 	FilesChanged []string // files modified by the workflow (post-review validated set)
+
+	// Handle is the live worktree carrying the verified, committed,
+	// merge-validated change when the engine ran with SkipMerge. The
+	// caller must eventually Merge or Cleanup it. Zero-valued
+	// (Handle.Name == "") in every other mode and when the validated
+	// set produced no diff (ErrNothingToCommit path cleans up as usual).
+	Handle worktree.Handle
 }
 
 // StepResult records the phase name, engine used, and prepared command for one workflow step.
@@ -1294,6 +1314,16 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				e.Worktrees.Cleanup(ctx, handle)
 				return result, fmt.Errorf("merge validation: %w", valErr)
 			}
+			// Skip-merge mode: the change is committed and merge-validated;
+			// hand the live worktree back instead of merging. Deliberately
+			// NO Worktrees.Cleanup — the branch must stay alive with the
+			// verified commit until the caller merges or discards it.
+			if e.SkipMerge {
+				result.FilesChanged = postReviewFiles
+				result.Handle = handle
+				_ = e.advanceState(taskstate.Committed, "skip-merge: caller owns winner merge/discard")
+				break
+			}
 			// Save main branch HEAD before merge for potential rollback.
 			mainHead := worktree.MainHeadSHA(ctx, e.RepoRoot)
 
@@ -1680,6 +1710,59 @@ func (e Engine) runCrossModelReview(
 		e.Worktrees.Cleanup(ctx, handle)
 		_ = e.advanceState(taskstate.Failed, "cross-model review rejected")
 		return nil, fmt.Errorf("cross-model review rejected: %s severity, %d findings", verdict.Severity, len(verdict.Findings))
+	}
+
+	// --- ADVERSARIAL SECOND OPINION ---
+	// A single reviewer's PASS is a single point of trust. When a
+	// second critic is configured (and the policy's second_opinion
+	// kill-switch is on), challenge the PASS before revalidation: a
+	// blocking, file-anchored dissent stops the merge and routes
+	// through the normal attempt/retry loop. Skipped when nothing
+	// changed — there is no patch to challenge.
+	if e.SecondCritic != nil && e.Policy.Verification.SecondOpinion && len(preReviewFiles) > 0 {
+		criticIn := CriticInput{
+			Task:               e.Task,
+			Files:              preReviewFiles,
+			Diff:               worktree.DiffSummary(ctx, handle),
+			PrimaryEngine:      verifyRunnerName,
+			PrimaryVerdictJSON: verifyResult.ResultText,
+		}
+		if semAnalysis := semdiff.AnalyzeMultiFile(buildSemdiffInputs(ctx, handle)); len(semAnalysis.Changes) > 0 {
+			criticIn.SemanticSummary = semAnalysis.Summary
+		}
+		cv, critErr := e.SecondCritic.Challenge(ctx, criticIn)
+		if critErr != nil {
+			// FAIL CLOSED, matching the primary reviewer's error path:
+			// an unavailable critic must not silently become a rubber
+			// stamp. verification.second_opinion=false is the escape
+			// hatch for flaky provider environments.
+			evidence.ReviewPass = false
+			evidence.ReviewOutput = "second-opinion critic error: " + critErr.Error()
+			e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+			e.Worktrees.Cleanup(ctx, handle)
+			_ = e.advanceState(taskstate.Failed, "second-opinion critic error")
+			return nil, fmt.Errorf("second-opinion critic error: %w", critErr)
+		}
+		// Emit before the dissent early-return so the Governor observes
+		// blocking dissents too (same contract as emitReviewEvent).
+		e.emitSecondOpinionEvent(name, cv)
+		if cv.Dissent && cv.Severity == "blocking" {
+			evidence.ReviewPass = false
+			evidence.ReviewOutput = fmt.Sprintf("second-opinion dissent: %s | requested change: %s", cv.Reasoning, cv.RequestedChange)
+			if e.Wisdom != nil {
+				e.Wisdom.Record(e.Task, wisdom.Learning{
+					Category:    wisdom.Gotcha,
+					Description: fmt.Sprintf("second-opinion critic blocked a %s-approved change: %s", verifyRunnerName, cv.Reasoning),
+				})
+			}
+			e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+			e.Worktrees.Cleanup(ctx, handle)
+			_ = e.advanceState(taskstate.Failed, "second-opinion dissent unresolved")
+			return nil, fmt.Errorf("second-opinion dissent (blocking, %d findings): %s", len(cv.Findings), cv.Reasoning)
+		}
+		// Advisory dissent proceeds; its audit trail is the
+		// EventVerifySecondOpinion emitted above (evidence.Findings is
+		// a merge gate and must stay clean for non-blocking concerns).
 	}
 
 	// --- POST-REVIEW REVALIDATION ---
@@ -2152,6 +2235,14 @@ func pickRunner(e Engine, phase string) (string, engine.CommandRunner) {
 			return string(model.ProviderNative), e.Runners.Native
 		}
 		// Fall through to default routing if native isn't available.
+	case "claude":
+		// Deterministic per-task override (speculative rollouts pin a
+		// strategy to a runner via plan.Task.Runner). Without this case
+		// "claude" silently fell into default routing.
+		if e.Runners.Claude != nil {
+			return string(model.ProviderClaude), e.Runners.Claude
+		}
+		// Fall through to default routing if claude isn't available.
 	case "codex":
 		if e.Runners.Codex != nil {
 			if phase == "plan" {

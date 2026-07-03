@@ -53,10 +53,31 @@ type Outcome struct {
 	// plans by structural quality since plan-only outcomes have no
 	// test/diff signal.
 	PlanText string `json:"plan_text,omitempty"`
+
+	// DiffText carries the unified diff a full-execution rollout
+	// produced, and TestOutput its verification output. Optional:
+	// executors populate them when available so a comparative Selector
+	// can read the actual patches instead of only the numeric signals.
+	DiffText   string `json:"diff_text,omitempty"`
+	TestOutput string `json:"test_output,omitempty"`
 }
 
 // Scorer evaluates an outcome and assigns a score.
 type Scorer func(Outcome) float64
+
+// Selector compares ALL outcomes side by side and names the winning
+// strategy. Unlike a Scorer (per-outcome arithmetic), a Selector can
+// read the N diffs and their test output comparatively — the seam for
+// an LLM judge. It AUGMENTS the deterministic Scorer, never replaces
+// it: Run keeps the score-sorted winner unless the Selector returns
+// the ID of a different SUCCESSFUL outcome. Any error, empty ID,
+// unknown ID, or failed-outcome ID falls back to the Scorer's pick,
+// so offline/no-provider behavior is unchanged.
+type Selector func(ctx context.Context, outcomes []Outcome) (winnerStrategyID string, rationale string, err error)
+
+// selectorTimeout bounds one Selector invocation so a slow judge can
+// never stall winner selection past the run itself.
+const selectorTimeout = 60 * time.Second
 
 // Executor runs a strategy and returns its outcome.
 type Executor func(ctx context.Context, strategy Strategy) Outcome
@@ -69,6 +90,7 @@ type Spec struct {
 	EarlyStop     bool          `json:"early_stop"`     // stop all on first success above threshold
 	StopThreshold float64       `json:"stop_threshold"` // score threshold for early stop
 	Scorer        Scorer        `json:"-"`
+	Selector      Selector      `json:"-"` // optional comparative winner override (nil = scorer only)
 }
 
 // Result contains all outcomes from a speculative execution.
@@ -77,6 +99,12 @@ type Result struct {
 	Winner    *Outcome      `json:"winner,omitempty"`
 	Duration  time.Duration `json:"duration"`
 	Cancelled int           `json:"cancelled"` // strategies cancelled by early stop
+
+	// SelectorUsed records that the comparative Selector (not the
+	// deterministic score sort) endorsed the winner; SelectorRationale
+	// carries its stated reason for the audit trail.
+	SelectorUsed      bool   `json:"selector_used,omitempty"`
+	SelectorRationale string `json:"selector_rationale,omitempty"`
 }
 
 // DefaultScorer weights test results, diff size, and duration.
@@ -299,7 +327,47 @@ func Run(ctx context.Context, spec Spec, exec Executor) *Result {
 		result.Winner = &winner
 	}
 
+	applySelector(ctx, spec, result)
+
 	return result
+}
+
+// applySelector lets an optional comparative Selector override the
+// score-sorted winner. It only runs when at least two outcomes
+// succeeded (with one candidate there is nothing to compare) and only
+// honors an ID naming a SUCCESSFUL outcome — everything else keeps
+// the deterministic winner, which is the offline fallback contract.
+func applySelector(ctx context.Context, spec Spec, result *Result) {
+	if spec.Selector == nil || result.Winner == nil {
+		return
+	}
+	successful := 0
+	for _, o := range result.Outcomes {
+		if o.Success {
+			successful++
+		}
+	}
+	if successful < 2 {
+		return
+	}
+
+	selCtx, cancel := context.WithTimeout(ctx, selectorTimeout)
+	defer cancel()
+	snapshot := make([]Outcome, len(result.Outcomes))
+	copy(snapshot, result.Outcomes)
+	id, rationale, err := spec.Selector(selCtx, snapshot)
+	if err != nil || id == "" {
+		return
+	}
+	for _, o := range result.Outcomes {
+		if o.StrategyID == id && o.Success {
+			w := o
+			result.Winner = &w
+			result.SelectorUsed = true
+			result.SelectorRationale = rationale
+			return
+		}
+	}
 }
 
 // ExtractInsights collects learnings from all outcomes for retry prompts.
@@ -327,6 +395,14 @@ func ExtractInsights(result *Result) []string {
 
 // GenerateStrategies creates N diverse strategies from a base prompt.
 func GenerateStrategies(basePrompt string, approaches []string) []Strategy {
+	return GenerateStrategiesWithModels(basePrompt, approaches, nil)
+}
+
+// GenerateStrategiesWithModels creates N diverse strategies and
+// round-robins the given runner names into Strategy.Model so parallel
+// rollouts differ by model as well as by prompt. An empty models slice
+// leaves Model unset (same behavior as GenerateStrategies).
+func GenerateStrategiesWithModels(basePrompt string, approaches, models []string) []Strategy {
 	strategies := make([]Strategy, len(approaches))
 	for i, approach := range approaches {
 		strategies[i] = Strategy{
@@ -334,6 +410,9 @@ func GenerateStrategies(basePrompt string, approaches []string) []Strategy {
 			Name: approach,
 			Prompt: fmt.Sprintf("%s\n\nApproach: %s\n\nUse this specific approach to solve the task.",
 				basePrompt, approach),
+		}
+		if len(models) > 0 {
+			strategies[i].Model = models[i%len(models)]
 		}
 	}
 	return strategies

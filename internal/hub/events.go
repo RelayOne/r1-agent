@@ -91,6 +91,10 @@ const (
 	EventVerifyConvergenceResult EventType = "verify.convergence_result"
 	EventVerifyCriticReview     EventType = "verify.critic_review"
 	EventVerifyCrossModelReview EventType = "verify.cross_model_review"
+	// EventVerifySecondOpinion carries the adversarial second critic's
+	// verdict on a PASSing cross-model review (Lifecycle.State is
+	// "agree" or "dissent"; Custom carries severity/reasoning).
+	EventVerifySecondOpinion EventType = "verify.second_opinion"
 )
 
 // --- Security (6 events) ---
