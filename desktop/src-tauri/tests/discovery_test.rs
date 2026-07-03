@@ -137,13 +137,21 @@ async fn read_daemon_json_happy_path() {
         version: Some("0.5.2".into()),
     };
     write_daemon_json(&dir, &info);
-    let prev = std::env::var_os("HOME");
-    std::env::set_var("HOME", &dir);
-    let res = read_daemon_json();
-    match prev {
-        Some(v) => std::env::set_var("HOME", v),
-        None => std::env::remove_var("HOME"),
-    }
+    let res = {
+        // HOME is process-global: without the lock this test can capture
+        // another test's fixture dir as `prev` and "restore" it after that
+        // test already put the real HOME back — permanently pointing HOME
+        // at a dir whose daemon.json then poisons every later probe.
+        let _guard = home_lock().lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var_os("HOME");
+        std::env::set_var("HOME", &dir);
+        let res = read_daemon_json();
+        match prev {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        res
+    };
     let _ = fs::remove_dir_all(&dir);
     let parsed = res.expect("happy daemon.json parses");
     assert_eq!(parsed.url, "ws://127.0.0.1:7777");
