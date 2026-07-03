@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"time"
 )
 
 // landlockWrapper contains commands with the Linux Landlock LSM, applied
@@ -26,6 +28,31 @@ type landlockWrapper struct{}
 // probe lives in landlock_linux.go; non-Linux builds stub it to 0.
 var landlockABIProbe = probeLandlockABI
 
+// landlockHelperProbeTimeout bounds the re-exec routing self-test in
+// Available. The probe just re-execs this binary and expects an immediate
+// exit(0); a couple of seconds is generous even on a loaded host.
+const landlockHelperProbeTimeout = 3 * time.Second
+
+// landlockHelperProbe is a seam so tests can exercise the Available error
+// path without depending on how the test binary routes __sandbox-exec. It
+// re-execs the current binary with `__sandbox-exec --probe`; a binary that
+// embeds RunExecHelper exits 0, one that does not fails closed here.
+var landlockHelperProbe = func() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("cannot resolve own executable: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), landlockHelperProbeTimeout)
+	defer cancel()
+	// #nosec G204 -- re-exec of our own binary with a fixed argv.
+	if out, err := exec.CommandContext(ctx, exe, HelperSubcommand, "--probe").CombinedOutput(); err != nil {
+		return fmt.Errorf("this binary (%s) does not route the %s helper subcommand "+
+			"(embed sandbox.RunExecHelper, or select bwrap/docker instead): %v: %s",
+			filepath.Base(exe), HelperSubcommand, err, out)
+	}
+	return nil
+}
+
 func (l *landlockWrapper) Name() string { return ModeLandlock }
 
 // Available requires Landlock ABI >= 1, and ABI >= 4 when the policy
@@ -41,6 +68,16 @@ func (l *landlockWrapper) Available(p Policy) error {
 	}
 	if _, err := os.Executable(); err != nil {
 		return fmt.Errorf("cannot resolve own executable for re-exec helper: %w", err)
+	}
+	// Routing self-test: confirm THIS binary actually dispatches the
+	// __sandbox-exec subcommand to RunExecHelper. Embedders (r1-server,
+	// r1-bench) that build NativeRunner without the cmd/r1 helper dispatch
+	// would otherwise select landlock at wiring time and then fail every
+	// bash command mid-mission (the child exits without running the
+	// payload). Failing here converts that into a clear, actionable error
+	// before any command runs.
+	if err := landlockHelperProbe(); err != nil {
+		return err
 	}
 	return nil
 }

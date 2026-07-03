@@ -696,6 +696,22 @@ func (r *Registry) Definitions() []provider.ToolDef {
 		defs = append(defs, codeToolDefs()...)
 	}
 
+	// When the OS sandbox is engaged, drop the tools that exec OUTSIDE the
+	// bash containment (cron runs later on the host; notebook_cell_run shells
+	// out to jupyter). The handlers also fail closed (errSandboxDenied*), but
+	// dropping the definitions keeps the model from attempting them at all.
+	// See docs/native-sandbox.md (containment completion).
+	if r.sandboxActive() {
+		filtered := defs[:0]
+		for _, d := range defs {
+			if d.Name == "cron_create" || d.Name == "notebook_cell_run" {
+				continue
+			}
+			filtered = append(filtered, d)
+		}
+		defs = filtered
+	}
+
 	return defs
 }
 

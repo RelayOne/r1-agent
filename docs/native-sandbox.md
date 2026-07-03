@@ -24,27 +24,45 @@ Ordering inside `tools.Registry.handleBash`:
 The sandbox is **opt-in**: it engages only when `R1_NATIVE_SANDBOX` is set
 to a non-`off` value (`on`/`auto`/`bwrap`/`landlock`/`docker`; `on` aliases
 `auto`). An unset variable means "do not engage", even on the execute/verify
-phases where the workflow sets `RunSpec.SandboxEnabled`. This is deliberate:
-the current containment wraps only the `bash` tool, so `notebook_cell_run`
-(jupyter) and `cron_create` (crontab) still exec on the host, and a
-sandboxed bash cannot run `git` in a linked worktree (the parent repo's
-`.git` is outside the allowlist). A default-on sandbox with those gaps would
-be false assurance.
+phases where the workflow sets `RunSpec.SandboxEnabled`.
 
-**Flipping the default to on is gated on** completing containment:
-(a) route `notebook_cell_run`/`cron_create` through the sandbox — or deny
-them while it is engaged; and (b) add the worktree's real `.git` directory
-to the read allowlist so `git` works in linked worktrees. Until then,
-operators opt in explicitly with `R1_NATIVE_SANDBOX=on` (fail-closed once
-engaged — see below).
+**Containment completed (as of this change):**
+
+- **Host-exec tools are denied under sandbox.** When a sandbox policy is
+  active on the tool registry, `notebook_cell_run` (shells out to `jupyter`
+  on the host) and `cron_create` (writes the host crontab, runs later
+  outside any sandbox) are dropped from the advertised tool set AND fail
+  closed if called anyway (`errSandboxDenied*`). Both would otherwise be a
+  silent unsandboxed-execution escape hatch. The operator drops the sandbox
+  (`R1_NATIVE_SANDBOX=off`) to use them. Read-only siblings
+  (`notebook_read`, `cron_list`, `cron_delete`) stay available.
+- **`git` works in a linked worktree.** The policy now resolves the
+  worktree's real git directories — the per-worktree gitdir
+  (`<parent>/.git/worktrees/<name>`) and the parent repo's common dir
+  (`<parent>/.git`), both OUTSIDE the worktree tree — and adds them to the
+  write allowlist, so `git status`/`git commit` no longer fail closed inside
+  the sandbox. Resolution is pure file parsing (reads the `.git` gitdir file
+  and the `commondir` marker); no `git` subprocess, works offline. A normal
+  checkout needs nothing extra (its `.git` is already under the worktree
+  grant).
+
+**Flipping the default to on is gated on** the remaining item: the network
+posture. Egress defaults to *allow* (so `go mod download` / `npm install`
+work in the execute phase) and no backend can do the per-domain filtering
+the CLI sandbox gets — so the default posture contains the filesystem but
+NOT exfiltration. Until an egress story exists (domain allowlisting, or a
+default-deny with an explicit escape for module fetches), the sandbox stays
+opt-in; operators enable it explicitly with `R1_NATIVE_SANDBOX=on`
+(fail-closed once engaged — see below), and harden egress with
+`R1_NATIVE_SANDBOX_NET=deny`.
 
 ## Backends
 
 | Backend | Selection | Filesystem | Network | Notes |
 |---|---|---|---|---|
 | `bwrap` | primary (auto) | host fs read-only + writable binds (worktree, toolchain caches) + tmpfs//dev-null masks over credential paths | `--unshare-net` when egress denied | canary probe catches hosts where userns is blocked (AppArmor, containers) |
-| `landlock` | fallback (auto) | strict allow-list (baseline system paths + worktree); `$HOME` deliberately absent | TCP bind/connect deny on ABI >= 4; refuses (fail-closed) to deny egress on ABI < 4 | re-execs `r1 __sandbox-exec` because `landlock_restrict_self` binds the calling process; raw syscalls on vendored x/sys, zero new deps |
-| `docker` | explicit opt-in only | only the binds are mounted | `--network=none` when egress denied | requires `R1_SANDBOX_IMAGE`; never auto-selected — the image must carry the project toolchain |
+| `landlock` | fallback (auto) | strict allow-list (baseline system paths + worktree); `$HOME` deliberately absent; `/run` NOT granted wholesale (daemon sockets), only `/run/systemd/resolve` | TCP bind/connect deny on ABI >= 4; refuses (fail-closed) to deny egress on ABI < 4 | re-execs `r1 __sandbox-exec` because `landlock_restrict_self` binds the calling process; `Available` runs a `__sandbox-exec --probe` self-test so binaries that don't route the helper (r1-server/r1-bench) fail closed at wiring time, not mid-mission; raw syscalls on vendored x/sys, zero new deps |
+| `docker` | explicit opt-in only | only the binds are mounted; runs as `--user <host-uid>:<gid>` so created files aren't root-owned | `--network=none` when egress denied | requires `R1_SANDBOX_IMAGE`; never auto-selected — the image must carry the project toolchain |
 
 ## Fail-closed contract
 
@@ -70,10 +88,13 @@ the variable unset (opt-in default).
   operators who care trade that for cold caches.
 - **DenyRead masks** (bwrap/docker): `~/.ssh`, `~/.aws`, `~/.gnupg`,
   `~/.netrc`, `~/.docker`, `~/.kube`, `~/.claude`, `~/.codex`,
-  `~/.config/gh`, `~/.config/gcloud`, and `worktree/.env(.local)`.
-  Landlock cannot mask inside an allowed tree (allow-list-only), so
-  `worktree/.env` stays readable under that fallback; `~/.ssh` etc. are
-  unreadable there by construction ($HOME is not allow-listed).
+  `~/.config/gh`, `~/.config/gcloud`, `worktree/.env(.local)`, plus the
+  well-known **daemon control sockets** (`/run/docker.sock`,
+  `/var/run/docker.sock`, `/run/containerd`, `/run/podman`, `/run/crio`,
+  `/run/dbus/system_bus_socket`, `/run/systemd/private`). Landlock cannot
+  mask inside an allowed tree (allow-list-only), so `worktree/.env` stays
+  readable under that fallback; `~/.ssh` etc. and the daemon sockets are
+  unreadable there by construction ($HOME and `/run` are not allow-listed).
 
 ## Known narrowings (deliberate, documented)
 
@@ -83,6 +104,14 @@ the variable unset (opt-in default).
   `npm install` in the execute phase would break otherwise. The default
   posture therefore contains the filesystem but NOT exfiltration; harden
   with `R1_NATIVE_SANDBOX_NET=deny`.
+- **Unix sockets are not covered by egress denial.** `--unshare-net`
+  (bwrap) and Landlock's TCP-only net restriction cut *network* egress but
+  do NOT block `AF_UNIX` sockets — a reachable `/run/docker.sock` is a full
+  host escape regardless of the network posture. This is handled at the
+  *filesystem* layer instead: the daemon sockets are in the DenyRead mask
+  (bwrap/docker) and outside the Landlock read baseline (`/run` is not
+  granted wholesale). Sockets created after wrap time, or daemon sockets not
+  on the list, remain a residual gap on the bwrap backend.
 - **bwrap baseline is `--ro-bind / /`**: the host fs is readable minus
   the mask list; secrets outside the default masks remain readable.
   Landlock's allow-list is stricter.
@@ -91,9 +120,11 @@ the variable unset (opt-in default).
   command.
 - Env leakage (e.g. `ANTHROPIC_API_KEY` in `os.Environ()`) is out of
   scope here; a follow-up env scrub is tracked separately.
-- Only the `bash` tool is wrapped. `grep`/`glob`/read/write tools go
+- Only the `bash` tool is *wrapped*. `grep`/`glob`/read/write tools go
   through their own path-safety checks; `env_exec` runs in its own
-  execution environment.
+  execution environment. The other host-exec tools that can't be wrapped —
+  `notebook_cell_run`, `cron_create` — are *denied* while the sandbox is
+  engaged rather than left as an escape hatch (see Containment completed).
 
 ## Tests
 

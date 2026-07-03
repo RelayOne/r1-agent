@@ -32,6 +32,17 @@ func RunExecHelper(args []string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "sandbox-exec: "+format+"\n", a...)
 		return helperExitCode
 	}
+	// --probe is a routing self-test: a binary that embeds RunExecHelper
+	// returns 0 here without touching the kernel, so landlockWrapper.Available
+	// can confirm at wiring time that THIS binary actually routes the
+	// __sandbox-exec subcommand. A binary that does not embed the helper
+	// (r1-server/r1-bench without the cmd/r1 dispatch) instead hits its own
+	// CLI parser, which rejects the unknown subcommand non-zero — turning a
+	// guaranteed mid-mission bash failure into a clear fail-closed error at
+	// wiring time. Must be the first token after the subcommand.
+	if len(args) > 0 && args[0] == "--probe" {
+		return 0
+	}
 	var policyJSON string
 	var argv []string
 	for i := 0; i < len(args); i++ {
