@@ -222,3 +222,41 @@ Full gate on the branch is green (build/vet/test/-race all pass); these are late
 
 ### Unverified (verifier agents died at session limit — neither confirmed nor refuted)
 13 of 31 raw findings never completed verification. They are NOT in the confirmed set above and should be re-reviewed before relying on their absence. Re-run: the review workflow's Verify phase over the raw findings.
+
+---
+
+## RESOLUTION (2026-07-03, polish wave — branch enhance/sota-wave2-polish)
+
+All 12 deferred-confirmed findings AND all 13 previously-unverified findings
+were fed to a 6-area polish fix wave (condenser / thinking / retrieval /
+rollouts / transcript / sandbox). Each agent verified its finding's premise
+against current code before fixing (folding verification into the fix — a
+premise found wrong would have been skipped; none were). Every finding was
+real and fixed. Highlights:
+
+- **condenser**: summary parked at middle-window end (cache-READ billing
+  restored), per-run crypto/rand nonce pins the sentinel against forgery,
+  summary sanitized on re-entry, pointer self-exemption closed.
+- **thinking**: ChatStream now preserves interleaved content-block order
+  (added `stream.Event.BlockIndex`).
+- **retrieval**: bash/env_exec writes invalidate the codegraph index;
+  `--specexec-full` winner-merge refreshes the shared repomap; graph-tool
+  output bounded with `... and N more` elision.
+- **rollouts**: leaked rollout worktrees cleaned by name on timeout/cancel;
+  `Outcome.Error` + critic file list sanitized through promptguard; runner
+  models filtered by installed CLIs; blocking second-critic dissent now
+  routes through the attempt/retry loop instead of killing the task.
+- **transcript**: one shadow checkpoint per turn recorded after its
+  messages (correct rewind target, no torn sibling files); rewind resets
+  the branch not just files; torn trailing line repaired on append-reopen;
+  opt-in ignored-artifact cleaning.
+- **sandbox**: daemon unix sockets masked; docker runs as host uid:gid;
+  Landlock `Available` self-probes helper routing; **containment
+  completed** — host-exec tools (cron_create/notebook_cell_run) denied
+  while the sandbox is engaged, and git works in linked worktrees
+  (`WorktreeGitDirs` added to the allowlist).
+
+Composed on `enhance/sota-wave2-polish`: full `go build/vet/test` and
+`go test -race ./...` green. The residual condenser follow-up (a
+ctx-aware `Provider.Chat` to cancel a timed-out summarizer goroutine) is
+documented in-code as a deliberate, scoped deferral, not a silent gap.
