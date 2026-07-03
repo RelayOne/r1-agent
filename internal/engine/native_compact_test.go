@@ -117,6 +117,26 @@ func TestBuildNativeCompactor_LongNarrationTruncated(t *testing.T) {
 	}
 }
 
+// TestBuildNativeCompactor_PreservesCondenserSummary pins that the
+// byte-truncation fallback does NOT amputate the LLM condenser's rolling
+// summary block. On a condenser call failure the fallback runs over a
+// history whose tool_results are already pointers into this summary, so
+// truncating it would lose that content irrecoverably.
+func TestBuildNativeCompactor_PreservesCondenserSummary(t *testing.T) {
+	fn := buildNativeCompactor(2, 50)
+	summary := condensedSentinel + "\n" + condensedHeader + "\n" + strings.Repeat("prior tool output detail ", 200)
+	msgs := []agentloop.Message{
+		{Role: "user", Content: []agentloop.ContentBlock{{Type: "text", Text: "brief"}}},
+		{Role: "user", Content: []agentloop.ContentBlock{{Type: "text", Text: summary}}},
+		{Role: "user", Content: []agentloop.ContentBlock{{Type: "text", Text: "next"}}},
+		{Role: "assistant", Content: []agentloop.ContentBlock{{Type: "text", Text: "end"}}},
+	}
+	out := fn(msgs, 10000)
+	if got := out[1].Content[0].Text; got != summary {
+		t.Errorf("condenser summary block must survive verbatim; got %d chars, want %d", len(got), len(summary))
+	}
+}
+
 func TestCompactionEnabled(t *testing.T) {
 	if compactionEnabled(RunSpec{}) {
 		t.Error("empty spec should not have compaction enabled")

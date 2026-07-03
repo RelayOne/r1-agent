@@ -66,8 +66,13 @@ func buildNativeCompactor(keepRecent, summaryChars int) agentloop.CompactFunc {
 					}
 				case "text":
 					// Collapse long text blocks (model narration). Keep
-					// short ones because they might carry intent.
-					if len(block.Text) > summaryChars*2 {
+					// short ones because they might carry intent. The LLM
+					// condenser's rolling summary lives in a text block and
+					// is exempt: when a condenser call fails and falls back
+					// here, truncating it to summaryChars would amputate the
+					// only surviving record of the tool_results it already
+					// replaced with pointers, so its loss is unrecoverable.
+					if len(block.Text) > summaryChars*2 && !strings.HasPrefix(block.Text, condensedSentinel) {
 						nb.Text = block.Text[:summaryChars] + "... (narration truncated)"
 					}
 				}
