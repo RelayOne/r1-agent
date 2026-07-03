@@ -252,3 +252,31 @@ func shortSHA(sha string) string {
 	}
 	return sha
 }
+
+// HeadSHA returns the worktree branch's current HEAD commit SHA, or ""
+// on error (non-fatal). Callers capture the pre-attempt branch tip so a
+// rewind can undo intermediate agent commits, not just working-tree edits.
+func HeadSHA(ctx context.Context, handle Handle) string {
+	cmd := exec.CommandContext(ctx, gitBinaryFor(handle), "rev-parse", gitHEAD) // #nosec G204 -- git binary with literal subcommand arguments, no external input.
+	cmd.Dir = handle.Path
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// ResetBranchSoft moves the worktree's branch pointer to sha WITHOUT
+// touching the working tree or index (git reset --soft). RewindOnRetry
+// uses it to drop intermediate commits an agent made during a failed
+// attempt; a following RestoreFiles then normalizes the working tree and
+// reindexes to the restored HEAD. Resetting to the current HEAD is a
+// harmless no-op. sha is a git-produced SHA captured by HeadSHA.
+func ResetBranchSoft(ctx context.Context, handle Handle, sha string) error {
+	cmd := exec.CommandContext(ctx, gitBinaryFor(handle), "reset", "--soft", sha) // #nosec G204 -- git binary; sha is a git-produced HEAD SHA captured by HeadSHA.
+	cmd.Dir = handle.Path
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("reset --soft %s: %w: %s", shortSHA(sha), err, out)
+	}
+	return nil
+}
