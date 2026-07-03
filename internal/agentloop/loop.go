@@ -324,6 +324,26 @@ type ContentBlock struct {
 	Data      string          `json:"data,omitempty"`        // redacted_thinking opaque payload
 }
 
+// MarshalJSON keeps thinking blocks wire-valid. On adaptive / display:
+// "omitted" models (opus-4.8, sonnet-5, fable) the API streams thinking
+// blocks whose text is EMPTY plus a signature; with `omitempty` the
+// required `thinking` field would then vanish on the next request and the
+// API rejects the modified block with a 400. So for thinking blocks we
+// always emit `thinking` (even "") and `signature`. Every other block
+// type falls through to the default struct marshaling, byte-for-byte
+// unchanged.
+func (b ContentBlock) MarshalJSON() ([]byte, error) {
+	if b.Type == blockThinking {
+		return json.Marshal(struct {
+			Type      string `json:"type"`
+			Thinking  string `json:"thinking"`
+			Signature string `json:"signature,omitempty"`
+		}{Type: b.Type, Thinking: b.Thinking, Signature: b.Signature})
+	}
+	type alias ContentBlock // no method set → default marshaling, no recursion
+	return json.Marshal(alias(b))
+}
+
 // Message is a conversation message with typed content blocks.
 type Message struct {
 	Role    string         `json:"role"`

@@ -9,6 +9,36 @@ import (
 	"github.com/RelayOne/r1/internal/provider"
 )
 
+// TestContentBlockMarshalEmptyThinking pins that a thinking block with
+// empty text (the adaptive / display:"omitted" shape — signature only)
+// still serializes the required `thinking` field, so the assistant turn
+// round-trips without a 400 on the next request.
+func TestContentBlockMarshalEmptyThinking(t *testing.T) {
+	b := ContentBlock{Type: blockThinking, Thinking: "", Signature: "sig-abc"}
+	out, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := got["thinking"]; !ok {
+		t.Errorf("thinking field must be present even when empty; got %s", out)
+	}
+	if got["signature"] != "sig-abc" {
+		t.Errorf("signature must round-trip; got %s", out)
+	}
+	if got["type"] != blockThinking {
+		t.Errorf("type must be thinking; got %s", out)
+	}
+	// A non-thinking block with empty text must stay minimal (no thinking key).
+	txt, _ := json.Marshal(ContentBlock{Type: blockText, Text: "hi"})
+	if strings.Contains(string(txt), "thinking") {
+		t.Errorf("text block leaked a thinking field: %s", txt)
+	}
+}
+
 func TestBuildRequestThinkingBudget(t *testing.T) {
 	msgs := []Message{{Role: "user", Content: []ContentBlock{{Type: blockText, Text: "hi"}}}}
 
