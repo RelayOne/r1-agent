@@ -134,15 +134,22 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	// runners get containment from the per-worktree settings.json
 	// (config.SandboxSettings, fail-closed); before this wiring the
 	// native path silently dropped the same request and ran bash on the
-	// host. Fail-closed: when a sandbox is requested but no backend can
-	// enforce it, refuse to dispatch at all rather than degrade — the
-	// only opt-out is the explicit R1_NATIVE_SANDBOX=off kill switch.
-	// Config is env-first for the same reason as the policy gate
-	// (policy_gate.go): NewNativeRunner has too many call sites to
-	// thread new fields through.
+	// host.
+	//
+	// OPT-IN for now: the sandbox engages only when the operator sets
+	// R1_NATIVE_SANDBOX explicitly (on|auto|bwrap|landlock|docker).
+	// Default runs stay unsandboxed because current containment only
+	// wraps the bash tool — notebook_cell_run and cron_create still exec
+	// on the host, and a sandboxed bash cannot run git in a linked
+	// worktree — so a default-on sandbox would be false assurance. Once
+	// engaged it is still fail-closed: if the requested backend cannot be
+	// enforced we refuse to dispatch rather than silently degrade. Config
+	// is env-first for the same reason as the policy gate
+	// (policy_gate.go): NewNativeRunner has too many call sites to thread
+	// new fields through. See docs/native-sandbox.md.
 	if spec.SandboxEnabled {
-		if mode := sandbox.ModeFromEnv(); mode == sandbox.ModeOff {
-			slog.Warn("native sandbox disabled via R1_NATIVE_SANDBOX=off", "phase", spec.Phase.Name)
+		if mode, engaged := sandbox.EngageFromEnv(); !engaged {
+			slog.Info("native sandbox not engaged (opt-in via R1_NATIVE_SANDBOX=on)", "phase", spec.Phase.Name)
 		} else {
 			home, _ := os.UserHomeDir()
 			pol := sandbox.Policy{

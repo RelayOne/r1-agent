@@ -79,6 +79,31 @@ func TestNativeRunner_SandboxKillSwitch(t *testing.T) {
 	}
 }
 
+// TestNativeRunner_SandboxOptInDefaultUnsandboxed pins the opt-in
+// contract: with SandboxEnabled=true but R1_NATIVE_SANDBOX unset, the
+// sandbox does NOT engage and the run proceeds unsandboxed (no
+// fail-closed refusal). Containment is incomplete (notebook_cell_run /
+// cron_create bypass it; git in a linked worktree breaks), so it must
+// stay opt-in until that is closed — see docs/native-sandbox.md.
+func TestNativeRunner_SandboxOptInDefaultUnsandboxed(t *testing.T) {
+	t.Setenv("R1_NATIVE_SANDBOX", "")
+	t.Setenv("STOKE_NATIVE_SANDBOX", "")
+
+	runner := NewNativeRunner("", "claude-sonnet-4-5")
+	spec := newMinimalRunSpec(t)
+	spec.SandboxEnabled = true
+
+	fp := &fakeMCPProvider{
+		responses: []*provider.ChatResponse{{
+			Content:    []provider.ResponseContent{{Type: "text", Text: "ok"}},
+			StopReason: "end_turn",
+		}},
+	}
+	if _, err := runWithProvider(t, runner, spec, fp); err != nil {
+		t.Fatalf("default (unset env) must run unsandboxed, got: %v", err)
+	}
+}
+
 func TestNativeRunner_SandboxNotRequestedIgnoresEnv(t *testing.T) {
 	// Even a hard-broken sandbox config must not matter when the spec
 	// never asked for one (plan phase, legacy callers).

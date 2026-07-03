@@ -102,6 +102,33 @@ func ModeFromEnv() string {
 	return v
 }
 
+// EngageFromEnv decides whether the native OS sandbox should wrap tool
+// execution and, if so, in which mode. It is OPT-IN: an unset
+// R1_NATIVE_SANDBOX means "do not engage" (engaged=false), because the
+// current containment only wraps the bash tool — notebook_cell_run and
+// cron_create still exec on the host, and a sandboxed bash cannot run
+// git in a linked worktree — so a default-on sandbox would be false
+// assurance. Engaging requires an explicit non-"off" value:
+//
+//	R1_NATIVE_SANDBOX=on|auto|bwrap|landlock|docker  -> engaged, that mode
+//	                                          ("on" is an alias for auto)
+//	R1_NATIVE_SANDBOX=off  or unset            -> not engaged
+//
+// Flipping this to default-on is gated on completing containment (route
+// or deny notebook_cell_run/cron_create when engaged; allowlist the
+// worktree's real .git). See docs/native-sandbox.md.
+func EngageFromEnv() (mode string, engaged bool) {
+	v := strings.ToLower(strings.TrimSpace(r1env.Get("R1_NATIVE_SANDBOX", "STOKE_NATIVE_SANDBOX")))
+	switch v {
+	case "", ModeOff:
+		return ModeOff, false
+	case "on":
+		return ModeAuto, true
+	default:
+		return v, true
+	}
+}
+
 // EgressFromEnv reads R1_NATIVE_SANDBOX_NET (legacy twin
 // STOKE_NATIVE_SANDBOX_NET). Only the explicit allow spellings return
 // true for a non-empty value; anything else — including typos — cuts the

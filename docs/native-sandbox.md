@@ -19,6 +19,25 @@ Ordering inside `tools.Registry.handleBash`:
 3. Existing process-group / Cancel / WaitDelay plumbing — unchanged; the
    wrapper never precludes group-kill semantics.
 
+## Engagement (opt-in)
+
+The sandbox is **opt-in**: it engages only when `R1_NATIVE_SANDBOX` is set
+to a non-`off` value (`on`/`auto`/`bwrap`/`landlock`/`docker`; `on` aliases
+`auto`). An unset variable means "do not engage", even on the execute/verify
+phases where the workflow sets `RunSpec.SandboxEnabled`. This is deliberate:
+the current containment wraps only the `bash` tool, so `notebook_cell_run`
+(jupyter) and `cron_create` (crontab) still exec on the host, and a
+sandboxed bash cannot run `git` in a linked worktree (the parent repo's
+`.git` is outside the allowlist). A default-on sandbox with those gaps would
+be false assurance.
+
+**Flipping the default to on is gated on** completing containment:
+(a) route `notebook_cell_run`/`cron_create` through the sandbox — or deny
+them while it is engaged; and (b) add the worktree's real `.git` directory
+to the read allowlist so `git` works in linked worktrees. Until then,
+operators opt in explicitly with `R1_NATIVE_SANDBOX=on` (fail-closed once
+engaged — see below).
+
 ## Backends
 
 | Backend | Selection | Filesystem | Network | Notes |
@@ -29,11 +48,11 @@ Ordering inside `tools.Registry.handleBash`:
 
 ## Fail-closed contract
 
-When `RunSpec.SandboxEnabled` is set (the workflow sets it for execute and
-verify phases) and no backend can enforce the policy, the native runner
-refuses to dispatch — the error names the opt-out. An explicitly named
-mode never falls through to another backend. The ONLY silent-passthrough
-is the kill switch.
+Once engaged (via `R1_NATIVE_SANDBOX`, see Engagement above) and no backend
+can enforce the policy, the native runner refuses to dispatch — the error
+names the opt-out. An explicitly named mode never falls through to another
+backend. The ONLY silent-passthrough is the kill switch (`=off`) or leaving
+the variable unset (opt-in default).
 
 ## Configuration (env-first, `R1_*` with `STOKE_*` legacy twins)
 
