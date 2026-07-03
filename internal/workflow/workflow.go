@@ -1099,6 +1099,35 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			if e.Policy.Verification.CrossModelReview {
 				reviewFiles, reviewErr := e.runCrossModelReview(ctx, name, handle, verifyPhase, preReviewFiles, preReviewTree, &evidence, &result, attempt, attemptStart, execRunnerName, execResult)
 				if reviewErr != nil {
+					// A blocking second-critic dissent routes through the
+					// attempt/retry loop (secondcritic.go contract) rather than
+					// killing the task on attempt 1 and discarding both the
+					// remaining attempts and the critic's requested change.
+					// runCrossModelReview left the worktree and state intact for
+					// exactly this. Every other review error already cleaned up
+					// and failed closed inside runCrossModelReview.
+					var dissent *criticDissentError
+					if errors.As(reviewErr, &dissent) {
+						if attempt < maxAttempts {
+							// Mirror the convergence-retry transition: the primary
+							// review passed (Verified->Reviewed), the adversarial
+							// critic blocked, so retry from Claimed with the
+							// requested change folded into the retry brief.
+							_ = e.advanceState(taskstate.Reviewed, "primary review approved; second-critic dissent -> retry")
+							_ = e.advanceState(taskstate.Claimed, "second-opinion dissent retry")
+							lastFailure = &failure.Analysis{
+								Class: failure.Incomplete,
+								Summary: fmt.Sprintf(
+									"An adversarial second reviewer blocked the previous change; it must be revised before merge.\nReasoning: %s\nRequested change: %s",
+									dissent.reasoning, dissent.requestedChange),
+								RootCause: "second-opinion critic dissent",
+							}
+							continue
+						}
+						// Attempts exhausted: now terminal. Fail closed.
+						e.Worktrees.Cleanup(ctx, handle)
+						_ = e.advanceState(taskstate.Failed, "second-opinion dissent unresolved after retries")
+					}
 					return result, reviewErr
 				}
 				postReviewFiles = reviewFiles
@@ -1756,9 +1785,18 @@ func (e Engine) runCrossModelReview(
 				})
 			}
 			e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
-			e.Worktrees.Cleanup(ctx, handle)
-			_ = e.advanceState(taskstate.Failed, "second-opinion dissent unresolved")
-			return nil, fmt.Errorf("second-opinion dissent (blocking, %d findings): %s", len(cv.Findings), cv.Reasoning)
+			// Do NOT clean the worktree or fail terminally here. A blocking
+			// dissent is a merge-gate failure like a convergence block: the
+			// caller's attempt/retry loop resolves it (folding the critic's
+			// RequestedChange into the retry brief) and only converts it to a
+			// hard error once the attempt budget is exhausted. Returning a
+			// terminal error here discarded every remaining attempt AND the
+			// actionable RequestedChange on attempt 1.
+			return nil, &criticDissentError{
+				reasoning:       cv.Reasoning,
+				requestedChange: cv.RequestedChange,
+				findings:        len(cv.Findings),
+			}
 		}
 		// Advisory dissent proceeds; its audit trail is the
 		// EventVerifySecondOpinion emitted above (evidence.Findings is
