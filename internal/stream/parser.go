@@ -12,8 +12,10 @@ import (
 
 // Canonical wire strings shared between parser.go and sse.go.
 const (
-	blockTypeToolUse   = "tool_use"
-	subtypeRateLimited = "rate_limited"
+	blockTypeToolUse          = "tool_use"
+	blockTypeThinking         = "thinking"
+	blockTypeRedactedThinking = "redacted_thinking"
+	subtypeRateLimited        = "rate_limited"
 )
 
 // Event is a parsed event from a Claude Code or Codex CLI NDJSON stream.
@@ -33,6 +35,23 @@ type Event struct {
 	ResultText string    `json:"-"`
 	DeltaText  string    `json:"-"`
 	DeltaType  string    `json:"-"`
+	// ThinkingBlocks carries assembled extended-thinking blocks,
+	// emitted on content_block_stop (mirrors ToolUses). Thinking text
+	// is deliberately NOT surfaced through DeltaText: DeltaText feeds
+	// user-visible text accumulation, and thinking must round-trip
+	// into the assistant message verbatim, not leak into prose.
+	ThinkingBlocks []ThinkingBlock `json:"-"`
+}
+
+// ThinkingBlock is an assembled extended-thinking content block from a
+// streamed response. Redacted blocks carry the opaque Data payload the
+// API expects to be replayed verbatim; regular blocks carry Text plus
+// the integrity Signature.
+type ThinkingBlock struct {
+	Text      string
+	Signature string
+	Redacted  bool
+	Data      string
 }
 
 // ToolUse represents a single tool invocation extracted from an assistant message.

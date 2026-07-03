@@ -52,6 +52,7 @@ import (
 	"github.com/RelayOne/r1/internal/taskstate"
 	"github.com/RelayOne/r1/internal/testgen"
 	"github.com/RelayOne/r1/internal/testselect"
+	"github.com/RelayOne/r1/internal/tfidf"
 	"github.com/RelayOne/r1/internal/tokenest"
 	"github.com/RelayOne/r1/internal/vecindex"
 	"github.com/RelayOne/r1/internal/verify"
@@ -99,8 +100,20 @@ type TaskHook interface {
 
 // Engine drives the plan/execute/verify workflow loop for a single task, including retries and merge.
 type Engine struct {
-	RepoRoot         string
-	CortexEnabled    bool // wire deterministic cortex lobes into the native loop (threaded to RunSpec)
+	RepoRoot      string
+	CortexEnabled bool // wire deterministic cortex lobes into the native loop (threaded to RunSpec)
+	// RewindOnRetry makes a failed attempt rewind the worktree to the
+	// pre-attempt shadow-git checkpoint (worktree.RestoreFiles) instead
+	// of the §7 clean rebuild (Cleanup + Prepare + hook install). The
+	// restored state is byte-identical to a fresh worktree — the
+	// baseline is captured before the attempt writes anything — so
+	// behavior only gets faster, never different; any restore error
+	// falls back to the rebuild path. Also turns on per-tool-use shadow
+	// checkpoints in native-runner dispatches (RunSpec.ShadowCheckpoints).
+	// Opt-in: default false preserves the documented clean-worktree
+	// retry contract. Ignored in InPlace/DryRun modes (no per-task git
+	// worktree to restore).
+	RewindOnRetry    bool
 	Task             string
 	TaskType         model.TaskType
 	TaskVerification []string // per-task verification checklist from planner
@@ -138,9 +151,18 @@ type Engine struct {
 	TestGraph       *testselect.Graph  // dependency-aware test selection (nil = run all)
 	RepoMap         *repomap.RepoMap   // ranked codebase map for context (nil = disabled)
 	RepoMapBudget   int                // token budget for repomap (0 = default 2000)
+	TFIDF           *tfidf.Index       // task-text file scoring that conditions the repomap on the current task (nil = static ranking only)
 	CriticConfig    *critic.Config     // per-project critic configuration (nil = defaults)
-	PlanOnly        bool
-	RunnerOverride  engine.CommandRunner   // if set, used for all phases (testing only)
+	PlanOnly bool
+	// SkipMerge runs the FULL pipeline (plan/execute/verify/review/
+	// commit) in the isolated worktree but stops after merge validation
+	// succeeds: the worktree and its verified commit stay alive and are
+	// returned via Result.Handle, and the CALLER owns the merge/discard
+	// decision. Used by best-of-N speculative rollouts where only the
+	// winning worktree may merge. Ignored when InPlace is set (in-place
+	// runs have no worktree to hand back).
+	SkipMerge      bool
+	RunnerOverride engine.CommandRunner // if set, used for all phases (testing only)
 	Boulder         *boulder.Enforcer      // idle detection (nil = disabled)
 	Convergence     *convergence.Validator // adversarial self-audit: blocks merge if blocking findings (nil = skip)
 	// ConvergenceIgnores persists CTO-approved ignore entries that
@@ -160,6 +182,11 @@ type Engine struct {
 	// threshold is crossed. When nil, the override flow is skipped and
 	// convergence failures propagate normally.
 	OverrideJudge convergence.OverrideJudge
+	// SecondCritic is the adversarial reviewer that challenges a PASS
+	// verdict at the merge gate (nil = disabled). Active only when
+	// Policy.Verification.SecondOpinion is also true, so the policy
+	// file stays the kill-switch even when a critic is injected.
+	SecondCritic  SecondCritic
 	EventBus      *hub.Bus        // unified event bus (nil = no events)
 	SkillRegistry *skill.Registry // skill library for prompt injection (nil = auto-create from RepoRoot)
 	StackMatches  []string        // pre-computed stack-matched skill names from RepoProfile
@@ -192,6 +219,13 @@ type Result struct {
 	Verification []verify.Outcome
 	TotalCostUSD float64
 	FilesChanged []string // files modified by the workflow (post-review validated set)
+
+	// Handle is the live worktree carrying the verified, committed,
+	// merge-validated change when the engine ran with SkipMerge. The
+	// caller must eventually Merge or Cleanup it. Zero-valued
+	// (Handle.Name == "") in every other mode and when the validated
+	// set produced no diff (ErrNothingToCommit path cleans up as usual).
+	Handle worktree.Handle
 }
 
 // StepResult records the phase name, engine used, and prepared command for one workflow step.
@@ -595,6 +629,10 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	// attempt's retry prompt so later runs against a persistent wisdom store
 	// get the prior context instead of rediscovering it.
 	var priorFixHint string
+	// Shadow-git checkpoint SHA of the state the current attempt started
+	// from; the RewindOnRetry restore target. Empty when rewind is off or
+	// the baseline capture failed (retry then rebuilds per §7).
+	var rewindBaseline string
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// Budget gate: stop before spending more if over budget.
@@ -622,21 +660,50 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 
 		// §7: "Each retry starts from a clean worktree (fresh copy of main)."
 		// The learning is in the INSTRUCTIONS (retry brief), not in code state.
+		// RewindOnRetry reaches the same clean state by restoring the
+		// pre-attempt checkpoint in place — no rebuild, hooks stay
+		// installed, symlinked/ignored deps survive. Restore failure
+		// falls back to the rebuild path (fail-closed to proven behavior).
 		if attempt > 1 {
 			lastDiff = worktree.DiffSummary(ctx, handle)
-			e.Worktrees.Cleanup(ctx, handle)
-			retryName := fmt.Sprintf("%s-attempt-%d", name, attempt)
-			var prepErr error
-			handle, prepErr = e.Worktrees.Prepare(ctx, retryName)
-			if prepErr != nil {
-				return result, fmt.Errorf("prepare retry worktree: %w", prepErr)
+			rewound := false
+			if e.RewindOnRetry && rewindBaseline != "" {
+				if restoreErr := worktree.RestoreFiles(ctx, handle, rewindBaseline); restoreErr != nil {
+					log.Warn("rewind-on-retry restore failed; rebuilding worktree", "error", restoreErr)
+				} else {
+					log.Info("worktree rewound to pre-attempt checkpoint", "attempt", attempt)
+					rewound = true
+				}
 			}
-			if hookErr := hooks.Install(handle.RuntimeDir); hookErr != nil {
+			if !rewound {
 				e.Worktrees.Cleanup(ctx, handle)
-				return result, fmt.Errorf("hook install failed (safety boundary): %w", hookErr)
+				retryName := fmt.Sprintf("%s-attempt-%d", name, attempt)
+				var prepErr error
+				handle, prepErr = e.Worktrees.Prepare(ctx, retryName)
+				if prepErr != nil {
+					return result, fmt.Errorf("prepare retry worktree: %w", prepErr)
+				}
+				if hookErr := hooks.Install(handle.RuntimeDir); hookErr != nil {
+					e.Worktrees.Cleanup(ctx, handle)
+					return result, fmt.Errorf("hook install failed (safety boundary): %w", hookErr)
+				}
+				result.WorktreePath = handle.Path
+				result.Branch = handle.Branch
 			}
-			result.WorktreePath = handle.Path
-			result.Branch = handle.Branch
+		}
+
+		// Capture the state this attempt starts from so a failed attempt
+		// can rewind instead of rebuilding. Re-taken every attempt: a
+		// rebuild produces a new handle, and re-checkpointing a rewound
+		// tree is cheap (cached stat info). Failure downgrades this
+		// attempt's retry to the rebuild path — never fatal.
+		rewindBaseline = ""
+		if e.RewindOnRetry && !e.InPlace && !e.DryRun {
+			if sha, ckErr := worktree.ShadowCheckpoint(ctx, handle, 0); ckErr != nil {
+				log.Warn("rewind baseline checkpoint failed; a retry will rebuild the worktree", "error", ckErr)
+			} else {
+				rewindBaseline = sha
+			}
 		}
 
 		// Build execute prompt. P1: the plan block rides on the base
@@ -1201,6 +1268,9 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			// out of the attempt loop as if the merge succeeded.
 			if e.InPlace {
 				result.FilesChanged = postReviewFiles
+				// Writes landed directly in RepoRoot: fold them into the
+				// shared repomap now so subsequent tasks see them.
+				e.refreshRepoMap(postReviewFiles)
 				_ = e.advanceState(taskstate.Committed, "in-place: caller owns commit/merge")
 				break
 			}
@@ -1244,6 +1314,16 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				e.Worktrees.Cleanup(ctx, handle)
 				return result, fmt.Errorf("merge validation: %w", valErr)
 			}
+			// Skip-merge mode: the change is committed and merge-validated;
+			// hand the live worktree back instead of merging. Deliberately
+			// NO Worktrees.Cleanup — the branch must stay alive with the
+			// verified commit until the caller merges or discards it.
+			if e.SkipMerge {
+				result.FilesChanged = postReviewFiles
+				result.Handle = handle
+				_ = e.advanceState(taskstate.Committed, "skip-merge: caller owns winner merge/discard")
+				break
+			}
 			// Save main branch HEAD before merge for potential rollback.
 			mainHead := worktree.MainHeadSHA(ctx, e.RepoRoot)
 
@@ -1280,6 +1360,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			if err := e.advanceState(taskstate.Committed, "merged to main by harness"); err != nil {
 				return result, err
 			}
+
+			// The validated files are now on main: fold them into the
+			// shared repomap so subsequent tasks in this run plan against
+			// the tree they will actually see.
+			e.refreshRepoMap(postReviewFiles)
 
 			e.emitEventAsync(&hub.Event{
 				Type:   hub.EventGitPostMerge,
@@ -1627,6 +1712,59 @@ func (e Engine) runCrossModelReview(
 		return nil, fmt.Errorf("cross-model review rejected: %s severity, %d findings", verdict.Severity, len(verdict.Findings))
 	}
 
+	// --- ADVERSARIAL SECOND OPINION ---
+	// A single reviewer's PASS is a single point of trust. When a
+	// second critic is configured (and the policy's second_opinion
+	// kill-switch is on), challenge the PASS before revalidation: a
+	// blocking, file-anchored dissent stops the merge and routes
+	// through the normal attempt/retry loop. Skipped when nothing
+	// changed — there is no patch to challenge.
+	if e.SecondCritic != nil && e.Policy.Verification.SecondOpinion && len(preReviewFiles) > 0 {
+		criticIn := CriticInput{
+			Task:               e.Task,
+			Files:              preReviewFiles,
+			Diff:               worktree.DiffSummary(ctx, handle),
+			PrimaryEngine:      verifyRunnerName,
+			PrimaryVerdictJSON: verifyResult.ResultText,
+		}
+		if semAnalysis := semdiff.AnalyzeMultiFile(buildSemdiffInputs(ctx, handle)); len(semAnalysis.Changes) > 0 {
+			criticIn.SemanticSummary = semAnalysis.Summary
+		}
+		cv, critErr := e.SecondCritic.Challenge(ctx, criticIn)
+		if critErr != nil {
+			// FAIL CLOSED, matching the primary reviewer's error path:
+			// an unavailable critic must not silently become a rubber
+			// stamp. verification.second_opinion=false is the escape
+			// hatch for flaky provider environments.
+			evidence.ReviewPass = false
+			evidence.ReviewOutput = "second-opinion critic error: " + critErr.Error()
+			e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+			e.Worktrees.Cleanup(ctx, handle)
+			_ = e.advanceState(taskstate.Failed, "second-opinion critic error")
+			return nil, fmt.Errorf("second-opinion critic error: %w", critErr)
+		}
+		// Emit before the dissent early-return so the Governor observes
+		// blocking dissents too (same contract as emitReviewEvent).
+		e.emitSecondOpinionEvent(name, cv)
+		if cv.Dissent && cv.Severity == "blocking" {
+			evidence.ReviewPass = false
+			evidence.ReviewOutput = fmt.Sprintf("second-opinion dissent: %s | requested change: %s", cv.Reasoning, cv.RequestedChange)
+			if e.Wisdom != nil {
+				e.Wisdom.Record(e.Task, wisdom.Learning{
+					Category:    wisdom.Gotcha,
+					Description: fmt.Sprintf("second-opinion critic blocked a %s-approved change: %s", verifyRunnerName, cv.Reasoning),
+				})
+			}
+			e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+			e.Worktrees.Cleanup(ctx, handle)
+			_ = e.advanceState(taskstate.Failed, "second-opinion dissent unresolved")
+			return nil, fmt.Errorf("second-opinion dissent (blocking, %d findings): %s", len(cv.Findings), cv.Reasoning)
+		}
+		// Advisory dissent proceeds; its audit trail is the
+		// EventVerifySecondOpinion emitted above (evidence.Findings is
+		// a merge gate and must stay clean for non-blocking concerns).
+	}
+
 	// --- POST-REVIEW REVALIDATION ---
 	postReviewFiles, postModErr := worktree.ModifiedFiles(ctx, handle)
 	if postModErr != nil {
@@ -1815,6 +1953,14 @@ func readFileForReviewPrompt(filePath string, src []byte) string {
 
 // buildSpec creates a RunSpec for a phase and worktree handle.
 func (e Engine) buildSpec(phase engine.PhaseSpec, handle worktree.Handle) engine.RunSpec {
+	// Event-sourced transcript, one file per worktree+phase. Lives under
+	// the repo root's .stoke dir — NOT RuntimeDir, which is deleted
+	// between attempts — so it survives as the replay/resume source.
+	// Only the native runner consumes the field; CLI runners keep their
+	// own session transcripts. A rewound retry appends a second dispatch
+	// to the same file (meta entries mark the boundaries).
+	transcriptDir := r1dir.JoinFor(e.RepoRoot, "transcripts")
+	_ = os.MkdirAll(transcriptDir, 0o755)
 	return engine.RunSpec{
 		Prompt:            phase.Prompt,
 		CortexEnabled:     e.CortexEnabled,
@@ -1827,6 +1973,10 @@ func (e Engine) buildSpec(phase engine.PhaseSpec, handle worktree.Handle) engine
 		SandboxDomains:    sandboxDomainsForPhase(phase.Name),
 		SandboxAllowRead:  []string{filepath.Clean(handle.Path), handle.RuntimeDir},
 		SandboxAllowWrite: []string{filepath.Clean(handle.Path)}, // NO .stoke -- harness writes go to RuntimeDir
+		TranscriptPath:    filepath.Join(transcriptDir, handle.Name+"-"+phase.Name+".jsonl"),
+		// Only pay the per-write-tool checkpoint cost when the rewind
+		// path can actually consume the checkpoints.
+		ShadowCheckpoints: e.RewindOnRetry && !e.InPlace && !e.DryRun,
 	}
 }
 
@@ -1976,6 +2126,25 @@ func taskComplexity(task string) planpkg.Complexity {
 	}
 }
 
+// thinkingBudgetForClass maps the heuristic intent classification to an
+// extended-thinking budget hint for the native runner (SOTA gap #12).
+// Mechanical work (trivial / explicit) gets none — thinking only adds
+// latency and cost there. Investigation and design work gets reasoning
+// depth, scaled by how open the problem is. Values must stay well below
+// the native runner's per-turn MaxTokens (16000): on legacy models the
+// budget counts against max_tokens, so 8192 already halves the visible
+// output headroom.
+func thinkingBudgetForClass(c intent.Class) int {
+	switch c {
+	case intent.ClassExploratory, intent.ClassAmbiguous:
+		return 4096
+	case intent.ClassOpenEnded:
+		return 8192
+	default: // trivial, explicit, unknown — fail closed to today's behavior
+		return 0
+	}
+}
+
 func buildPhases(e Engine) []engine.PhaseSpec {
 	plan := e.Policy.Phases["plan"]
 	execute := e.Policy.Phases["execute"]
@@ -1988,6 +2157,12 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 	if intent.RequiresGate(classification) {
 		intentGate = intent.GatePrompt(e.Task, classification) + "\n\n"
 	}
+
+	// Extended thinking is modulated by the same classification: plan
+	// and execute get the budget; verify stays at 0 (review reads
+	// diffs against a checklist — cheaper and just as reliable
+	// without thinking).
+	thinkingBudget := thinkingBudgetForClass(classification.Class)
 
 	return []engine.PhaseSpec{
 		{
@@ -2004,8 +2179,9 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			// only (same task should produce behaviorally equivalent
 			// plans across runs; wording will vary). Routes to GPU
 			// inference.
-			Determinism: engine.DeterminismSemantic,
-			Affinity:    engine.ComputeGPUInference,
+			Determinism:    engine.DeterminismSemantic,
+			Affinity:       engine.ComputeGPUInference,
+			ThinkingBudget: thinkingBudget,
 		},
 		{
 			Name:         "execute",
@@ -2022,8 +2198,9 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			// overall because the LLM portion dominates reproducibility
 			// properties. Affinity=Any because it genuinely spans CPU
 			// + GPU; no single substrate is preferred.
-			Determinism: engine.DeterminismSemantic,
-			Affinity:    engine.ComputeAny,
+			Determinism:    engine.DeterminismSemantic,
+			Affinity:       engine.ComputeAny,
+			ThinkingBudget: thinkingBudget,
 		},
 		{
 			Name:         "verify",
@@ -2058,6 +2235,14 @@ func pickRunner(e Engine, phase string) (string, engine.CommandRunner) {
 			return string(model.ProviderNative), e.Runners.Native
 		}
 		// Fall through to default routing if native isn't available.
+	case "claude":
+		// Deterministic per-task override (speculative rollouts pin a
+		// strategy to a runner via plan.Task.Runner). Without this case
+		// "claude" silently fell into default routing.
+		if e.Runners.Claude != nil {
+			return string(model.ProviderClaude), e.Runners.Claude
+		}
+		// Fall through to default routing if claude isn't available.
 	case "codex":
 		if e.Runners.Codex != nil {
 			if phase == "plan" {
@@ -2233,7 +2418,11 @@ func executePromptWithContext(e Engine) string {
 		if budget <= 0 {
 			budget = 2000
 		}
-		mapContent := e.RepoMap.RenderRelevant(e.AllowedFiles, budget)
+		// Condition the map on the task text: TF-IDF scores pull the
+		// files this task is actually about ahead of the repo's static
+		// all-time ranking, so the budgeted map spends its tokens on
+		// task-relevant symbols.
+		mapContent := e.RepoMap.RenderRelevantQuery(e.AllowedFiles, taskQueryScores(e.TFIDF, e.Task), budget)
 		if mapContent != "" {
 			contextItems = append(contextItems, ctxpack.Item{
 				ID: "repomap", Category: "file", Content: mapContent,
@@ -2288,6 +2477,45 @@ func executePromptWithContext(e Engine) string {
 	}
 
 	return prompt
+}
+
+// taskQueryScores turns the task text into per-file relevance scores for
+// repomap conditioning: the best TF-IDF cosine score per file, keyed by
+// root-relative path. Chunk-indexed documents carry a "#chunk" suffix that
+// must be stripped so scores key into repomap's file table. Nil index or
+// blank task yields nil (static ranking only).
+func taskQueryScores(idx *tfidf.Index, task string) map[string]float64 {
+	if idx == nil || strings.TrimSpace(task) == "" {
+		return nil
+	}
+	scores := make(map[string]float64)
+	for _, hit := range idx.Search(task, 20) {
+		p := hit.Path
+		if i := strings.IndexByte(p, '#'); i >= 0 {
+			p = p[:i]
+		}
+		if hit.Score > scores[p] {
+			scores[p] = hit.Score
+		}
+	}
+	if len(scores) == 0 {
+		return nil
+	}
+	return scores
+}
+
+// refreshRepoMap re-parses a completed task's validated files in the shared
+// repomap. The map is built once at startup and shared across the whole
+// run's workers, so without this every later task plans against a view that
+// predates earlier tasks' changes. Covers CLI-subprocess runners too, whose
+// writes never pass through the native tool registry's write hooks.
+func (e *Engine) refreshRepoMap(files []string) {
+	if e.RepoMap == nil {
+		return
+	}
+	for _, f := range files {
+		e.RepoMap.Invalidate(f)
+	}
 }
 
 func executePrompt(task string, taskType model.TaskType, verification []string) string {

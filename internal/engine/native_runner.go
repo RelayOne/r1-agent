@@ -24,6 +24,7 @@ import (
 	"github.com/RelayOne/r1/internal/provider"
 	"github.com/RelayOne/r1/internal/rules"
 	rulesenforcer "github.com/RelayOne/r1/internal/rules/enforcer"
+	"github.com/RelayOne/r1/internal/sandbox"
 	"github.com/RelayOne/r1/internal/stream"
 	"github.com/RelayOne/r1/internal/tools"
 	"github.com/RelayOne/r1/internal/wisdom"
@@ -128,6 +129,51 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 
 	// Create the tool registry
 	toolRegistry := tools.NewRegistry(spec.WorktreeDir)
+
+	// Native-path enforcement of the RunSpec sandbox request. The CLI
+	// runners get containment from the per-worktree settings.json
+	// (config.SandboxSettings, fail-closed); before this wiring the
+	// native path silently dropped the same request and ran bash on the
+	// host.
+	//
+	// OPT-IN for now: the sandbox engages only when the operator sets
+	// R1_NATIVE_SANDBOX explicitly (on|auto|bwrap|landlock|docker).
+	// Default runs stay unsandboxed because current containment only
+	// wraps the bash tool — notebook_cell_run and cron_create still exec
+	// on the host, and a sandboxed bash cannot run git in a linked
+	// worktree — so a default-on sandbox would be false assurance. Once
+	// engaged it is still fail-closed: if the requested backend cannot be
+	// enforced we refuse to dispatch rather than silently degrade. Config
+	// is env-first for the same reason as the policy gate
+	// (policy_gate.go): NewNativeRunner has too many call sites to thread
+	// new fields through. See docs/native-sandbox.md.
+	if spec.SandboxEnabled {
+		if mode, engaged := sandbox.EngageFromEnv(); !engaged {
+			slog.Info("native sandbox not engaged (opt-in via R1_NATIVE_SANDBOX=on)", "phase", spec.Phase.Name)
+		} else {
+			home, _ := os.UserHomeDir()
+			pol := sandbox.Policy{
+				Mode:       mode,
+				AllowRead:  spec.SandboxAllowRead,
+				AllowWrite: spec.SandboxAllowWrite,
+				DenyRead: append(sandbox.DefaultDenyRead(home),
+					sandbox.WorkDirDenyRead(spec.WorktreeDir)...),
+				WriteCaches: sandbox.DefaultWriteCaches(home),
+				// Boolean only: no native backend can honor the
+				// spec.SandboxDomains allowlist (kernel primitives have
+				// no domain filtering), so egress is all-or-nothing and
+				// defaults to allow — deny would break `go mod download`
+				// / `npm install` in the execute phase. Operators harden
+				// with R1_NATIVE_SANDBOX_NET=deny.
+				AllowEgress: sandbox.EgressFromEnv(),
+				DockerImage: sandbox.ImageFromEnv(),
+			}
+			if err := toolRegistry.SetSandbox(pol); err != nil {
+				return RunResult{IsError: true}, fmt.Errorf("sandbox requested (phase %q) but cannot be enforced: %w; set R1_NATIVE_SANDBOX=off to opt out", spec.Phase.Name, err)
+			}
+		}
+	}
+
 	ruleEnforcer := rulesenforcer.NewRepo(spec.WorktreeDir)
 	allDefs := toolRegistry.Definitions()
 
@@ -290,6 +336,31 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		}
 	}
 
+	// Event-sourced transcript (append-only JSONL of the full
+	// conversation). Fail-open exactly like the worker log: an
+	// unopenable path warns and the run proceeds. All writer methods
+	// are nil-receiver safe so downstream wiring stays unconditional.
+	var tw *transcriptWriter
+	if spec.TranscriptPath != "" && os.Getenv(EnvDisableTranscript) != "1" {
+		var twErr error
+		tw, twErr = newTranscriptWriter(spec.TranscriptPath)
+		if twErr != nil {
+			slog.Warn("transcript disabled: open failed", "path", spec.TranscriptPath, "err", twErr)
+			tw = nil
+		} else {
+			defer tw.Close()
+			tw.meta(transcriptMetaFor(spec, n.model, &wlc))
+		}
+	}
+
+	// Shadow-git checkpoints after each successful mutating tool call.
+	// nil when disabled, kill-switched, or the worktree isn't a git
+	// repo — every downstream use is nil-guarded (fail-open).
+	var shadow *shadowCheckpointer
+	if spec.ShadowCheckpoints && os.Getenv(EnvDisableShadowCheckpoint) != "1" {
+		shadow = newShadowCheckpointer(ctx, spec.WorktreeDir, spec.RuntimeDir)
+	}
+
 	// Create the tool handler that bridges tools.Registry → agentloop.ToolHandler
 	// and dispatches any ExtraTool calls to their attached handler.
 	handler := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
@@ -348,6 +419,17 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 				fmt.Fprintln(workerLog, string(b))
 			}
 		}
+		// Shadow checkpoint after each successful mutating tool call.
+		// take() serializes the git window internally (agentloop runs
+		// parallel tool_use blocks in goroutines); a failure is logged
+		// once and never fails the tool call.
+		if err == nil && shadow.eligible(name, writableTools) {
+			if rec, ckErr := shadow.take(ctx, name); ckErr != nil {
+				shadow.warnFailure(ckErr)
+			} else {
+				tw.checkpoint(rec)
+			}
+		}
 		return result, err
 	}
 
@@ -368,6 +450,19 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		MaxConsecutiveErrs: 3,
 		MaxTokens:          16000,
 		SystemPrompt:       systemPrompt,
+		ThinkingBudget:     spec.Phase.ThinkingBudget,
+	}
+
+	// Transcript capture rides the PreTurnHook, which fires with the
+	// full history at the top of every turn — BEFORE compaction, so
+	// entries reflect the raw stream (the wrapped compactor below
+	// records rewrites). The final assistant message is appended after
+	// the last PreTurnHook ever fires; the post-Run flush catches it.
+	if tw != nil {
+		cfg.PreTurnHook = func(_ context.Context, turn int, messages []agentloop.Message) error {
+			tw.appendNew(messages, turn)
+			return nil
+		}
 	}
 
 	// Pre-end-turn build verification (Cline/Aider pattern).
@@ -445,16 +540,6 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		}
 	}
 
-	// Progressive context compaction. When RunSpec.CompactThreshold is
-	// set, hook a cache-preserving compactor into the agentloop so long
-	// tasks don't blow past the context window. The compactor keeps the
-	// first user message (task brief) + the last 6 messages verbatim
-	// and summarizes older tool_results.
-	if compactionEnabled(spec) {
-		cfg.CompactThreshold = spec.CompactThreshold
-		cfg.CompactFn = buildNativeCompactor(6, 200)
-	}
-
 	// Midturn spec-faithfulness supervisor. When RunSpec.Supervisor
 	// is set, install a hook that scans the declared files every N
 	// write_file/edit_file tool calls and pushes a [SUPERVISOR NOTE]
@@ -519,6 +604,29 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		}
 	}
 
+	// Progressive context compaction. When RunSpec.CompactThreshold is
+	// set, hook a cache-preserving compactor into the agentloop so long
+	// tasks don't blow past the context window. Two-tier strategy: the
+	// LLM condenser batches middle-window tool_results into ONE rolling
+	// summary block (preserving objective, files touched, failing tests,
+	// remaining work); on nil provider, R1_DISABLE_LLM_CONDENSER=1, or
+	// any summarization failure/timeout it degrades per call to the
+	// byte-truncation compactor. Both tiers keep the first user message
+	// (task brief) + the last 6 messages verbatim. Wired here — after
+	// the cortex block — so the condenser shares eventBus and its spend
+	// telemetry reaches the same BudgetTracker as the loop's own turns.
+	if compactionEnabled(spec) {
+		cfg.CompactThreshold = spec.CompactThreshold
+		condense := buildLLMCondenser(ctx, p, n.model, eventBus, condenserOptions{})
+		// Record every history rewrite in the transcript — replay would
+		// silently diverge from what the model actually saw otherwise.
+		cfg.CompactFn = func(messages []agentloop.Message, estimatedTokens int) []agentloop.Message {
+			out := condense(messages, estimatedTokens)
+			tw.compaction(out)
+			return out
+		}
+	}
+
 	// Create and configure the loop
 	loop := agentloop.New(p, cfg, toolDefs, handler)
 
@@ -543,6 +651,13 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 
 	// Run the loop
 	result, err := loop.Run(ctx, userMessage)
+
+	// Flush the messages no PreTurnHook ever sees (at minimum the final
+	// assistant turn) and seal the transcript with the stop reason.
+	if result != nil {
+		tw.appendNew(result.Messages, result.Turns)
+		tw.end(result.StopReason)
+	}
 
 	duration := time.Since(start)
 	runResult := RunResult{

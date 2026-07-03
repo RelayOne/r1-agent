@@ -3800,6 +3800,14 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 	_ = os.MkdirAll(workerLogDir, 0o755)
 	workerLogPath := filepath.Join(workerLogDir, fmt.Sprintf("%s-%d.jsonl", taskID, time.Now().UnixNano()))
 
+	// Event-sourced transcript: the full conversation verbatim (the
+	// worker log truncates tool input/result at 4KB), one file per
+	// dispatch, replayable via engine.LoadTranscript. Same dir
+	// conventions and threat class as worker-logs.
+	transcriptDir := filepath.Join(cfg.RepoRoot, ".stoke", "transcripts")
+	_ = os.MkdirAll(transcriptDir, 0o755)
+	transcriptPath := filepath.Join(transcriptDir, fmt.Sprintf("%s-%d.jsonl", taskID, time.Now().UnixNano()))
+
 	// SOW snapshot per session: copy the SOW once into
 	// .stoke/sessions/<sessionID>/sow-snapshot.md and reference it
 	// from every JSONL entry. Gives reviewers (and post-mortem
@@ -3861,7 +3869,12 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 			// re-derive it. Handler records a marker consumed by T3.
 			buildEnvIssueExtraTool(cfg.CurrentSessionID, taskID, cfg.CurrentACID),
 		},
-		WorkerLogPath: workerLogPath,
+		WorkerLogPath:  workerLogPath,
+		TranscriptPath: transcriptPath,
+		// Shadow checkpoints stay opt-in here: sow runs in-place on the
+		// operator's real repository (WorktreeDir = RepoRoot), and
+		// checkpoint refs on that repo are safe but surprising.
+		ShadowCheckpoints: os.Getenv("R1_SOW_SHADOW_CHECKPOINTS") == "1",
 		WorkerLogContext: engine.WorkerLogContext{
 			RunID:      cfg.RunID,
 			SessionID:  sessionID,

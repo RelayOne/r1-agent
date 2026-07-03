@@ -24,9 +24,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RelayOne/r1/internal/codegraph"
 	"github.com/RelayOne/r1/internal/env"
 	"github.com/RelayOne/r1/internal/procutil"
 	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/sandbox"
 )
 
 const (
@@ -62,6 +64,29 @@ type Registry struct {
 	// Nil when no MCP registry has been configured; the tools degrade
 	// gracefully in that case.
 	mcpRegistry MCPToolSearcher
+
+	// Codebase-graph tool state (code_tools.go). The index is built
+	// lazily on first use because codegraph.Build walks the whole
+	// worktree. Guarded by a mutex instead of sync.Once so the
+	// write_file/edit_file success paths can mark it dirty without
+	// racing the first build.
+	codeMu    sync.Mutex
+	code      *codegraph.Index
+	codeErr   error
+	codeBuilt bool
+
+	// onFileWrite, when set, observes every successful write_file /
+	// edit_file with the resolved absolute path, letting embedders
+	// invalidate derived views (e.g. a shared repomap) as the agent
+	// mutates the tree. Set it before dispatch begins (same discipline
+	// as SetEnvironment / SetMCPRegistry).
+	onFileWrite func(absPath string)
+
+	// sbx, when non-nil, wraps every bash tool command in OS-level
+	// containment (see internal/sandbox). Nil preserves the historical
+	// direct-exec path unchanged. Set via SetSandbox.
+	sbx       sandbox.Wrapper
+	sbxPolicy sandbox.Policy
 }
 
 // MCPToolSearcher is the minimal interface the tools package needs from
@@ -110,7 +135,7 @@ func (r *Registry) WorkDir() string { return r.workDir }
 // back the resolved absolute path in their response so the model can
 // verify writes without guessing where they landed.
 func (r *Registry) Definitions() []provider.ToolDef {
-	return []provider.ToolDef{
+	defs := []provider.ToolDef{
 		{
 			Name:        "read_file",
 			Description: "Read contents of a file. Path may be relative to the project working directory (preferred) or absolute (must still be under the working directory). Returns content prefixed with the resolved absolute path plus cat -n formatted lines with 1-indexed line numbers. Call this before edit_file.",
@@ -661,6 +686,17 @@ func (r *Registry) Definitions() []provider.ToolDef {
 			}),
 		},
 	}
+
+	// Codebase-graph navigation tools (code_tools.go). All read-only,
+	// so read-only phase filtering keeps them available. Skipped
+	// entirely under the R1_DISABLE_CODE_TOOLS=1 kill switch (the env
+	// var is the switch because the registry is constructed with only
+	// a workDir — no config plumbing reaches this layer).
+	if !codeToolsDisabled() {
+		defs = append(defs, codeToolDefs()...)
+	}
+
+	return defs
 }
 
 // Handle dispatches a tool call to the appropriate handler.
@@ -756,6 +792,21 @@ func (r *Registry) Handle(ctx context.Context, name string, input json.RawMessag
 		return r.handleBrowserGetHTML(ctx, input)
 	case "browser_close", "BrowserClose":
 		return r.handleBrowserClose(ctx, input)
+	// Codebase-graph navigation tools (read-only; see code_tools.go).
+	case "search_symbols", "SearchSymbols":
+		return r.handleSearchSymbols(input)
+	case "get_call_graph", "GetCallGraph":
+		return r.handleGetCallGraph(input)
+	case "find_symbol_usages", "FindSymbolUsages":
+		return r.handleFindSymbolUsages(input)
+	case "impact_analysis", "ImpactAnalysis":
+		return r.handleImpactAnalysis(input)
+	case "get_dependencies", "GetDependencies":
+		return r.handleGetDependencies(input)
+	case "get_file_symbols", "GetFileSymbols":
+		return r.handleGetFileSymbols(input)
+	case "search_content", "SearchContent":
+		return r.handleSearchContent(input)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
@@ -856,6 +907,7 @@ func (r *Registry) handleEdit(input json.RawMessage) (string, error) {
 	if err := os.WriteFile(path, []byte(result.NewContent), 0644); err != nil { // #nosec G306 -- str_replace tool target (existing source file); 0644 preserves source perms.
 		return "", err
 	}
+	r.noteFileWrite(path)
 
 	rel, _ := filepath.Rel(r.workDir, path)
 	if rel == "" {
@@ -917,6 +969,7 @@ func (r *Registry) handleWrite(input json.RawMessage) (string, error) {
 	if err := os.WriteFile(path, []byte(args.Content), 0644); err != nil { // #nosec G306 -- str_replace tool target (existing source file); 0644 preserves source perms.
 		return "", err
 	}
+	r.noteFileWrite(path)
 
 	// Track as read since we know the content
 	r.readFiles.Store(path, true)
@@ -964,8 +1017,14 @@ func (r *Registry) handleBash(ctx context.Context, input json.RawMessage) (strin
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", args.Command) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
-	cmd.Dir = r.workDir
+	// Layer 2 after the bashBreakerCheck floor: OS-level containment when
+	// a sandbox is wired (nil = historical direct exec, byte-identical).
+	// Fail-closed — a wrapper error aborts here, before the command ever
+	// starts, rather than degrading to an unsandboxed host exec.
+	cmd, err := r.buildBashCmd(ctx, args.Command)
+	if err != nil {
+		return "", err
+	}
 	// Process-group isolation: pnpm (and other build tools) spawn
 	// hundreds of child processes. exec.CommandContext only kills
 	// the immediate child on timeout; grandchildren inherit the

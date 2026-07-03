@@ -232,6 +232,20 @@ func (m *Manager) Cleanup(ctx context.Context, handle Handle) error {
 	delRefCmd.Dir = m.RepoRoot
 	delRefCmd.Run() // best-effort
 
+	// Delete per-tool-use shadow checkpoint refs (ShadowCheckpoint).
+	// Linked worktrees write into the shared ref store, so without this
+	// sweep every checkpointed run pins its dangling commits forever.
+	ckPrefix := checkpointRefDir(handle.Name)
+	listCmd := exec.CommandContext(ctx, m.GitBinary, "for-each-ref", "--format=%(refname)", ckPrefix) // #nosec G204 -- git binary; prefix has fixed r1 prefix + internal handle name.
+	listCmd.Dir = m.RepoRoot
+	if out, err := listCmd.Output(); err == nil {
+		for _, ref := range strings.Fields(string(out)) {
+			delCk := exec.CommandContext(ctx, m.GitBinary, "update-ref", "-d", ref) // #nosec G204 -- git binary; ref comes from git's own for-each-ref output under the r1 prefix.
+			delCk.Dir = m.RepoRoot
+			delCk.Run() // best-effort
+		}
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("cleanup %s: %s", handle.Name, strings.Join(errs, "; "))
 	}

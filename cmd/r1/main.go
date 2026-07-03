@@ -28,6 +28,7 @@ import (
 	"github.com/RelayOne/r1/internal/boulder"
 	"github.com/RelayOne/r1/internal/checkpoint"
 	"github.com/RelayOne/r1/internal/cloud"
+	"github.com/RelayOne/r1/internal/codegraph"
 	r1coderadar "github.com/RelayOne/r1/internal/coderadar"
 	"github.com/RelayOne/r1/internal/config"
 	"github.com/RelayOne/r1/internal/consent"
@@ -71,6 +72,7 @@ import (
 	"github.com/RelayOne/r1/internal/replay"
 	"github.com/RelayOne/r1/internal/repomap"
 	"github.com/RelayOne/r1/internal/report"
+	"github.com/RelayOne/r1/internal/sandbox"
 	scanpkg "github.com/RelayOne/r1/internal/scan"
 	"github.com/RelayOne/r1/internal/scheduler"
 	"github.com/RelayOne/r1/internal/selftune"
@@ -85,6 +87,7 @@ import (
 	"github.com/RelayOne/r1/internal/taskstate"
 	"github.com/RelayOne/r1/internal/telemetry"
 	"github.com/RelayOne/r1/internal/testselect"
+	"github.com/RelayOne/r1/internal/tfidf"
 	"github.com/RelayOne/r1/internal/tui"
 	"github.com/RelayOne/r1/internal/verify"
 	"github.com/RelayOne/r1/internal/websearch"
@@ -120,6 +123,7 @@ type BuildConfig struct {
 	ROIFilter        string // high, medium, low, skip
 	UseSQLite        bool
 	SpecExec         bool    // enable speculative parallel execution
+	SpecExecFull     bool    // best-of-N FULL rollouts: run strategies to completion in isolated worktrees, merge the test-selected winner
 	Governance       bool    // force-enable the V2 governance layer (default on via policy)
 	NoGovernance     bool    // kill-switch: disable the V2 governance layer for this run
 	GovernanceBudget float64 // governance budget in USD (0 = unset; build flow has no budget)
@@ -163,6 +167,46 @@ func emitRunTelemetry(repo, runID string, tel *telemetry.Collector) {
 	} else {
 		fmt.Printf("  Telemetry snapshot: %s\n", path)
 	}
+}
+
+// specRunnerModels returns the runner names speculative rollouts
+// round-robin across, derived from the model router's refactor route so
+// engine diversity follows the same benchmark-backed ordering as normal
+// routing. Only wired execution runners count as available: the claude
+// and codex CLIs always exist, while in native mode the native runner
+// is the only credentialed engine — rollouts pin to it rather than
+// betting on possibly unauthenticated CLI binaries.
+func specRunnerModels(runnerMode string) []string {
+	if runnerMode == "native" {
+		return []string{string(model.ProviderNative)}
+	}
+	avail := func(p model.Provider) bool {
+		return p == model.ProviderClaude || p == model.ProviderCodex
+	}
+	primary := model.Resolve(model.TaskTypeRefactor, avail)
+	models := []string{string(primary)}
+	seen := map[model.Provider]bool{primary: true}
+	for _, fb := range model.Routes[model.TaskTypeRefactor].FallbackChain {
+		if !seen[fb] && avail(fb) {
+			seen[fb] = true
+			models = append(models, string(fb))
+		}
+	}
+	return models
+}
+
+// buildSpecExecSelector returns the provider-backed comparative winner
+// selector for speculative execution, or nil when no provider can be
+// constructed (no native runner / no key) or when the operator sets
+// R1_DISABLE_SPECEXEC_LLM_SELECT=1. A nil Selector keeps winner
+// selection fully deterministic (DefaultScorer / PlanScorer), so
+// offline and CLI-only builds behave exactly as before.
+func buildSpecExecSelector(cfg BuildConfig) specexec.Selector {
+	if strings.TrimSpace(os.Getenv("R1_DISABLE_SPECEXEC_LLM_SELECT")) == "1" {
+		return nil
+	}
+	prov, provModel := buildProseProvider(cfg.RunnerMode, cfg.NativeAPIKey, cfg.NativeBaseURL, cfg.NativeModel)
+	return specexec.NewLLMSelector(prov, provModel)
 }
 
 // runBuild executes a build plan and returns the result.
@@ -418,6 +462,12 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	if repoMapErr != nil {
 		repoMap = nil // non-fatal: agents navigate without map
 	}
+	// Task-text TF-IDF scoring so each task's repomap render leads with the
+	// files that task is about (same corpus as the codebase-graph tools).
+	buildTFIDF, buildTFIDFErr := tfidf.Build(absRepo, codegraph.DefaultExtensions)
+	if buildTFIDFErr != nil {
+		buildTFIDF = nil // non-fatal: repomap falls back to static ranking
+	}
 
 	// Provision execution environment if configured.
 	var buildEnv env.Environment
@@ -476,11 +526,17 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			PolicyPath:          cfg.PolicyPath,
 			Task:                task.Description,
 			TaskType:            task.Type,
+			// Name worktrees by task ID, not description slug: parallel
+			// speculative strategies share a 32-char description prefix,
+			// and slug collisions made Prepare's already-exists recovery
+			// force-delete a sibling strategy's live worktree.
+			WorktreeName:        task.ID,
 			TaskVerification:    task.Verification,
 			AllowedFiles:        task.Files,
 			DryRun:              false,
 			InPlace:             cfg.InPlace,
 			PlanOnly:            task.PlanOnly,
+			SkipMerge:           task.NoMerge,
 			AuthMode:            app.AuthMode(cfg.AuthMode),
 			ClaudeBinary:        cfg.ClaudeBinary,
 			CodexBinary:         cfg.CodexBinary,
@@ -499,6 +555,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			CostTracker:         tracker,
 			TestGraph:           testGraph,
 			RepoMap:             repoMap,
+			TFIDF:               buildTFIDF,
 			EventBus:            eventBus,
 			GovernanceEnabled:   cfg.Governance,
 			GovernanceDisabled:  cfg.NoGovernance,
@@ -533,6 +590,11 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 					fmt.Printf("  \u26a0 %s\n", reminder)
 				}
 			},
+		}
+		// Per-task runner pin (speculative rollouts diversify engines
+		// via plan.Task.Runner). Empty keeps the build-level default.
+		if task.Runner != "" {
+			appCfg.RunnerMode = task.Runner
 		}
 
 		orchestrator, err := app.New(appCfg)
@@ -585,7 +647,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			markTask(p, task.ID, plan.StatusFailed)
 			store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
 			tp, tf, dl := extractVerifyMetrics(result.Verification, result.FilesChanged)
-			return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD, TestsPassed: tp, TestsFailed: tf, DiffLines: dl}
+			return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD, TestsPassed: tp, TestsFailed: tf, DiffLines: dl, PlanOutput: result.PlanOutput, Worktree: result.Handle}
 		}
 
 		ui.TaskComplete(task.ID, true, elapsed, result.TotalCostUSD, attemptNum)
@@ -604,16 +666,40 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		markTask(p, task.ID, plan.StatusDone)
 		store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
 		tp, tf, dl := extractVerifyMetrics(result.Verification, result.FilesChanged)
-		return scheduler.TaskResult{TaskID: task.ID, Success: true, CostUSD: result.TotalCostUSD, TestsPassed: tp, TestsFailed: tf, DiffLines: dl}
+		return scheduler.TaskResult{TaskID: task.ID, Success: true, CostUSD: result.TotalCostUSD, TestsPassed: tp, TestsFailed: tf, DiffLines: dl, PlanOutput: result.PlanOutput, Worktree: result.Handle}
 	}
 
 	// Optionally wrap with speculative parallel execution
-	if cfg.SpecExec {
-		execFn = scheduler.WithSpecExec(execFn, scheduler.SpecExecConfig{
+	if cfg.SpecExec || cfg.SpecExecFull {
+		seCfg := scheduler.SpecExecConfig{
 			Approaches:  specexec.CommonApproaches(),
 			MaxParallel: 3,
 			Timeout:     5 * time.Minute,
-		})
+			Selector:    buildSpecExecSelector(cfg),
+		}
+		// Full-execution rollouts need isolated worktrees; in-place
+		// runs (sow sessions execute directly in RepoRoot) have none,
+		// so they fail closed to plan-only speculation.
+		if cfg.SpecExecFull && !cfg.InPlace {
+			seCfg.FullExecution = true
+			// A full pipeline (plan+execute+verify+review) needs far
+			// more headroom than a plan-only exploration.
+			seCfg.Timeout = 30 * time.Minute
+			seCfg.Tracker = tracker
+			seCfg.MergeWinner = sharedWorktrees.Merge
+			seCfg.DiscardRollout = sharedWorktrees.Cleanup
+			seCfg.Models = specRunnerModels(cfg.RunnerMode)
+			// Rollouts run base() under synthetic spec IDs, so the
+			// executor's markTask above never fires for the real task.
+			// Persist completion under the real ID on merge success —
+			// mirrors lines 666-667 — so a resumed run does not
+			// re-execute an already-merged task.
+			seCfg.OnWinnerMerged = func(taskID string) {
+				markTask(p, taskID, plan.StatusDone)
+				store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
+			}
+		}
+		execFn = scheduler.WithSpecExec(execFn, seCfg)
 	}
 
 	results, err := sched.Run(ctx, p, execFn)
@@ -772,6 +858,15 @@ func attachEventSubscribers(bus *hub.Bus) func() {
 }
 
 func main() {
+	// Hidden re-exec helper for the Landlock sandbox backend
+	// (internal/sandbox): applies the serialized policy to this process
+	// and execs the payload command. Routed before any other
+	// initialization so the child does no logging/telemetry setup, and
+	// fails closed (exit 125, payload never runs) on any error.
+	if len(os.Args) > 1 && os.Args[1] == sandbox.HelperSubcommand {
+		os.Exit(sandbox.RunExecHelper(os.Args[2:], os.Stderr))
+	}
+
 	fatalReporter = r1coderadar.FromEnv("r1")
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -1305,6 +1400,7 @@ func runCmd(args []string) {
 	// Build shared resources for the single-task run.
 	runTracker := costtrack.NewTracker(0, nil)
 	runRepoMap, _ := repomap.Build(absRepo)
+	runTFIDF, _ := tfidf.Build(absRepo, codegraph.DefaultExtensions)
 	runTestGraph, _ := testselect.BuildGraph(absRepo)
 	// Boulder supervisor: now authoritative for stuck-agent detection. Always
 	// enabled so the task is monitored for liveness instead of timed out.
@@ -1352,6 +1448,7 @@ func runCmd(args []string) {
 		LintCommand:     *lintC,
 		CostTracker:     runTracker,
 		RepoMap:         runRepoMap,
+		TFIDF:           runTFIDF,
 		TestGraph:       runTestGraph,
 		RunnerMode:      *runnerMode,
 		NativeAPIKey:    *nativeAPIKey,
@@ -1418,6 +1515,7 @@ func buildCmd(args []string) {
 	useSQLite := fs.Bool("sqlite", false, "Use SQLite session store instead of JSON")
 	interactive := fs.Bool("interactive", false, "Launch interactive Bubble Tea TUI")
 	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution (tries multiple strategies per task)")
+	specExecFull := fs.Bool("specexec-full", false, "Best-of-N full-execution rollouts: run N strategies to completion in isolated worktrees and merge the test-selected winner (N scales with task difficulty and remaining budget)")
 	governance := fs.Bool("governance", false, "Force-enable the V2 governance layer (default on via policy)")
 	noGovernance := fs.Bool("no-governance", false, "Kill-switch: disable the V2 governance layer for this run")
 	cortexEnabled := fs.Bool("cortex", true, "Enable parallel-cognition deterministic lobes (default on; --cortex=false or --no-cortex to disable)")
@@ -1619,12 +1717,14 @@ func buildCmd(args []string) {
 			tuiTracker := costtrack.NewTracker(0, nil)
 			tuiTestGraph, _ := testselect.BuildGraph(absRepo)
 			tuiRepoMap, _ := repomap.Build(absRepo)
+			tuiTFIDF, _ := tfidf.Build(absRepo, codegraph.DefaultExtensions)
 			tuiBoulder := boulder.New(filepath.Join(absRepo, ".stoke", "boulder"), boulder.DefaultConfig())
 			tuiOpts := &buildRunConfigOpts{
 				Boulder:            tuiBoulder,
 				CostTracker:        tuiTracker,
 				TestGraph:          tuiTestGraph,
 				RepoMap:            tuiRepoMap,
+				TFIDF:              tuiTFIDF,
 				GovernanceEnabled:  *governance,
 				GovernanceDisabled: *noGovernance,
 				CortexEnabled:      *cortexEnabled && !*noCortex,
@@ -1712,6 +1812,7 @@ func buildCmd(args []string) {
 		ROIFilter:       *roiFilter,
 		UseSQLite:       *useSQLite,
 		SpecExec:        *specExec,
+		SpecExecFull:    *specExecFull,
 		Governance:      *governance,
 		NoGovernance:    *noGovernance,
 		CortexEnabled:   *cortexEnabled && !*noCortex,
@@ -1939,6 +2040,7 @@ func sowCmd(args []string) {
 	reviewerAPIKeyFlag := fs.String("reviewer-api-key", "", "Reviewer API key. Overrides REVIEWER_API_KEY env.")
 	roiFilter := fs.String("roi", "medium", "ROI threshold: high, medium, low, skip")
 	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution")
+	specExecFull := fs.Bool("specexec-full", false, "Best-of-N full-execution rollouts (accepted for parity; sow sessions run in-place, which fails closed to plan-only speculation)")
 	governance := fs.Bool("governance", false, "Force-enable the V2 governance layer (default on via policy)")
 	noGovernance := fs.Bool("no-governance", false, "Kill-switch: disable the V2 governance layer for this run")
 	// Governance tier + HITL wait ceiling (audit A032). Enterprise tier
@@ -3726,6 +3828,7 @@ func sowCmd(args []string) {
 			LintCommand:      *lintC,
 			ROIFilter:        *roiFilter,
 			SpecExec:         *specExec,
+			SpecExecFull:     *specExecFull,
 			Governance:       *governance,
 			NoGovernance:     *noGovernance,
 			GovernanceBudget: *costBudget,
@@ -6861,6 +6964,7 @@ type buildRunConfigOpts struct {
 	CostTracker         *costtrack.Tracker
 	TestGraph           *testselect.Graph
 	RepoMap             *repomap.RepoMap
+	TFIDF               *tfidf.Index
 	EventBus            *hub.Bus
 	GovernanceEnabled   bool
 	GovernanceDisabled  bool
@@ -6912,6 +7016,7 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		cfg.CostTracker = opts.CostTracker
 		cfg.TestGraph = opts.TestGraph
 		cfg.RepoMap = opts.RepoMap
+		cfg.TFIDF = opts.TFIDF
 		cfg.EventBus = opts.EventBus
 		cfg.GovernanceEnabled = opts.GovernanceEnabled
 		cfg.GovernanceDisabled = opts.GovernanceDisabled
@@ -7443,6 +7548,8 @@ SOW FLAGS:
     --cost-budget <usd>     Total cost budget across the SOW run, halts when
                             exceeded (default: 0 = unlimited)
     --specexec              Enable speculative parallel execution (4 strategies)
+    --specexec-full         Best-of-N full rollouts: strategies run to completion in
+                            isolated worktrees; the test-selected winner merges
     --roi <level>           ROI filter: high | medium | low | skip (default: medium)
 
   Safety:

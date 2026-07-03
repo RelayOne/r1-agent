@@ -159,11 +159,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Wrap writes in a per-handler mutex so the daemon's bus
 	// subscriber (which fires from a hub goroutine) and our
-	// handler-side write don't interleave a record.
+	// handler-side write don't interleave a record. The closed flag
+	// makes teardown safe: cancel() does not join an in-flight
+	// Publish, so without it a subscriber callback could still be
+	// writing/flushing while net/http finishes the request — a data
+	// race on the response's buffered writer.
 	var writeMu sync.Mutex
+	closed := false
 	writeRecord := func(ev *jsonrpc.SubscriptionEvent) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
+		if closed {
+			return context.Canceled
+		}
 		return writeSSEEvent(w, flusher, ev)
 	}
 
@@ -187,7 +195,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	defer cancel()
+	// Teardown order matters: cancel stops NEW publishes, then taking
+	// writeMu blocks until any in-flight write drains, and the closed
+	// flag turns every later callback into a no-op — only then may
+	// ServeHTTP return and net/http touch the response writer again.
+	defer func() {
+		cancel()
+		writeMu.Lock()
+		closed = true
+		writeMu.Unlock()
+	}()
 
 	// Block until the client disconnects. The Subscribe-supplied
 	// cancel tears down the subscription; the request context's Done

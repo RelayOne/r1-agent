@@ -134,6 +134,13 @@ type PhaseSpec struct {
 	// today buys optionality when probabilistic / neuromorphic
 	// substrates become available without forcing a codebase sweep.
 	Affinity ComputeAffinity
+
+	// ThinkingBudget enables extended thinking in the native runner's
+	// agentloop. 0 = disabled. The value is a hint: adaptive-thinking
+	// models get {"type":"adaptive"} while legacy models get it as
+	// budget_tokens (which counts against the loop's per-turn
+	// MaxTokens). CLI-subprocess runners ignore it.
+	ThinkingBudget int
 }
 
 // PreparedCommand holds the fully resolved binary, arguments, environment, and working directory for an engine invocation.
@@ -267,6 +274,33 @@ type RunSpec struct {
 	// parse directory structure or cross-reference timestamps. All
 	// fields are optional; empty values are omitted from the JSONL.
 	WorkerLogContext WorkerLogContext
+
+	// TranscriptPath, when set, is an absolute file path the native
+	// runner appends an event-sourced JSONL transcript to: every
+	// conversation message verbatim (no truncation, unlike the worker
+	// log's 4KB cap), compaction rewrites, shadow checkpoint markers,
+	// and the final stop reason. This is the lossless replay/resume
+	// source; LoadTranscript reconstructs the agentloop history from
+	// it. Fail-open like WorkerLogPath: an unopenable path logs a
+	// warning and the run proceeds without a transcript. Kill switch:
+	// R1_DISABLE_TRANSCRIPT=1. Subprocess-backed runners ignore this
+	// field (the CLI owns its own session transcript).
+	//
+	// Prompt bodies land verbatim in message entries — same threat
+	// class as the worker log; keep transcript dirs harness-owned.
+	TranscriptPath string
+
+	// ShadowCheckpoints, when true AND WorktreeDir is a git repository,
+	// makes the native runner capture a shadow-git checkpoint (dangling
+	// commit under refs/r1-checkpoints/<dir-base>/<seq>, HEAD and the
+	// agent's index untouched) after each successful write-capable tool
+	// call (edit_file / write_file / bash / mcp_*). Each checkpoint is
+	// recorded in the transcript when TranscriptPath is set, giving a
+	// rewindable timeline: worktree.RestoreFiles(sha) +
+	// TruncateTranscriptToCheckpoint(seq) rewind files and conversation
+	// together. Fail-open (a checkpoint failure never fails the tool
+	// call). Kill switch: R1_DISABLE_SHADOW_CHECKPOINT=1.
+	ShadowCheckpoints bool
 
 	// ExtraPreEndTurnCheck is an optional caller-supplied PreEndTurnCheckFn
 	// chained AFTER the native runner's built-in build-verification check.

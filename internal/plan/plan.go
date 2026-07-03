@@ -31,6 +31,13 @@ type Task struct {
 	Commit       string   `json:"commit,omitempty"`
 	PlanOnly     bool     `json:"plan_only,omitempty"` // when true, workflow runs plan phase only (no execute/verify/merge)
 
+	// NoMerge executes + verifies in an isolated worktree but leaves it
+	// unmerged; the caller owns merge/discard of the returned handle.
+	// Set by best-of-N speculative rollouts so only the winner merges.
+	NoMerge bool `json:"no_merge,omitempty"`
+	// Runner overrides the build-level runner mode for this task
+	// ("claude"|"codex"|"native"|"hybrid"). Empty = build default.
+	Runner string `json:"runner,omitempty"`
 }
 
 // Status represents the lifecycle state of a task (pending, active, verifying, done, failed, or blocked).

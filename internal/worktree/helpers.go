@@ -150,6 +150,32 @@ func DiffSummary(ctx context.Context, handle Handle) string {
 	return strings.Join(parts, "\n")
 }
 
+// DiffText returns the unified diff of the worktree's current tree
+// against its BaseCommit, truncated to maxBytes (0 = uncapped). Unlike
+// DiffSummary (--stat) it returns actual patch hunks, which comparative
+// judges need. Best-effort: returns "" on any git failure.
+func DiffText(ctx context.Context, handle Handle, maxBytes int) string {
+	base := handle.BaseCommit
+	if base == "" {
+		base = gitHEAD
+	}
+	git := handle.GitBinary
+	if git == "" {
+		git = "git"
+	}
+	cmd := exec.CommandContext(ctx, git, "diff", base) // #nosec G204 -- git binary with Stoke-generated args (BaseCommit captured at worktree creation) not external input.
+	cmd.Dir = handle.Path
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	s := string(out)
+	if maxBytes > 0 && len(s) > maxBytes {
+		s = s[:maxBytes] + "\n... (truncated)"
+	}
+	return s
+}
+
 // ScopeCheck verifies that all modified files fall within the allowed set.
 func ScopeCheck(files []string, allowed []string) []string {
 	if len(allowed) == 0 {

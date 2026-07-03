@@ -16,11 +16,15 @@ import (
 type mockProvider struct {
 	responses []*provider.ChatResponse
 	callIdx   int
+	// requests captures every ChatRequest so tests can assert on the
+	// wire-bound payload (thinking spec, replayed history, ...).
+	requests []provider.ChatRequest
 }
 
 func (m *mockProvider) Name() string { return "mock" }
 
 func (m *mockProvider) Chat(req provider.ChatRequest) (*provider.ChatResponse, error) {
+	m.requests = append(m.requests, req)
 	if m.callIdx >= len(m.responses) {
 		return &provider.ChatResponse{StopReason: "end_turn"}, nil
 	}
