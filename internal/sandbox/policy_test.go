@@ -152,7 +152,7 @@ func TestWorktreeGitDirs(t *testing.T) {
 		}
 	})
 
-	t.Run("linked worktree resolves gitdir and common dir", func(t *testing.T) {
+	t.Run("linked worktree write grant excludes config and hooks", func(t *testing.T) {
 		parent := t.TempDir()
 		commonDir := filepath.Join(parent, ".git")
 		gitDir := filepath.Join(commonDir, "worktrees", "wt1")
@@ -172,11 +172,41 @@ func TestWorktreeGitDirs(t *testing.T) {
 		for _, p := range got {
 			gotSet[p] = true
 		}
+		// The per-worktree gitdir (HEAD/index/logs; no config/hooks) is writable.
 		if !gotSet[gitDir] {
 			t.Errorf("missing worktree gitdir %q in %v", gitDir, got)
 		}
-		if !gotSet[commonDir] {
-			t.Errorf("missing common dir %q in %v", commonDir, got)
+		// The write-bearing common subtrees are writable.
+		for _, sub := range []string{"objects", "refs", "logs"} {
+			p := filepath.Join(commonDir, sub)
+			if !gotSet[p] {
+				t.Errorf("missing writable common subtree %q in %v", p, got)
+			}
+		}
+		// SECURITY: the common dir root, config, and hooks must NOT be writable
+		// — otherwise a sandboxed command plants a host-git escape.
+		if gotSet[commonDir] {
+			t.Errorf("common dir root %q must NOT be in the write grant (exposes config+hooks): %v", commonDir, got)
+		}
+		for _, p := range got {
+			base := filepath.Base(p)
+			if base == "config" || base == "hooks" {
+				t.Errorf("write grant leaks %q (%s) — sandbox escape via host git", p, base)
+			}
+			// No granted path may BE the common dir or its config/hooks children.
+			if p == filepath.Join(commonDir, "config") || p == filepath.Join(commonDir, "hooks") {
+				t.Errorf("write grant includes forbidden %q", p)
+			}
+		}
+
+		// The common dir must be READABLE (git needs config/packed-refs) via
+		// the read helper, but not writable.
+		readSet := map[string]bool{}
+		for _, p := range WorktreeGitReadDirs(work) {
+			readSet[p] = true
+		}
+		if !readSet[commonDir] {
+			t.Errorf("WorktreeGitReadDirs missing common dir %q (git can't read config): %v", commonDir, WorktreeGitReadDirs(work))
 		}
 	})
 
@@ -191,13 +221,25 @@ func TestWorktreeGitDirs(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(work, ".git"), []byte("gitdir: "+gitDir), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		got := WorktreeGitDirs(work)
-		gotSet := map[string]bool{}
-		for _, p := range got {
-			gotSet[p] = true
+		// The structural fallback still resolves the common dir for READ,
+		// and its write-bearing subtrees for WRITE — but never the root.
+		if got := WorktreeGitDirs(work); containsPath(got, commonDir) {
+			t.Errorf("structural fallback leaked common dir root into write grant: %v", got)
 		}
-		if !gotSet[commonDir] {
-			t.Errorf("structural fallback missing common dir %q in %v", commonDir, got)
+		if !containsPath(WorktreeGitDirs(work), filepath.Join(commonDir, "objects")) {
+			t.Errorf("structural fallback missing writable objects subtree in %v", WorktreeGitDirs(work))
+		}
+		if !containsPath(WorktreeGitReadDirs(work), commonDir) {
+			t.Errorf("structural fallback missing common dir in read grant: %v", WorktreeGitReadDirs(work))
 		}
 	})
+}
+
+func containsPath(paths []string, want string) bool {
+	for _, p := range paths {
+		if p == want {
+			return true
+		}
+	}
+	return false
 }

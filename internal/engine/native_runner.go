@@ -153,15 +153,19 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		} else {
 			home, _ := os.UserHomeDir()
 			// A linked worktree's real .git lives OUTSIDE the worktree
-			// (the parent repo's common dir). Grant it write access so
-			// `git` works inside the sandbox — otherwise git status/commit
-			// fail closed. Nil for a normal checkout (its .git is already
-			// under the worktree AllowWrite grant).
+			// (the parent repo's common dir). Grant WRITE only to its
+			// object/ref/log subtrees so git can commit — NOT to config or
+			// hooks (that would let a sandboxed command plant a host-git
+			// escape). Grant READ to the common dir so git can still read
+			// config/packed-refs. Both nil for a normal checkout (its .git
+			// is already under the worktree AllowWrite grant).
 			allowWrite := append([]string(nil), spec.SandboxAllowWrite...)
 			allowWrite = append(allowWrite, sandbox.WorktreeGitDirs(spec.WorktreeDir)...)
+			allowRead := append([]string(nil), spec.SandboxAllowRead...)
+			allowRead = append(allowRead, sandbox.WorktreeGitReadDirs(spec.WorktreeDir)...)
 			pol := sandbox.Policy{
 				Mode:       mode,
-				AllowRead:  spec.SandboxAllowRead,
+				AllowRead:  allowRead,
 				AllowWrite: allowWrite,
 				DenyRead: append(sandbox.DefaultDenyRead(home),
 					sandbox.WorkDirDenyRead(spec.WorktreeDir)...),

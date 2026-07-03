@@ -218,51 +218,95 @@ func WorkDirDenyRead(workDir string) []string {
 // (the "common dir") which is OUTSIDE the worktree tree — so without these
 // grants `git status`/`git commit` fail closed inside the sandbox.
 //
-// Returns the per-worktree gitdir AND the common dir (both need to be
-// writable: git writes HEAD/index/logs under the worktree gitdir and objects
-// under the common dir). Returns nil for a normal checkout (`.git` is a
-// directory already under workDir, hence already covered by the AllowWrite
-// worktree grant) or when workDir has no `.git` at all. Pure file parsing —
-// no `git` subprocess, so it works offline and with no git installed.
+// SECURITY: the write grant is deliberately NARROW. It returns the
+// per-worktree gitdir (HEAD/index/logs — no config or hooks live there)
+// plus only the common dir's object/ref/log subtrees
+// (objects/, refs/, logs/) — NOT the common dir itself. Granting the whole
+// common dir writable would expose <common>/config and <common>/hooks/,
+// which a sandboxed command could rewrite (core.fsmonitor / core.hooksPath /
+// a pre-commit hook) to get the HOST git — shadow checkpoints, worktree
+// cleanup, the final merge — to execute attacker code OUTSIDE the sandbox.
+// With this narrowing, normal commits (loose objects, ref updates, reflog)
+// work while config/hooks stay read-only (readable via WorktreeGitReadDirs
+// / the bwrap RO baseline, but not writable). `git config -w` / gc's
+// packed-refs rewrite fail closed — acceptable for a sandbox; the harness
+// commits on the host anyway.
+//
+// Returns nil for a normal checkout (`.git` is a directory already under
+// workDir, hence already covered by the AllowWrite worktree grant) or when
+// workDir has no `.git` at all. Pure file parsing — no `git` subprocess.
 func WorktreeGitDirs(workDir string) []string {
-	if workDir == "" {
+	gitDir, commonDir, ok := worktreeGitLayout(workDir)
+	if !ok {
 		return nil
+	}
+	out := []string{gitDir}
+	if commonDir != "" && commonDir != gitDir {
+		// Only the write-bearing subtrees, NOT the common dir root (which
+		// holds config + hooks). git creates loose objects, refs, and
+		// reflogs under these on a normal commit.
+		for _, sub := range []string{"objects", "refs", "logs"} {
+			out = append(out, filepath.Join(commonDir, sub))
+		}
+	}
+	return out
+}
+
+// WorktreeGitReadDirs returns the git dirs that must be READABLE (but not
+// writable) inside the sandbox so git can read config, packed-refs, and the
+// object/ref stores it isn't writing. Load-bearing for the Landlock backend
+// (a strict allow-list — without this the common dir is unreadable and even
+// `git status` fails); harmless for bwrap, whose baseline already RO-binds
+// the whole host fs. Pairs with WorktreeGitDirs (the write grant): together
+// they let git read config/hooks but never write them.
+func WorktreeGitReadDirs(workDir string) []string {
+	gitDir, commonDir, ok := worktreeGitLayout(workDir)
+	if !ok {
+		return nil
+	}
+	out := []string{gitDir}
+	if commonDir != "" && commonDir != gitDir {
+		out = append(out, commonDir)
+	}
+	return out
+}
+
+// worktreeGitLayout resolves a linked worktree's per-worktree gitdir and its
+// shared common dir from the `.git` gitdir-file, with no `git` subprocess.
+// ok is false for a normal checkout (`.git` is a real directory) or a
+// workspace with no `.git`.
+func worktreeGitLayout(workDir string) (gitDir, commonDir string, ok bool) {
+	if workDir == "" {
+		return "", "", false
 	}
 	dotGit := filepath.Join(workDir, ".git")
 	info, err := os.Lstat(dotGit)
-	if err != nil {
-		return nil
-	}
-	if info.IsDir() {
-		// Normal checkout: the object store is under workDir/.git, already
-		// inside the worktree AllowWrite grant. Nothing extra to add.
-		return nil
+	if err != nil || info.IsDir() {
+		return "", "", false
 	}
 	// Linked worktree: `.git` is a file "gitdir: <path>".
 	data, err := os.ReadFile(dotGit)
 	if err != nil {
-		return nil
+		return "", "", false
 	}
 	line := strings.TrimSpace(string(data))
 	const prefix = "gitdir:"
 	if !strings.HasPrefix(line, prefix) {
-		return nil
+		return "", "", false
 	}
-	gitDir := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	gitDir = strings.TrimSpace(strings.TrimPrefix(line, prefix))
 	if gitDir == "" {
-		return nil
+		return "", "", false
 	}
 	if !filepath.IsAbs(gitDir) {
 		gitDir = filepath.Join(workDir, gitDir)
 	}
 	gitDir = filepath.Clean(gitDir)
-	out := []string{gitDir}
 
 	// Resolve the common dir. Prefer the authoritative `commondir` file the
 	// worktree gitdir carries (usually "../.." relative to gitDir); fall
 	// back to the structural default <parent>/.git = dirname(dirname(gitDir))
 	// (gitDir is <parent>/.git/worktrees/<name>).
-	commonDir := ""
 	if cd, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
 		rel := strings.TrimSpace(string(cd))
 		if rel != "" {
@@ -276,10 +320,7 @@ func WorktreeGitDirs(workDir string) []string {
 	if commonDir == "" {
 		commonDir = filepath.Dir(filepath.Dir(gitDir))
 	}
-	if commonDir != "" && commonDir != gitDir {
-		out = append(out, commonDir)
-	}
-	return out
+	return gitDir, commonDir, true
 }
 
 // DefaultWriteCaches returns the toolchain cache paths kept writable so
