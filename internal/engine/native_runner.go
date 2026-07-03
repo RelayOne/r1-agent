@@ -74,6 +74,13 @@ type NativeRunner struct {
 	WisdomStore wisdom.Recorder
 }
 
+// detachCtx returns a context that preserves ctx's values but drops its
+// cancellation/deadline, so teardown work (the final shadow-checkpoint
+// flush) still runs after the run ctx has been cancelled or has timed out.
+func detachCtx(ctx context.Context) context.Context {
+	return context.WithoutCancel(ctx)
+}
+
 // NewNativeRunner creates a native runner using the Anthropic API directly.
 func NewNativeRunner(apiKey, model string) *NativeRunner {
 	return &NativeRunner{
@@ -695,7 +702,13 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		tw.appendNew(result.Messages, result.Turns)
 		// The final turn has no subsequent PreTurnHook — flush its
 		// checkpoint here so a last-turn mutation is still rewindable.
-		flushCheckpoint(ctx)
+		// Detach from the run ctx: on the cancel/timeout return path that
+		// ctx is already dead, and shadow.flush runs git under it, so the
+		// last-turn checkpoint would silently fail exactly when a rewind
+		// target matters most. Bound it so a wedged git can't hang teardown.
+		flushCtx, cancelFlush := context.WithTimeout(detachCtx(ctx), 30*time.Second)
+		flushCheckpoint(flushCtx)
+		cancelFlush()
 		tw.end(result.StopReason)
 	}
 
