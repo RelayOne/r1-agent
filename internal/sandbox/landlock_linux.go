@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -76,16 +77,37 @@ func landlockFileAccess(abi int) uint64 {
 // per-user config on every invocation and hard-fail styles vary).
 //
 // /run is deliberately NOT granted wholesale: it holds daemon control
-// sockets (/run/docker.sock, /run/containerd/*, …) whose reachability is a
-// full host escape, and Landlock's allow-list is the only lever here — the
-// DenyRead socket mask (bwrap-only) does not apply to this backend. Instead
-// only the narrow DNS-resolver runtime path is granted so name resolution
-// keeps working when egress is allowed and /etc/resolv.conf symlinks into
-// /run. Anything under /run not listed here is unreadable by construction.
+// sockets (/run/docker.sock, /run/containerd/*, …). Note this read-list
+// narrowing does NOT by itself contain those sockets — Landlock cannot block
+// connect() to an AF_UNIX socket regardless of the read allow-list, so
+// reachability is handled by failing closed in landlockWrapper.Available
+// under egress-deny. The narrowing here is only to avoid gratuitously
+// exposing /run contents. The DNS-resolver runtime paths ARE granted so name
+// resolution keeps working when egress is allowed and /etc/resolv.conf
+// symlinks into /run — resolvDir() also appends the real resolv.conf target
+// so non-systemd-resolved hosts (NetworkManager, resolvconf) don't lose DNS.
 var landlockROPaths = []string{
 	"/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64",
 	"/etc", "/opt", "/var", "/proc", "/sys", "/dev",
-	"/run/systemd/resolve", // resolv.conf stub target; NOT the daemon sockets under /run
+	"/run/systemd/resolve", // systemd-resolved stub target
+	"/run/NetworkManager",  // NetworkManager-managed resolv.conf
+	"/run/resolvconf",      // resolvconf-managed resolv.conf
+}
+
+// resolvDir returns the directory holding the real /etc/resolv.conf target
+// when it resolves (via symlink) under /run, so the Landlock RO allow-list
+// covers it regardless of which resolver manages the host. Empty when
+// resolv.conf is a plain file under /etc (already covered by the /etc grant)
+// or cannot be resolved.
+func resolvDir() string {
+	real, err := filepath.EvalSymlinks("/etc/resolv.conf")
+	if err != nil {
+		return ""
+	}
+	if strings.HasPrefix(real, "/run/") {
+		return filepath.Dir(real)
+	}
+	return ""
 }
 
 // landlockRWPaths is the baseline write allow-list beyond the policy's
@@ -127,6 +149,9 @@ func applyLandlock(p Policy) error {
 	rwAccess := landlockFSMask(abi)
 
 	roPaths := append([]string(nil), landlockROPaths...)
+	if rd := resolvDir(); rd != "" {
+		roPaths = append(roPaths, rd) // real /etc/resolv.conf target under /run
+	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		roPaths = append(roPaths,
 			filepath.Join(home, ".gitconfig"),

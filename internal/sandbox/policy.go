@@ -27,6 +27,7 @@
 package sandbox
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,14 +154,18 @@ func ImageFromEnv() string {
 // sandboxed commands. These are AF_UNIX endpoints, and egress denial
 // (--unshare-net for bwrap, Landlock's TCP-only net restriction) does NOT
 // cover unix sockets — so a reachable /run/docker.sock is a full host
-// escape regardless of the network posture. The bwrap backend masks each
-// (tmpfs over a dir, /dev/null over a socket file); the Landlock backend
-// cannot rely on this list (it is allow-list-only) and instead keeps these
-// paths out of its read baseline (see landlockROPaths / the narrowed /run
-// grant). Paths are absolute and $HOME-independent, so they are masked even
-// when home is unknown.
+// escape regardless of the network posture.
+//
+// The bwrap backend genuinely masks each (tmpfs over a dir, /dev/null over a
+// socket file), so connect() to it fails. The Landlock backend CANNOT: it
+// does not mediate connect()/bind() on AF_UNIX pathname sockets at all
+// (landlock(7) limitation), and keeping a path out of the read allow-list
+// does nothing to stop connect() to it. The Landlock wrapper therefore fails
+// closed when a reachable daemon socket exists under egress-deny rather than
+// pretend to contain it (see landlockWrapper.Available). Paths are absolute
+// and $HOME-independent, so they are masked even when home is unknown.
 func DefaultDenySockets() []string {
-	return []string{
+	out := []string{
 		"/run/docker.sock",
 		"/var/run/docker.sock",
 		"/run/containerd",     // dir: containerd.sock + .ttrpc live here
@@ -170,6 +175,37 @@ func DefaultDenySockets() []string {
 		"/run/dbus/system_bus_socket",
 		"/run/systemd/private",
 	}
+	// Rootless docker/podman expose their daemon socket under the caller's
+	// XDG runtime dir, /run/user/<uid>/ — just as much a full escape as the
+	// rootful socket, and previously unmasked.
+	if uid := os.Getuid(); uid >= 0 {
+		base := fmt.Sprintf("/run/user/%d", uid)
+		out = append(out,
+			filepath.Join(base, "docker.sock"),
+			filepath.Join(base, "podman", "podman.sock"),
+			filepath.Join(base, "bus"), // rootless dbus session bus
+		)
+	}
+	return out
+}
+
+// ReachableDaemonSocket returns the first well-known daemon control socket
+// that exists on the host as a socket (or the containerd/podman dir that
+// holds one), or "" if none is present. Used by the Landlock backend to fail
+// closed under egress-deny — Landlock cannot block connect() to it, so its
+// mere presence defeats containment.
+func ReachableDaemonSocket() string {
+	for _, p := range DefaultDenySockets() {
+		fi, err := os.Lstat(p)
+		if err != nil {
+			continue
+		}
+		// A socket file, or a dir that plausibly holds a daemon socket.
+		if fi.Mode()&os.ModeSocket != 0 || fi.IsDir() {
+			return p
+		}
+	}
+	return ""
 }
 
 // DefaultDenyRead returns the credential paths (and daemon sockets) masked
@@ -218,51 +254,95 @@ func WorkDirDenyRead(workDir string) []string {
 // (the "common dir") which is OUTSIDE the worktree tree — so without these
 // grants `git status`/`git commit` fail closed inside the sandbox.
 //
-// Returns the per-worktree gitdir AND the common dir (both need to be
-// writable: git writes HEAD/index/logs under the worktree gitdir and objects
-// under the common dir). Returns nil for a normal checkout (`.git` is a
-// directory already under workDir, hence already covered by the AllowWrite
-// worktree grant) or when workDir has no `.git` at all. Pure file parsing —
-// no `git` subprocess, so it works offline and with no git installed.
+// SECURITY: the write grant is deliberately NARROW. It returns the
+// per-worktree gitdir (HEAD/index/logs — no config or hooks live there)
+// plus only the common dir's object/ref/log subtrees
+// (objects/, refs/, logs/) — NOT the common dir itself. Granting the whole
+// common dir writable would expose <common>/config and <common>/hooks/,
+// which a sandboxed command could rewrite (core.fsmonitor / core.hooksPath /
+// a pre-commit hook) to get the HOST git — shadow checkpoints, worktree
+// cleanup, the final merge — to execute attacker code OUTSIDE the sandbox.
+// With this narrowing, normal commits (loose objects, ref updates, reflog)
+// work while config/hooks stay read-only (readable via WorktreeGitReadDirs
+// / the bwrap RO baseline, but not writable). `git config -w` / gc's
+// packed-refs rewrite fail closed — acceptable for a sandbox; the harness
+// commits on the host anyway.
+//
+// Returns nil for a normal checkout (`.git` is a directory already under
+// workDir, hence already covered by the AllowWrite worktree grant) or when
+// workDir has no `.git` at all. Pure file parsing — no `git` subprocess.
 func WorktreeGitDirs(workDir string) []string {
-	if workDir == "" {
+	gitDir, commonDir, ok := worktreeGitLayout(workDir)
+	if !ok {
 		return nil
+	}
+	out := []string{gitDir}
+	if commonDir != "" && commonDir != gitDir {
+		// Only the write-bearing subtrees, NOT the common dir root (which
+		// holds config + hooks). git creates loose objects, refs, and
+		// reflogs under these on a normal commit.
+		for _, sub := range []string{"objects", "refs", "logs"} {
+			out = append(out, filepath.Join(commonDir, sub))
+		}
+	}
+	return out
+}
+
+// WorktreeGitReadDirs returns the git dirs that must be READABLE (but not
+// writable) inside the sandbox so git can read config, packed-refs, and the
+// object/ref stores it isn't writing. Load-bearing for the Landlock backend
+// (a strict allow-list — without this the common dir is unreadable and even
+// `git status` fails); harmless for bwrap, whose baseline already RO-binds
+// the whole host fs. Pairs with WorktreeGitDirs (the write grant): together
+// they let git read config/hooks but never write them.
+func WorktreeGitReadDirs(workDir string) []string {
+	gitDir, commonDir, ok := worktreeGitLayout(workDir)
+	if !ok {
+		return nil
+	}
+	out := []string{gitDir}
+	if commonDir != "" && commonDir != gitDir {
+		out = append(out, commonDir)
+	}
+	return out
+}
+
+// worktreeGitLayout resolves a linked worktree's per-worktree gitdir and its
+// shared common dir from the `.git` gitdir-file, with no `git` subprocess.
+// ok is false for a normal checkout (`.git` is a real directory) or a
+// workspace with no `.git`.
+func worktreeGitLayout(workDir string) (gitDir, commonDir string, ok bool) {
+	if workDir == "" {
+		return "", "", false
 	}
 	dotGit := filepath.Join(workDir, ".git")
 	info, err := os.Lstat(dotGit)
-	if err != nil {
-		return nil
-	}
-	if info.IsDir() {
-		// Normal checkout: the object store is under workDir/.git, already
-		// inside the worktree AllowWrite grant. Nothing extra to add.
-		return nil
+	if err != nil || info.IsDir() {
+		return "", "", false
 	}
 	// Linked worktree: `.git` is a file "gitdir: <path>".
 	data, err := os.ReadFile(dotGit)
 	if err != nil {
-		return nil
+		return "", "", false
 	}
 	line := strings.TrimSpace(string(data))
 	const prefix = "gitdir:"
 	if !strings.HasPrefix(line, prefix) {
-		return nil
+		return "", "", false
 	}
-	gitDir := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	gitDir = strings.TrimSpace(strings.TrimPrefix(line, prefix))
 	if gitDir == "" {
-		return nil
+		return "", "", false
 	}
 	if !filepath.IsAbs(gitDir) {
 		gitDir = filepath.Join(workDir, gitDir)
 	}
 	gitDir = filepath.Clean(gitDir)
-	out := []string{gitDir}
 
 	// Resolve the common dir. Prefer the authoritative `commondir` file the
 	// worktree gitdir carries (usually "../.." relative to gitDir); fall
 	// back to the structural default <parent>/.git = dirname(dirname(gitDir))
 	// (gitDir is <parent>/.git/worktrees/<name>).
-	commonDir := ""
 	if cd, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
 		rel := strings.TrimSpace(string(cd))
 		if rel != "" {
@@ -276,10 +356,7 @@ func WorktreeGitDirs(workDir string) []string {
 	if commonDir == "" {
 		commonDir = filepath.Dir(filepath.Dir(gitDir))
 	}
-	if commonDir != "" && commonDir != gitDir {
-		out = append(out, commonDir)
-	}
-	return out
+	return gitDir, commonDir, true
 }
 
 // DefaultWriteCaches returns the toolchain cache paths kept writable so

@@ -28,6 +28,10 @@ type landlockWrapper struct{}
 // probe lives in landlock_linux.go; non-Linux builds stub it to 0.
 var landlockABIProbe = probeLandlockABI
 
+// reachableDaemonSocket is a seam so tests can simulate a host with (or
+// without) a reachable daemon control socket without touching the real /run.
+var reachableDaemonSocket = ReachableDaemonSocket
+
 // landlockHelperProbeTimeout bounds the re-exec routing self-test in
 // Available. The probe just re-execs this binary and expects an immediate
 // exit(0); a couple of seconds is generous even on a loaded host.
@@ -65,6 +69,19 @@ func (l *landlockWrapper) Available(p Policy) error {
 	}
 	if !p.AllowEgress && abi < 4 {
 		return fmt.Errorf("landlock ABI %d cannot restrict egress (need >= 4); refusing to enforce a weaker policy than requested", abi)
+	}
+	// Landlock does not mediate connect()/bind() on AF_UNIX pathname sockets
+	// (landlock(7)), so a reachable daemon control socket (docker/podman/…)
+	// is a full host escape it CANNOT close — unlike bwrap, which /dev/null-
+	// masks it. When the operator asked for containment (egress denied),
+	// fail closed rather than hand back false assurance; bwrap is the backend
+	// that actually contains this.
+	if !p.AllowEgress {
+		if sock := reachableDaemonSocket(); sock != "" {
+			return fmt.Errorf("landlock cannot contain the reachable daemon socket %s "+
+				"(it does not mediate AF_UNIX connect); use the bwrap backend "+
+				"(R1_NATIVE_SANDBOX=bwrap), which masks it", sock)
+		}
 	}
 	if _, err := os.Executable(); err != nil {
 		return fmt.Errorf("cannot resolve own executable for re-exec helper: %w", err)

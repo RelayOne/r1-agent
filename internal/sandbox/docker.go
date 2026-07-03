@@ -8,7 +8,27 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
+
+// dockerRootless reports whether the active docker/podman endpoint is
+// rootless (daemon in the caller's user namespace). Seam for tests. Cheap:
+// inspects DOCKER_HOST and the well-known rootless socket path — no exec.
+var dockerRootless = func() bool {
+	if dh := os.Getenv("DOCKER_HOST"); dh != "" {
+		return strings.Contains(dh, "/run/user/") || strings.Contains(dh, "podman")
+	}
+	if uid := os.Getuid(); uid >= 0 {
+		rootless := fmt.Sprintf("/run/user/%d/docker.sock", uid)
+		if _, err := os.Stat(rootless); err == nil {
+			// Rootless socket present and no rootful socket -> rootless.
+			if _, err := os.Stat("/run/docker.sock"); err != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // dockerWrapper is the coarse container fallback, modeled on the hardened
 // argv in internal/engine/container.go (pool runs). Explicit opt-in only
@@ -49,7 +69,13 @@ func dockerArgs(shellCmd, workDir string, p Policy) []string {
 	// that runs after the sandboxed command returns. On Windows Getuid
 	// returns -1; skip the flag there (docker-for-windows maps ownership
 	// differently and a negative uid is invalid).
-	if uid := os.Getuid(); uid >= 0 {
+	//
+	// EXCEPT rootless docker/podman: there the daemon runs in the user's own
+	// namespace, so container-root ALREADY maps to the host user via userns.
+	// Forcing --user <uid> there maps to an unrelated in-namespace id and
+	// mis-owns the worktree (the very breakage --user aims to prevent), so
+	// skip it when rootlessness is detected.
+	if uid := os.Getuid(); uid >= 0 && !dockerRootless() {
 		args = append(args, "--user", strconv.Itoa(uid)+":"+strconv.Itoa(os.Getgid()))
 	}
 	if p.AllowEgress {

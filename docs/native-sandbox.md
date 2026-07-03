@@ -61,7 +61,7 @@ opt-in; operators enable it explicitly with `R1_NATIVE_SANDBOX=on`
 | Backend | Selection | Filesystem | Network | Notes |
 |---|---|---|---|---|
 | `bwrap` | primary (auto) | host fs read-only + writable binds (worktree, toolchain caches) + tmpfs//dev-null masks over credential paths | `--unshare-net` when egress denied | canary probe catches hosts where userns is blocked (AppArmor, containers) |
-| `landlock` | fallback (auto) | strict allow-list (baseline system paths + worktree); `$HOME` deliberately absent; `/run` NOT granted wholesale (daemon sockets), only `/run/systemd/resolve` | TCP bind/connect deny on ABI >= 4; refuses (fail-closed) to deny egress on ABI < 4 | re-execs `r1 __sandbox-exec` because `landlock_restrict_self` binds the calling process; `Available` runs a `__sandbox-exec --probe` self-test so binaries that don't route the helper (r1-server/r1-bench) fail closed at wiring time, not mid-mission; raw syscalls on vendored x/sys, zero new deps |
+| `landlock` | fallback (auto) | strict allow-list (baseline system paths + worktree); `$HOME` deliberately absent; `/run` NOT granted wholesale, only the DNS-resolver runtime dirs (`/run/systemd/resolve`, `/run/NetworkManager`, `/run/resolvconf`, plus the resolved `/etc/resolv.conf` target) | TCP bind/connect deny on ABI >= 4; refuses (fail-closed) to deny egress on ABI < 4; **fails closed** when a daemon socket is reachable under egress-deny (Landlock can't block AF_UNIX connect — use bwrap) | re-execs `r1 __sandbox-exec` because `landlock_restrict_self` binds the calling process; `Available` runs a `__sandbox-exec --probe` self-test so binaries that don't route the helper (r1-server/r1-bench) fail closed at wiring time, not mid-mission; raw syscalls on vendored x/sys, zero new deps |
 | `docker` | explicit opt-in only | only the binds are mounted; runs as `--user <host-uid>:<gid>` so created files aren't root-owned | `--network=none` when egress denied | requires `R1_SANDBOX_IMAGE`; never auto-selected — the image must carry the project toolchain |
 
 ## Fail-closed contract
@@ -107,11 +107,22 @@ the variable unset (opt-in default).
 - **Unix sockets are not covered by egress denial.** `--unshare-net`
   (bwrap) and Landlock's TCP-only net restriction cut *network* egress but
   do NOT block `AF_UNIX` sockets — a reachable `/run/docker.sock` is a full
-  host escape regardless of the network posture. This is handled at the
-  *filesystem* layer instead: the daemon sockets are in the DenyRead mask
-  (bwrap/docker) and outside the Landlock read baseline (`/run` is not
-  granted wholesale). Sockets created after wrap time, or daemon sockets not
-  on the list, remain a residual gap on the bwrap backend.
+  host escape regardless of the network posture. The two backends differ in
+  what they can do about it:
+  - **bwrap genuinely contains it**: the daemon sockets (rootful under
+    `/run` and `/var/run`, and the rootless docker/podman sockets under
+    `/run/user/<uid>/`) are in the `DenyRead` mask, so bwrap mounts
+    `/dev/null` / a tmpfs over each and `connect()` fails.
+  - **Landlock CANNOT contain it.** Landlock does not mediate
+    `connect()`/`bind()` on `AF_UNIX` pathname sockets at all
+    (`landlock(7)` limitation) — keeping the socket out of the read
+    allow-list does nothing to stop a connect. Rather than hand back false
+    assurance, the Landlock backend **fails closed** (`Available` returns an
+    error naming the socket and recommending `R1_NATIVE_SANDBOX=bwrap`) when
+    a daemon socket is reachable *and* egress is denied. Under egress-allow
+    the socket presence is only warned about.
+  Sockets created after wrap time, or daemon sockets not on the list, remain
+  a residual gap on the bwrap backend.
 - **bwrap baseline is `--ro-bind / /`**: the host fs is readable minus
   the mask list; secrets outside the default masks remain readable.
   Landlock's allow-list is stricter.

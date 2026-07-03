@@ -74,6 +74,13 @@ type NativeRunner struct {
 	WisdomStore wisdom.Recorder
 }
 
+// detachCtx returns a context that preserves ctx's values but drops its
+// cancellation/deadline, so teardown work (the final shadow-checkpoint
+// flush) still runs after the run ctx has been cancelled or has timed out.
+func detachCtx(ctx context.Context) context.Context {
+	return context.WithoutCancel(ctx)
+}
+
 // NewNativeRunner creates a native runner using the Anthropic API directly.
 func NewNativeRunner(apiKey, model string) *NativeRunner {
 	return &NativeRunner{
@@ -153,15 +160,19 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		} else {
 			home, _ := os.UserHomeDir()
 			// A linked worktree's real .git lives OUTSIDE the worktree
-			// (the parent repo's common dir). Grant it write access so
-			// `git` works inside the sandbox — otherwise git status/commit
-			// fail closed. Nil for a normal checkout (its .git is already
-			// under the worktree AllowWrite grant).
+			// (the parent repo's common dir). Grant WRITE only to its
+			// object/ref/log subtrees so git can commit — NOT to config or
+			// hooks (that would let a sandboxed command plant a host-git
+			// escape). Grant READ to the common dir so git can still read
+			// config/packed-refs. Both nil for a normal checkout (its .git
+			// is already under the worktree AllowWrite grant).
 			allowWrite := append([]string(nil), spec.SandboxAllowWrite...)
 			allowWrite = append(allowWrite, sandbox.WorktreeGitDirs(spec.WorktreeDir)...)
+			allowRead := append([]string(nil), spec.SandboxAllowRead...)
+			allowRead = append(allowRead, sandbox.WorktreeGitReadDirs(spec.WorktreeDir)...)
 			pol := sandbox.Policy{
 				Mode:       mode,
-				AllowRead:  spec.SandboxAllowRead,
+				AllowRead:  allowRead,
 				AllowWrite: allowWrite,
 				DenyRead: append(sandbox.DefaultDenyRead(home),
 					sandbox.WorkDirDenyRead(spec.WorktreeDir)...),
@@ -691,7 +702,13 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		tw.appendNew(result.Messages, result.Turns)
 		// The final turn has no subsequent PreTurnHook — flush its
 		// checkpoint here so a last-turn mutation is still rewindable.
-		flushCheckpoint(ctx)
+		// Detach from the run ctx: on the cancel/timeout return path that
+		// ctx is already dead, and shadow.flush runs git under it, so the
+		// last-turn checkpoint would silently fail exactly when a rewind
+		// target matters most. Bound it so a wedged git can't hang teardown.
+		flushCtx, cancelFlush := context.WithTimeout(detachCtx(ctx), 30*time.Second)
+		flushCheckpoint(flushCtx)
+		cancelFlush()
 		tw.end(result.StopReason)
 	}
 

@@ -92,8 +92,18 @@ func shellIndexInvalidationDisabled() bool {
 // anyway). Gated by the kill switch. Does NOT fire the repomap write observer:
 // the observer is keyed on a concrete written path, which a shell command does
 // not provide.
-func (r *Registry) noteShellMutation() {
+func (r *Registry) noteShellMutation(command string) {
 	if shellIndexInvalidationDisabled() {
+		return
+	}
+	// Don't force a full four-index rebuild for a command that provably
+	// cannot have written source: the agent interleaves graph queries with
+	// very frequent read-only shell (grep/ls/go test/git status), and a
+	// blanket invalidation made every such query re-walk the whole tree.
+	// Conservative: only skip for a single simple invocation of a known
+	// read-only program; anything chained, redirected, or unrecognized
+	// still invalidates.
+	if commandIsReadOnly(command) {
 		return
 	}
 	r.codeMu.Lock()
@@ -101,6 +111,61 @@ func (r *Registry) noteShellMutation() {
 		r.code.MarkDirty(".")
 	}
 	r.codeMu.Unlock()
+}
+
+// readOnlyShellPrograms are programs whose normal invocations do not write
+// source files. Kept deliberately small and certain; the `go` subcommands
+// that DO write (generate) are handled below.
+var readOnlyShellPrograms = map[string]bool{
+	"ls": true, "cat": true, "grep": true, "egrep": true, "fgrep": true,
+	"rg": true, "find": true, "wc": true, "head": true, "tail": true,
+	"pwd": true, "echo": true, "which": true, "type": true, "stat": true,
+	"file": true, "test": true, "true": true, "false": true, "env": true,
+	"basename": true, "dirname": true, "realpath": true, "readlink": true,
+	"tree": true, "diff": true, "cmp": true, "sha256sum": true, "md5sum": true,
+}
+
+// commandIsReadOnly reports whether cmd is a single simple invocation of a
+// program that cannot have written source. It returns false the moment the
+// command contains any shell control/redirect operator that could chain a
+// writer (&&, ||, ;, |, >, <, `, $(), &), so a "read-only-looking" prefix
+// followed by a write is never mistaken for read-only.
+func commandIsReadOnly(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return true // nothing ran
+	}
+	if strings.ContainsAny(cmd, "&|;<>`") || strings.Contains(cmd, "$(") {
+		return false
+	}
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return true
+	}
+	prog := fields[0]
+	// Strip an env-style leading VAR=val (common: `GOFLAGS=... go test`).
+	for len(fields) > 1 && strings.Contains(prog, "=") && !strings.HasPrefix(prog, "=") {
+		fields = fields[1:]
+		prog = fields[0]
+	}
+	prog = prog[strings.LastIndex(prog, "/")+1:] // basename
+	if prog == "git" && len(fields) > 1 {
+		switch fields[1] {
+		case "status", "diff", "log", "show", "ls-files", "rev-parse", "branch", "remote", "blame", "grep":
+			return true
+		}
+		return false
+	}
+	if prog == "go" && len(fields) > 1 {
+		switch fields[1] {
+		case "build", "test", "vet", "list", "version", "env", "doc", "fmt":
+			// build/test/vet/list write only caches/binaries, not source.
+			// (`go generate` deliberately absent — it writes source.)
+			return true
+		}
+		return false
+	}
+	return readOnlyShellPrograms[prog]
 }
 
 // codeIndex lazily builds the codebase-graph index over the registry's

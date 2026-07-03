@@ -73,9 +73,34 @@ func TestDockerArgsRunsAsHostUser(t *testing.T) {
 	if uid < 0 {
 		t.Skip("no numeric uid on this platform (Windows); --user flag intentionally omitted")
 	}
+	// Force rootful so the assertion is deterministic regardless of the
+	// host's actual docker mode.
+	orig := dockerRootless
+	dockerRootless = func() bool { return false }
+	t.Cleanup(func() { dockerRootless = orig })
+
 	args := dockerArgs("true", t.TempDir(), Policy{DockerImage: "img"})
 	want := strconv.Itoa(uid) + ":" + strconv.Itoa(os.Getgid())
 	if !hasSeq(args, "--user", want) {
 		t.Errorf("argv missing [--user %s]\nargs: %v", want, args)
+	}
+}
+
+// TestDockerArgsRootlessOmitsUser pins FIX 4: under rootless docker/podman
+// the daemon already maps container-root to the host user via userns, so
+// --user must NOT be forced (it would mis-own the worktree).
+func TestDockerArgsRootlessOmitsUser(t *testing.T) {
+	if os.Getuid() < 0 {
+		t.Skip("no numeric uid on this platform")
+	}
+	orig := dockerRootless
+	dockerRootless = func() bool { return true }
+	t.Cleanup(func() { dockerRootless = orig })
+
+	args := dockerArgs("true", t.TempDir(), Policy{DockerImage: "img"})
+	for i, a := range args {
+		if a == "--user" {
+			t.Errorf("rootless docker must omit --user; found it at %d\nargs: %v", i, args)
+		}
 	}
 }
