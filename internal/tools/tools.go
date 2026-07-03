@@ -27,6 +27,7 @@ import (
 	"github.com/RelayOne/r1/internal/env"
 	"github.com/RelayOne/r1/internal/procutil"
 	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/sandbox"
 )
 
 const (
@@ -62,6 +63,12 @@ type Registry struct {
 	// Nil when no MCP registry has been configured; the tools degrade
 	// gracefully in that case.
 	mcpRegistry MCPToolSearcher
+
+	// sbx, when non-nil, wraps every bash tool command in OS-level
+	// containment (see internal/sandbox). Nil preserves the historical
+	// direct-exec path unchanged. Set via SetSandbox.
+	sbx       sandbox.Wrapper
+	sbxPolicy sandbox.Policy
 }
 
 // MCPToolSearcher is the minimal interface the tools package needs from
@@ -964,8 +971,14 @@ func (r *Registry) handleBash(ctx context.Context, input json.RawMessage) (strin
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", args.Command) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
-	cmd.Dir = r.workDir
+	// Layer 2 after the bashBreakerCheck floor: OS-level containment when
+	// a sandbox is wired (nil = historical direct exec, byte-identical).
+	// Fail-closed — a wrapper error aborts here, before the command ever
+	// starts, rather than degrading to an unsandboxed host exec.
+	cmd, err := r.buildBashCmd(ctx, args.Command)
+	if err != nil {
+		return "", err
+	}
 	// Process-group isolation: pnpm (and other build tools) spawn
 	// hundreds of child processes. exec.CommandContext only kills
 	// the immediate child on timeout; grandchildren inherit the
