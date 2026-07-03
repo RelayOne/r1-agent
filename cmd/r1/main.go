@@ -172,25 +172,53 @@ func emitRunTelemetry(repo, runID string, tel *telemetry.Collector) {
 // specRunnerModels returns the runner names speculative rollouts
 // round-robin across, derived from the model router's refactor route so
 // engine diversity follows the same benchmark-backed ordering as normal
-// routing. Only wired execution runners count as available: the claude
-// and codex CLIs always exist, while in native mode the native runner
-// is the only credentialed engine — rollouts pin to it rather than
-// betting on possibly unauthenticated CLI binaries.
-func specRunnerModels(runnerMode string) []string {
+// routing. In native mode the native runner is the only credentialed
+// engine, so rollouts pin to it. Otherwise only engines whose CLI is
+// actually on PATH are included (same exec.LookPath check app.Doctor
+// uses): the old code claimed claude+codex "always exist" and
+// round-robined dead runners into the rollout set, so a host with only
+// one engine installed silently degraded best-of-N into best-of-1 with
+// N-1 pipelines failing on a missing binary. When neither CLI is present
+// the list is empty, which leaves Strategy.Model blank so every rollout
+// uses the build default; when exactly one is present the list has one
+// entry (best-of-N on a single, real engine).
+func specRunnerModels(runnerMode, claudeBin, codexBin string) []string {
 	if runnerMode == "native" {
 		return []string{string(model.ProviderNative)}
 	}
-	avail := func(p model.Provider) bool {
-		return p == model.ProviderClaude || p == model.ProviderCodex
+	if claudeBin == "" {
+		claudeBin = "claude"
 	}
-	primary := model.Resolve(model.TaskTypeRefactor, avail)
-	models := []string{string(primary)}
-	seen := map[model.Provider]bool{primary: true}
-	for _, fb := range model.Routes[model.TaskTypeRefactor].FallbackChain {
-		if !seen[fb] && avail(fb) {
-			seen[fb] = true
-			models = append(models, string(fb))
+	if codexBin == "" {
+		codexBin = "codex"
+	}
+	installed := func(p model.Provider) bool {
+		switch p {
+		case model.ProviderClaude:
+			_, err := exec.LookPath(claudeBin)
+			return err == nil
+		case model.ProviderCodex:
+			_, err := exec.LookPath(codexBin)
+			return err == nil
+		default:
+			// OpenRouter/DirectAPI/etc. are not wired as workflow runners
+			// (CLAUDE.md decision #15), so they never count for rollouts.
+			return false
 		}
+	}
+	var models []string
+	seen := map[model.Provider]bool{}
+	add := func(p model.Provider) {
+		if !seen[p] && installed(p) {
+			seen[p] = true
+			models = append(models, string(p))
+		}
+	}
+	// Preserve the router's ordering (primary first, then fallback chain)
+	// but keep only genuinely-usable engines.
+	add(model.Resolve(model.TaskTypeRefactor, installed))
+	for _, fb := range model.Routes[model.TaskTypeRefactor].FallbackChain {
+		add(fb)
 	}
 	return models
 }
@@ -688,7 +716,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			seCfg.Tracker = tracker
 			seCfg.MergeWinner = sharedWorktrees.Merge
 			seCfg.DiscardRollout = sharedWorktrees.Cleanup
-			seCfg.Models = specRunnerModels(cfg.RunnerMode)
+			seCfg.Models = specRunnerModels(cfg.RunnerMode, cfg.ClaudeBinary, cfg.CodexBinary)
 			// Rollouts run base() under synthetic spec IDs, so the
 			// executor's markTask above never fires for the real task.
 			// Persist completion under the real ID on merge success —
