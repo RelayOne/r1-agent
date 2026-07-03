@@ -1070,7 +1070,7 @@ func (r *Registry) handleBash(ctx context.Context, input json.RawMessage) (strin
 	// instead of serving pre-command results. Fires on every exit path
 	// (success, non-zero exit, timeout) since a partially-run command can
 	// still have changed files.
-	r.noteShellMutation()
+	r.noteShellMutation(args.Command)
 
 	// Truncate if too long (preserve first and last portions)
 	if len(result) > MaxBashOutput {
@@ -1236,7 +1236,7 @@ func (r *Registry) handleEnvExec(ctx context.Context, input json.RawMessage) (st
 
 	// Coarsely invalidate the code-graph index: an env command can mutate
 	// the tree without going through the write hooks (see noteShellMutation).
-	r.noteShellMutation()
+	r.noteShellMutation(args.Command)
 
 	output := result.CombinedOutput()
 	if len(output) > MaxBashOutput {
