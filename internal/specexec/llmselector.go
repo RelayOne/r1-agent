@@ -108,8 +108,12 @@ func buildSelectorPrompt(outcomes []Outcome) string {
 		fmt.Fprintf(&b, "--- candidate %s ---\n", o.StrategyID)
 		fmt.Fprintf(&b, "success=%v score=%.3f tests_passed=%d tests_failed=%d diff_lines=%d duration=%s\n",
 			o.Success, o.Score, o.TestsPassed, o.TestsFailed, o.DiffLines, o.Duration)
-		if o.Error != "" {
-			fmt.Fprintf(&b, "error: %s\n", capText(o.Error, selectorTestCap))
+		// o.Error is repo/test-derived (a failed rollout's stderr, a build
+		// log tail): untrusted like the diff/test/plan blocks, so it goes
+		// through the same promptguard path. Interpolating it raw would let
+		// an attacker-controlled error string steer the judge.
+		if txt := sanitizedBlock("error:"+o.StrategyID, o.Error, selectorTestCap); txt != "" {
+			fmt.Fprintf(&b, "error:\n%s\n", txt)
 		}
 		if txt := sanitizedBlock("diff:"+o.StrategyID, o.DiffText, selectorDiffCap); txt != "" {
 			fmt.Fprintf(&b, "diff:\n%s\n", txt)

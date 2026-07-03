@@ -1,27 +1,65 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
 
+// fakeEngineBin writes an executable stub into dir and returns its path,
+// so specRunnerModels' exec.LookPath check sees an "installed" engine
+// without needing the real claude/codex CLIs.
+func fakeEngineBin(t *testing.T, dir, name string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write stub %s: %v", name, err)
+	}
+	return p
+}
+
 func TestSpecRunnerModels(t *testing.T) {
+	dir := t.TempDir()
+	claude := fakeEngineBin(t, dir, "claude-stub")
+	codex := fakeEngineBin(t, dir, "codex-stub")
+	missing := filepath.Join(dir, "definitely-not-installed")
+
+	// Native mode pins rollouts to the only credentialed engine,
+	// regardless of which CLIs are on PATH.
+	if got := specRunnerModels("native", claude, codex); !reflect.DeepEqual(got, []string{"native"}) {
+		t.Errorf("native mode = %v, want [native]", got)
+	}
+
 	tests := []struct {
+		name       string
 		runnerMode string
+		claudeBin  string
+		codexBin   string
 		want       []string
 	}{
-		{"", []string{"claude", "codex"}},
-		{"claude", []string{"claude", "codex"}},
-		{"codex", []string{"claude", "codex"}},
-		{"hybrid", []string{"claude", "codex"}},
-		// Native mode pins rollouts to the only credentialed engine.
-		{"native", []string{"native"}},
+		// Both engines installed → router-ordered pair (claude first).
+		{"both installed", "", claude, codex, []string{"claude", "codex"}},
+		{"both installed hybrid", "hybrid", claude, codex, []string{"claude", "codex"}},
+		// Only one engine installed → single-model list, no dead runner.
+		{"only claude", "", claude, missing, []string{"claude"}},
+		{"only codex", "", missing, codex, []string{"codex"}},
+		// Neither installed → empty, so rollouts use the build default
+		// instead of round-robining binaries that would fail to launch.
+		{"neither installed", "", missing, missing, nil},
 	}
 	for _, tt := range tests {
-		if got := specRunnerModels(tt.runnerMode); !reflect.DeepEqual(got, tt.want) {
-			t.Errorf("specRunnerModels(%q) = %v, want %v", tt.runnerMode, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			if got := specRunnerModels(tt.runnerMode, tt.claudeBin, tt.codexBin); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("specRunnerModels(%q, claude=%v, codex=%v) = %v, want %v",
+					tt.runnerMode, tt.claudeBin != missing, tt.codexBin != missing, got, tt.want)
+			}
+		})
 	}
+
+	// Default binary names ("claude"/"codex") when the config leaves them
+	// blank must not panic and must return only what is actually on PATH.
+	_ = specRunnerModels("", "", "")
 }
 
 func TestBuildSpecExecSelectorOfflineIsNil(t *testing.T) {

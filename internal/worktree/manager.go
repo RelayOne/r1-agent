@@ -252,6 +252,56 @@ func (m *Manager) Cleanup(ctx context.Context, handle Handle) error {
 	return nil
 }
 
+// HandleForName reconstructs the deterministic Handle that Prepare would
+// have produced for the given (pre-slug) name. It carries no knowledge of
+// whether that worktree currently exists — callers that lost the live
+// Handle (e.g. a speculative rollout whose executor was cancelled or
+// timed out and returned a zero-valued Handle) use it to target cleanup
+// by name. The derivation MUST stay in lockstep with Prepare.
+func (m *Manager) HandleForName(name string) Handle {
+	n := slug(name)
+	if n == "" {
+		n = "task"
+	}
+	return Handle{
+		Name:       n,
+		Branch:     "r1/" + n,
+		Path:       filepath.Join(m.WorktreeBase, n),
+		RuntimeDir: filepath.Join(os.TempDir(), "stoke-runtime-"+n),
+		RepoRoot:   m.RepoRoot,
+		GitBinary:  m.GitBinary,
+	}
+}
+
+// CleanupByName removes the worktree, branch, and refs for a worktree
+// created under the given (pre-slug) name, reconstructing the Handle when
+// the live one was lost. It exists so a speculative rollout that timed
+// out or was cancelled — and therefore returned a zero-valued Handle —
+// can still be guaranteed not to leak its worktree and branch.
+//
+// Idempotent: when neither the worktree directory nor the branch ref
+// exists it is a no-op returning nil, so a genuinely-absent rollout does
+// not surface spurious "no such worktree"/"branch not found" git errors.
+func (m *Manager) CleanupByName(ctx context.Context, name string) error {
+	h := m.HandleForName(name)
+	_, statErr := os.Stat(h.Path)
+	if os.IsNotExist(statErr) && !m.branchExists(ctx, h.Branch) {
+		return nil
+	}
+	return m.Cleanup(ctx, h)
+}
+
+// branchExists reports whether refs/heads/<branch> resolves. Best-effort:
+// any git failure is treated as "does not exist".
+func (m *Manager) branchExists(ctx context.Context, branch string) bool {
+	if branch == "" {
+		return false
+	}
+	cmd := exec.CommandContext(ctx, m.GitBinary, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch) // #nosec G204 -- git binary with r1-generated ref name, not external input.
+	cmd.Dir = m.RepoRoot
+	return cmd.Run() == nil
+}
+
 // mergeTimeout is the maximum time allowed for merge-tree validation and
 // the actual merge operation. Prevents pathological merges from blocking forever.
 const mergeTimeout = 2 * time.Minute
