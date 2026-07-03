@@ -287,11 +287,17 @@ func TestTruncateTranscriptToCheckpoint(t *testing.T) {
 		{Type: "tool_result", ToolUseID: "tu_1", Content: "ok"},
 	}}
 
-	t.Run("drops entries after checkpoint", func(t *testing.T) {
+	t.Run("keeps the tool_use and result the checkpoint captured", func(t *testing.T) {
+		// Correct ordering: a mutating tool's checkpoint is recorded at the
+		// top of the NEXT turn, AFTER that turn's tool_use/tool_result
+		// messages are appended. Rewinding to it must reproduce the
+		// conversation as of that tool_use — INCLUDING the tool_use and its
+		// result — so the replayed history matches the on-disk file state
+		// the checkpoint captured (no one-tool_use-too-far off-by-one).
 		path := filepath.Join(t.TempDir(), "t.jsonl")
 		w := mustWriter(t, path)
 		w.meta(map[string]any{"attempt": 1})
-		w.appendNew([]agentloop.Message{tUser("go")}, 1)
+		w.appendNew([]agentloop.Message{tUser("go"), toolUse, toolResult}, 1)
 		w.checkpoint(CheckpointRecord{Seq: 1, SHA: "abc", Tool: "write_file"})
 		w.appendNew([]agentloop.Message{tUser("go"), toolUse, toolResult, tAssistant("done")}, 2)
 		w.end("end_turn")
@@ -304,7 +310,7 @@ func TestTruncateTranscriptToCheckpoint(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadTranscript: %v", err)
 		}
-		want := []agentloop.Message{tUser("go")}
+		want := []agentloop.Message{tUser("go"), toolUse, toolResult}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %+v, want %+v", got, want)
 		}
@@ -510,6 +516,100 @@ func TestNativeRunnerTranscriptEndToEnd(t *testing.T) {
 	last := history[len(history)-1]
 	if last.Role != "assistant" || len(last.Content) == 0 || last.Content[0].Text != "done" {
 		t.Errorf("final assistant message missing from replay: %+v", last)
+	}
+}
+
+func twoParallelWritesThenDoneProvider() *fakeMCPProvider {
+	return &fakeMCPProvider{
+		responses: []*provider.ChatResponse{
+			{
+				Content: []provider.ResponseContent{
+					{Type: "text", Text: "writing two notes"},
+					{Type: "tool_use", ID: "tu_1", Name: "write_file",
+						Input: map[string]interface{}{"path": "a.txt", "content": "AAA"}},
+					{Type: "tool_use", ID: "tu_2", Name: "write_file",
+						Input: map[string]interface{}{"path": "b.txt", "content": "BBB"}},
+				},
+				StopReason: "tool_use",
+			},
+			{
+				Content:    []provider.ResponseContent{{Type: "text", Text: "done"}},
+				StopReason: "end_turn",
+			},
+		},
+	}
+}
+
+// TestNativeRunnerCheckpointPerTurnAfterParallelTools proves the finding
+// 1/4 fix: parallel tool_use in ONE turn yields exactly ONE checkpoint,
+// taken after BOTH siblings completed (its tree carries both files, never a
+// half-written one) and recorded AFTER the turn's tool_use/tool_result
+// messages (the correct rewind target — not one tool_use too far).
+func TestNativeRunnerCheckpointPerTurnAfterParallelTools(t *testing.T) {
+	repo := newTranscriptGitRepo(t)
+	spec := transcriptSpec(t, repo)
+	n := NewNativeRunner("", "test-model")
+
+	res, err := runWithProvider(t, n, spec, twoParallelWritesThenDoneProvider())
+	if err != nil || res.IsError {
+		t.Fatalf("run: err=%v res=%+v", err, res)
+	}
+
+	entries, err := readTranscriptEntries(spec.TranscriptPath)
+	if err != nil {
+		t.Fatalf("readTranscriptEntries: %v", err)
+	}
+
+	checkpointIdx, toolResultIdx, ckCount := -1, -1, 0
+	var ck *CheckpointRecord
+	for i, e := range entries {
+		switch e.Type {
+		case "checkpoint":
+			ckCount++
+			checkpointIdx = i
+			ck = e.Checkpoint
+		case "message":
+			if e.Message != nil {
+				for _, b := range e.Message.Content {
+					if b.Type == "tool_result" {
+						toolResultIdx = i
+					}
+				}
+			}
+		}
+	}
+	// One checkpoint for the whole turn — NOT one per parallel tool.
+	if ckCount != 1 || ck == nil {
+		t.Fatalf("checkpoint entries = %d, want 1 (per-turn, not per-tool)", ckCount)
+	}
+	// Ordering: the checkpoint marker must FOLLOW the tool_result it captures.
+	if toolResultIdx < 0 || checkpointIdx <= toolResultIdx {
+		t.Errorf("checkpoint at %d must follow tool_result at %d", checkpointIdx, toolResultIdx)
+	}
+	// The captured tree carries BOTH sibling writes — proof the checkpoint
+	// was taken after both goroutines joined, never a torn intermediate.
+	for _, f := range []string{"a.txt", "b.txt"} {
+		if _, serr := exec.Command("git", "-C", repo, "show", ck.SHA+":"+f).Output(); serr != nil {
+			t.Errorf("checkpoint tree missing %s (err %v)", f, serr)
+		}
+	}
+
+	// The rewind target reproduces the conversation INCLUDING the tool_use —
+	// file state and history stay consistent (no off-by-one).
+	if err := TruncateTranscriptToCheckpoint(spec.TranscriptPath, ck.Seq); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+	hist, err := LoadTranscript(spec.TranscriptPath)
+	if err != nil {
+		t.Fatalf("LoadTranscript after rewind: %v", err)
+	}
+	// user, assistant(2x tool_use), user(2x tool_result): the tool_use is
+	// present, not rewound away.
+	if len(hist) != 3 {
+		t.Fatalf("rewound history = %d messages, want 3 (user, tool_use, tool_result)", len(hist))
+	}
+	if last := hist[len(hist)-1]; last.Role != "user" {
+		t.Errorf("rewound history should end at the tool_result user message, got role %q", last.Role)
 	}
 }
 

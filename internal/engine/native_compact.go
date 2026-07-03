@@ -93,3 +93,19 @@ func compactionEnabled(spec RunSpec) bool {
 // strings is imported for symmetry with future expansions; reference
 // the package once so the import is never flagged when callers shrink.
 var _ = strings.TrimSpace
+
+// sameMessageSlice reports whether a and b are the SAME underlying slice
+// (identical backing array and length). The condenser and byte-truncation
+// compactors both return the caller's slice verbatim on a no-op and a
+// freshly-allocated slice when they rewrite, so identity — not deep
+// equality — is the exact signal of "nothing changed". Used to suppress
+// no-op compaction records in the transcript.
+func sameMessageSlice(a, b []agentloop.Message) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if len(a) == 0 {
+		return true
+	}
+	return &a[0] == &b[0]
+}
