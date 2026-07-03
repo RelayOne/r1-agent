@@ -24,6 +24,7 @@ import (
 	"github.com/RelayOne/r1/internal/provider"
 	"github.com/RelayOne/r1/internal/rules"
 	rulesenforcer "github.com/RelayOne/r1/internal/rules/enforcer"
+	"github.com/RelayOne/r1/internal/sandbox"
 	"github.com/RelayOne/r1/internal/stream"
 	"github.com/RelayOne/r1/internal/tools"
 	"github.com/RelayOne/r1/internal/wisdom"
@@ -128,6 +129,44 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 
 	// Create the tool registry
 	toolRegistry := tools.NewRegistry(spec.WorktreeDir)
+
+	// Native-path enforcement of the RunSpec sandbox request. The CLI
+	// runners get containment from the per-worktree settings.json
+	// (config.SandboxSettings, fail-closed); before this wiring the
+	// native path silently dropped the same request and ran bash on the
+	// host. Fail-closed: when a sandbox is requested but no backend can
+	// enforce it, refuse to dispatch at all rather than degrade — the
+	// only opt-out is the explicit R1_NATIVE_SANDBOX=off kill switch.
+	// Config is env-first for the same reason as the policy gate
+	// (policy_gate.go): NewNativeRunner has too many call sites to
+	// thread new fields through.
+	if spec.SandboxEnabled {
+		if mode := sandbox.ModeFromEnv(); mode == sandbox.ModeOff {
+			slog.Warn("native sandbox disabled via R1_NATIVE_SANDBOX=off", "phase", spec.Phase.Name)
+		} else {
+			home, _ := os.UserHomeDir()
+			pol := sandbox.Policy{
+				Mode:       mode,
+				AllowRead:  spec.SandboxAllowRead,
+				AllowWrite: spec.SandboxAllowWrite,
+				DenyRead: append(sandbox.DefaultDenyRead(home),
+					sandbox.WorkDirDenyRead(spec.WorktreeDir)...),
+				WriteCaches: sandbox.DefaultWriteCaches(home),
+				// Boolean only: no native backend can honor the
+				// spec.SandboxDomains allowlist (kernel primitives have
+				// no domain filtering), so egress is all-or-nothing and
+				// defaults to allow — deny would break `go mod download`
+				// / `npm install` in the execute phase. Operators harden
+				// with R1_NATIVE_SANDBOX_NET=deny.
+				AllowEgress: sandbox.EgressFromEnv(),
+				DockerImage: sandbox.ImageFromEnv(),
+			}
+			if err := toolRegistry.SetSandbox(pol); err != nil {
+				return RunResult{IsError: true}, fmt.Errorf("sandbox requested (phase %q) but cannot be enforced: %w; set R1_NATIVE_SANDBOX=off to opt out", spec.Phase.Name, err)
+			}
+		}
+	}
+
 	ruleEnforcer := rulesenforcer.NewRepo(spec.WorktreeDir)
 	allDefs := toolRegistry.Definitions()
 

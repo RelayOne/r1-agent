@@ -72,6 +72,7 @@ import (
 	"github.com/RelayOne/r1/internal/replay"
 	"github.com/RelayOne/r1/internal/repomap"
 	"github.com/RelayOne/r1/internal/report"
+	"github.com/RelayOne/r1/internal/sandbox"
 	scanpkg "github.com/RelayOne/r1/internal/scan"
 	"github.com/RelayOne/r1/internal/scheduler"
 	"github.com/RelayOne/r1/internal/selftune"
@@ -848,6 +849,15 @@ func attachEventSubscribers(bus *hub.Bus) func() {
 }
 
 func main() {
+	// Hidden re-exec helper for the Landlock sandbox backend
+	// (internal/sandbox): applies the serialized policy to this process
+	// and execs the payload command. Routed before any other
+	// initialization so the child does no logging/telemetry setup, and
+	// fails closed (exit 125, payload never runs) on any error.
+	if len(os.Args) > 1 && os.Args[1] == sandbox.HelperSubcommand {
+		os.Exit(sandbox.RunExecHelper(os.Args[2:], os.Stderr))
+	}
+
 	fatalReporter = r1coderadar.FromEnv("r1")
 	defer func() {
 		if recovered := recover(); recovered != nil {
