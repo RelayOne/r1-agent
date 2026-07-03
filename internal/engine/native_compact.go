@@ -8,8 +8,10 @@ import (
 )
 
 // buildNativeCompactor returns an agentloop.CompactFunc that rewrites an
-// overlong conversation history to keep it under threshold. The strategy
-// is cache-preserving:
+// overlong conversation history to keep it under threshold. It is the
+// zero-dependency byte-truncation tier: buildLLMCondenser degrades to it
+// when no provider is available, when R1_DISABLE_LLM_CONDENSER=1, or
+// when the summarization call fails. The strategy is cache-preserving:
 //
 //  1. Always keep the first user message (the task brief) verbatim —
 //     this is typically the instruction the model is trying to follow.
@@ -19,9 +21,6 @@ import (
 //  3. Replace older tool_result bodies with a 1-line summary: "(tool
 //     result truncated: N bytes)". Keeps the pair structure for the API
 //     but collapses the payload.
-//  4. If still too long, drop the oldest assistant-only turns (text
-//     without tool calls) — these are progress narrations the model
-//     doesn't need on a fresh request.
 //
 // The returned function is safe to call repeatedly; it's idempotent on
 // already-compacted histories.
