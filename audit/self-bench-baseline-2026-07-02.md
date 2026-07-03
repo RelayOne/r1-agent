@@ -54,3 +54,22 @@ R1_NATIVE_MODEL=anthropic/claude-sonnet-5 \
 r1-bench --agent r1 --mission <id> --judge-model openai/gpt-5.4 --output <out.json>
 r1-bench --aggregate <dir> --aggregate-format both
 ```
+
+---
+
+## Post-polish re-run: BLOCKED on OpenRouter credits (2026-07-03)
+
+Attempted the post-polish corpus re-run to measure the wave's impact
+against this 30% baseline. All 10 missions failed at turn 0 with
+OpenRouter HTTP 402 ("requires more credits… requested 16000 tokens,
+can only afford 878") — the account's credits were exhausted by the
+baseline + smoke runs. The re-run is an ops task pending a credit top-up,
+same class of external blocker as the claude-subprocess A/B arm needing
+an Anthropic key (see `native-path-parity-and-ab-2026-07-03.md`).
+
+Honest note: no post-polish benchmark number exists yet; the 30% figure
+is the last measured value and must not be presented as the current one.
+Silver lining verified by the failure itself — the native loop surfaced
+the 402 as an honest turn-0 error (CompletionAttempted=false), not a
+fabricated completion, which is the anti-deception contract holding under
+an infrastructure fault.
