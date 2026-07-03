@@ -148,7 +148,8 @@ skillselect/                       Tech-stack auto-detection + skill mapping
 
 --- CODE ANALYSIS ---
 goast/                             Go AST analysis + extraction
-repomap/                           Repository map with PageRank
+repomap/                           Repository map with PageRank (task-conditioned RenderRelevantQuery + write/shell invalidation)
+codegraph/                         Shared codebase-graph facade (call edges / references / impact) over symindex+depgraph+tfidf; native tools + MCP delegate to it (SOTA #9)
 symindex/                          Symbol indexing
 depgraph/                          Import/dependency graph
 chunker/                           Semantic code chunking
@@ -237,6 +238,7 @@ costtrack/                         Real-time cost tracking + budget alerts
 --- PERMISSIONS & SECURITY ---
 consent/                           Human-in-the-loop approval
 rbac/                              Role-Based Access Control
+sandbox/                           OS-level containment for native bash (bwrap/Landlock/docker), fail-closed, opt-in R1_NATIVE_SANDBOX=on (SOTA #14; see docs/native-sandbox.md)
 hooks/                             Anti-deception PreToolUse/PostToolUse guards
 throttle/                          C3 per-tool, two-tier (session+tenant) token-bucket rate limiter
 throttle/policy/                   Leaf YAML schema + validator (avoids config<->throttle cycle)
