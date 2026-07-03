@@ -52,6 +52,7 @@ import (
 	"github.com/RelayOne/r1/internal/taskstate"
 	"github.com/RelayOne/r1/internal/testgen"
 	"github.com/RelayOne/r1/internal/testselect"
+	"github.com/RelayOne/r1/internal/tfidf"
 	"github.com/RelayOne/r1/internal/tokenest"
 	"github.com/RelayOne/r1/internal/vecindex"
 	"github.com/RelayOne/r1/internal/verify"
@@ -138,6 +139,7 @@ type Engine struct {
 	TestGraph       *testselect.Graph  // dependency-aware test selection (nil = run all)
 	RepoMap         *repomap.RepoMap   // ranked codebase map for context (nil = disabled)
 	RepoMapBudget   int                // token budget for repomap (0 = default 2000)
+	TFIDF           *tfidf.Index       // task-text file scoring that conditions the repomap on the current task (nil = static ranking only)
 	CriticConfig    *critic.Config     // per-project critic configuration (nil = defaults)
 	PlanOnly        bool
 	RunnerOverride  engine.CommandRunner   // if set, used for all phases (testing only)
@@ -1201,6 +1203,9 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			// out of the attempt loop as if the merge succeeded.
 			if e.InPlace {
 				result.FilesChanged = postReviewFiles
+				// Writes landed directly in RepoRoot: fold them into the
+				// shared repomap now so subsequent tasks see them.
+				e.refreshRepoMap(postReviewFiles)
 				_ = e.advanceState(taskstate.Committed, "in-place: caller owns commit/merge")
 				break
 			}
@@ -1280,6 +1285,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			if err := e.advanceState(taskstate.Committed, "merged to main by harness"); err != nil {
 				return result, err
 			}
+
+			// The validated files are now on main: fold them into the
+			// shared repomap so subsequent tasks in this run plan against
+			// the tree they will actually see.
+			e.refreshRepoMap(postReviewFiles)
 
 			e.emitEventAsync(&hub.Event{
 				Type:   hub.EventGitPostMerge,
@@ -2233,7 +2243,11 @@ func executePromptWithContext(e Engine) string {
 		if budget <= 0 {
 			budget = 2000
 		}
-		mapContent := e.RepoMap.RenderRelevant(e.AllowedFiles, budget)
+		// Condition the map on the task text: TF-IDF scores pull the
+		// files this task is actually about ahead of the repo's static
+		// all-time ranking, so the budgeted map spends its tokens on
+		// task-relevant symbols.
+		mapContent := e.RepoMap.RenderRelevantQuery(e.AllowedFiles, taskQueryScores(e.TFIDF, e.Task), budget)
 		if mapContent != "" {
 			contextItems = append(contextItems, ctxpack.Item{
 				ID: "repomap", Category: "file", Content: mapContent,
@@ -2288,6 +2302,45 @@ func executePromptWithContext(e Engine) string {
 	}
 
 	return prompt
+}
+
+// taskQueryScores turns the task text into per-file relevance scores for
+// repomap conditioning: the best TF-IDF cosine score per file, keyed by
+// root-relative path. Chunk-indexed documents carry a "#chunk" suffix that
+// must be stripped so scores key into repomap's file table. Nil index or
+// blank task yields nil (static ranking only).
+func taskQueryScores(idx *tfidf.Index, task string) map[string]float64 {
+	if idx == nil || strings.TrimSpace(task) == "" {
+		return nil
+	}
+	scores := make(map[string]float64)
+	for _, hit := range idx.Search(task, 20) {
+		p := hit.Path
+		if i := strings.IndexByte(p, '#'); i >= 0 {
+			p = p[:i]
+		}
+		if hit.Score > scores[p] {
+			scores[p] = hit.Score
+		}
+	}
+	if len(scores) == 0 {
+		return nil
+	}
+	return scores
+}
+
+// refreshRepoMap re-parses a completed task's validated files in the shared
+// repomap. The map is built once at startup and shared across the whole
+// run's workers, so without this every later task plans against a view that
+// predates earlier tasks' changes. Covers CLI-subprocess runners too, whose
+// writes never pass through the native tool registry's write hooks.
+func (e *Engine) refreshRepoMap(files []string) {
+	if e.RepoMap == nil {
+		return
+	}
+	for _, f := range files {
+		e.RepoMap.Invalidate(f)
+	}
 }
 
 func executePrompt(task string, taskType model.TaskType, verification []string) string {

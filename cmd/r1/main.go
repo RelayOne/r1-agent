@@ -28,6 +28,7 @@ import (
 	"github.com/RelayOne/r1/internal/boulder"
 	"github.com/RelayOne/r1/internal/checkpoint"
 	"github.com/RelayOne/r1/internal/cloud"
+	"github.com/RelayOne/r1/internal/codegraph"
 	r1coderadar "github.com/RelayOne/r1/internal/coderadar"
 	"github.com/RelayOne/r1/internal/config"
 	"github.com/RelayOne/r1/internal/consent"
@@ -85,6 +86,7 @@ import (
 	"github.com/RelayOne/r1/internal/taskstate"
 	"github.com/RelayOne/r1/internal/telemetry"
 	"github.com/RelayOne/r1/internal/testselect"
+	"github.com/RelayOne/r1/internal/tfidf"
 	"github.com/RelayOne/r1/internal/tui"
 	"github.com/RelayOne/r1/internal/verify"
 	"github.com/RelayOne/r1/internal/websearch"
@@ -418,6 +420,12 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	if repoMapErr != nil {
 		repoMap = nil // non-fatal: agents navigate without map
 	}
+	// Task-text TF-IDF scoring so each task's repomap render leads with the
+	// files that task is about (same corpus as the codebase-graph tools).
+	buildTFIDF, buildTFIDFErr := tfidf.Build(absRepo, codegraph.DefaultExtensions)
+	if buildTFIDFErr != nil {
+		buildTFIDF = nil // non-fatal: repomap falls back to static ranking
+	}
 
 	// Provision execution environment if configured.
 	var buildEnv env.Environment
@@ -499,6 +507,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			CostTracker:         tracker,
 			TestGraph:           testGraph,
 			RepoMap:             repoMap,
+			TFIDF:               buildTFIDF,
 			EventBus:            eventBus,
 			GovernanceEnabled:   cfg.Governance,
 			GovernanceDisabled:  cfg.NoGovernance,
@@ -1305,6 +1314,7 @@ func runCmd(args []string) {
 	// Build shared resources for the single-task run.
 	runTracker := costtrack.NewTracker(0, nil)
 	runRepoMap, _ := repomap.Build(absRepo)
+	runTFIDF, _ := tfidf.Build(absRepo, codegraph.DefaultExtensions)
 	runTestGraph, _ := testselect.BuildGraph(absRepo)
 	// Boulder supervisor: now authoritative for stuck-agent detection. Always
 	// enabled so the task is monitored for liveness instead of timed out.
@@ -1352,6 +1362,7 @@ func runCmd(args []string) {
 		LintCommand:     *lintC,
 		CostTracker:     runTracker,
 		RepoMap:         runRepoMap,
+		TFIDF:           runTFIDF,
 		TestGraph:       runTestGraph,
 		RunnerMode:      *runnerMode,
 		NativeAPIKey:    *nativeAPIKey,
@@ -1619,12 +1630,14 @@ func buildCmd(args []string) {
 			tuiTracker := costtrack.NewTracker(0, nil)
 			tuiTestGraph, _ := testselect.BuildGraph(absRepo)
 			tuiRepoMap, _ := repomap.Build(absRepo)
+			tuiTFIDF, _ := tfidf.Build(absRepo, codegraph.DefaultExtensions)
 			tuiBoulder := boulder.New(filepath.Join(absRepo, ".stoke", "boulder"), boulder.DefaultConfig())
 			tuiOpts := &buildRunConfigOpts{
 				Boulder:            tuiBoulder,
 				CostTracker:        tuiTracker,
 				TestGraph:          tuiTestGraph,
 				RepoMap:            tuiRepoMap,
+				TFIDF:              tuiTFIDF,
 				GovernanceEnabled:  *governance,
 				GovernanceDisabled: *noGovernance,
 				CortexEnabled:      *cortexEnabled && !*noCortex,
@@ -6861,6 +6874,7 @@ type buildRunConfigOpts struct {
 	CostTracker         *costtrack.Tracker
 	TestGraph           *testselect.Graph
 	RepoMap             *repomap.RepoMap
+	TFIDF               *tfidf.Index
 	EventBus            *hub.Bus
 	GovernanceEnabled   bool
 	GovernanceDisabled  bool
@@ -6912,6 +6926,7 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		cfg.CostTracker = opts.CostTracker
 		cfg.TestGraph = opts.TestGraph
 		cfg.RepoMap = opts.RepoMap
+		cfg.TFIDF = opts.TFIDF
 		cfg.EventBus = opts.EventBus
 		cfg.GovernanceEnabled = opts.GovernanceEnabled
 		cfg.GovernanceDisabled = opts.GovernanceDisabled

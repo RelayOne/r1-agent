@@ -378,3 +378,168 @@ func TestBuildTSRepo(t *testing.T) {
 		t.Fatalf("expected TS symbols Config and App; got %v", found)
 	}
 }
+
+func TestRenderRelevantQueryNilMatchesRenderRelevant(t *testing.T) {
+	dir := setupTestRepo(t)
+	rm, _ := Build(dir)
+
+	relevant := []string{"pkg/util/util.go"}
+	plain := rm.RenderRelevant(relevant, 0)
+	query := rm.RenderRelevantQuery(relevant, nil, 0)
+	if plain != query {
+		t.Errorf("nil-score RenderRelevantQuery diverged from RenderRelevant:\n--- plain ---\n%s\n--- query ---\n%s", plain, query)
+	}
+}
+
+func TestRenderRelevantQueryBoostsScoredFile(t *testing.T) {
+	dir := setupTestRepo(t)
+	rm, _ := Build(dir)
+
+	// Baseline: util.go outranks main.go (more exported symbols + it is
+	// imported by main.go), so its section renders first.
+	baseline := rm.RenderRelevantQuery(nil, nil, 0)
+	utilAt := strings.Index(baseline, "## pkg/util/util.go")
+	mainAt := strings.Index(baseline, "## cmd/main.go")
+	if utilAt < 0 || mainAt < 0 {
+		t.Fatalf("baseline render missing file sections:\n%s", baseline)
+	}
+	if utilAt > mainAt {
+		t.Fatalf("fixture assumption broken: util.go should outrank main.go:\n%s", baseline)
+	}
+
+	// A strong task-query score on main.go must flip the ordering.
+	scored := rm.RenderRelevantQuery(nil, map[string]float64{"cmd/main.go": 0.9}, 0)
+	utilAt = strings.Index(scored, "## pkg/util/util.go")
+	mainAt = strings.Index(scored, "## cmd/main.go")
+	if utilAt < 0 || mainAt < 0 {
+		t.Fatalf("scored render missing file sections:\n%s", scored)
+	}
+	if mainAt > utilAt {
+		t.Errorf("query-scored file did not lead the map:\n%s", scored)
+	}
+
+	// The boost is per-call: the next unscored render sees original ranks.
+	after := rm.RenderRelevantQuery(nil, nil, 0)
+	if after != baseline {
+		t.Errorf("query boost leaked into subsequent renders:\n--- baseline ---\n%s\n--- after ---\n%s", baseline, after)
+	}
+}
+
+func TestInvalidateRefreshesChangedFile(t *testing.T) {
+	dir := setupTestRepo(t)
+	rm, _ := Build(dir)
+
+	if out := rm.Render(0); strings.Contains(out, "ZzNewExported") {
+		t.Fatalf("fixture already contains ZzNewExported:\n%s", out)
+	}
+
+	// Append a new exported symbol on disk, then invalidate.
+	path := filepath.Join(dir, "pkg", "util", "util.go")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src = append(src, []byte("\nfunc ZzNewExported() {}\n")...)
+	if err := os.WriteFile(path, src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rm.Invalidate("pkg/util/util.go")
+
+	out := rm.Render(0)
+	if !strings.Contains(out, "ZzNewExported") {
+		t.Errorf("Invalidate did not pick up new symbol:\n%s", out)
+	}
+	if !strings.Contains(out, "Hello") {
+		t.Errorf("Invalidate lost pre-existing symbol Hello:\n%s", out)
+	}
+}
+
+func TestInvalidateDropsDeletedFile(t *testing.T) {
+	dir := setupTestRepo(t)
+	rm, _ := Build(dir)
+
+	if out := rm.Render(0); !strings.Contains(out, "## cmd/main.go") {
+		t.Fatalf("fixture render missing cmd/main.go:\n%s", out)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "cmd", "main.go")); err != nil {
+		t.Fatal(err)
+	}
+	rm.Invalidate("cmd/main.go")
+
+	out := rm.Render(0)
+	if strings.Contains(out, "## cmd/main.go") {
+		t.Errorf("deleted file still rendered:\n%s", out)
+	}
+	if strings.Contains(out, "NewConfig") {
+		t.Errorf("deleted file's symbols still rendered:\n%s", out)
+	}
+}
+
+func TestInvalidateAddsNewFile(t *testing.T) {
+	dir := setupTestRepo(t)
+	rm, _ := Build(dir)
+
+	path := filepath.Join(dir, "pkg", "util", "extra.go")
+	if err := os.WriteFile(path, []byte("package util\n\nfunc ZzExtraFunc() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rm.Invalidate("pkg/util/extra.go")
+
+	if out := rm.Render(0); !strings.Contains(out, "ZzExtraFunc") {
+		t.Errorf("Invalidate did not add new file's symbol:\n%s", out)
+	}
+}
+
+func TestInvalidateKeepsNodeWhenUnparseable(t *testing.T) {
+	dir := setupTestRepo(t)
+	rm, _ := Build(dir)
+
+	// A mid-edit syntactically broken file must not evict the last good view.
+	path := filepath.Join(dir, "pkg", "util", "util.go")
+	if err := os.WriteFile(path, []byte("package util\n\nfunc Broken( {\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rm.Invalidate("pkg/util/util.go")
+
+	if out := rm.Render(0); !strings.Contains(out, "Hello") {
+		t.Errorf("unparseable rewrite evicted previous symbols:\n%s", out)
+	}
+}
+
+func TestInvalidateNonGoFileIsNoOp(t *testing.T) {
+	dir := setupTestRepo(t)
+	rm, _ := Build(dir)
+	before := rm.Render(0)
+
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# readme\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rm.Invalidate("README.md")
+
+	if after := rm.Render(0); after != before {
+		t.Errorf("non-Go Invalidate changed the render:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+}
+
+// TestInvalidateConcurrentWithRender exercises the mu-serialized entry
+// points together; run under -race this proves the rank mutation inside
+// RenderRelevantQuery no longer races Invalidate on the shared map.
+func TestInvalidateConcurrentWithRender(t *testing.T) {
+	dir := setupTestRepo(t)
+	rm, _ := Build(dir)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 25; i++ {
+			rm.Invalidate("pkg/util/util.go")
+		}
+	}()
+	for i := 0; i < 25; i++ {
+		_ = rm.RenderRelevant([]string{"pkg/util/util.go"}, 0)
+		_ = rm.RenderRelevantQuery(nil, map[string]float64{"cmd/main.go": 0.5}, 0)
+		_ = rm.Render(0)
+	}
+	<-done
+}

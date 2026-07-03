@@ -33,6 +33,7 @@ import (
 	"github.com/RelayOne/r1/internal/taskstate"
 	"github.com/RelayOne/r1/internal/telemetry"
 	"github.com/RelayOne/r1/internal/testselect"
+	"github.com/RelayOne/r1/internal/tfidf"
 	"github.com/RelayOne/r1/internal/validation"
 	"github.com/RelayOne/r1/internal/verify"
 	"github.com/RelayOne/r1/internal/wisdom"
@@ -77,6 +78,7 @@ type RunConfig struct {
 	Recorder         *replay.Recorder    // session replay recording (nil = disabled)
 	TestGraph        *testselect.Graph   // dependency-aware test selection (nil = run all)
 	RepoMap          *repomap.RepoMap    // ranked codebase map for context (nil = disabled)
+	TFIDF            *tfidf.Index        // task-text file scoring that conditions the repomap per task (nil = static ranking)
 	PlanOnly         bool
 	BuildCommand     string
 	TestCommand      string
@@ -438,6 +440,7 @@ func (o *Orchestrator) Run(ctx context.Context) (res workflow.Result, err error)
 		Recorder:         o.cfg.Recorder,
 		TestGraph:        o.cfg.TestGraph,
 		RepoMap:          o.cfg.RepoMap,
+		TFIDF:            o.cfg.TFIDF,
 		PlanOnly:                   o.cfg.PlanOnly,
 		Convergence:                o.cfg.Convergence,
 		ConvergenceIgnores:         o.cfg.ConvergenceIgnores,
