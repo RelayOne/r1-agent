@@ -168,6 +168,11 @@ type Engine struct {
 	// threshold is crossed. When nil, the override flow is skipped and
 	// convergence failures propagate normally.
 	OverrideJudge convergence.OverrideJudge
+	// SecondCritic is the adversarial reviewer that challenges a PASS
+	// verdict at the merge gate (nil = disabled). Active only when
+	// Policy.Verification.SecondOpinion is also true, so the policy
+	// file stays the kill-switch even when a critic is injected.
+	SecondCritic  SecondCritic
 	EventBus      *hub.Bus        // unified event bus (nil = no events)
 	SkillRegistry *skill.Registry // skill library for prompt injection (nil = auto-create from RepoRoot)
 	StackMatches  []string        // pre-computed stack-matched skill names from RepoProfile
@@ -1650,6 +1655,59 @@ func (e Engine) runCrossModelReview(
 		e.Worktrees.Cleanup(ctx, handle)
 		_ = e.advanceState(taskstate.Failed, "cross-model review rejected")
 		return nil, fmt.Errorf("cross-model review rejected: %s severity, %d findings", verdict.Severity, len(verdict.Findings))
+	}
+
+	// --- ADVERSARIAL SECOND OPINION ---
+	// A single reviewer's PASS is a single point of trust. When a
+	// second critic is configured (and the policy's second_opinion
+	// kill-switch is on), challenge the PASS before revalidation: a
+	// blocking, file-anchored dissent stops the merge and routes
+	// through the normal attempt/retry loop. Skipped when nothing
+	// changed — there is no patch to challenge.
+	if e.SecondCritic != nil && e.Policy.Verification.SecondOpinion && len(preReviewFiles) > 0 {
+		criticIn := CriticInput{
+			Task:               e.Task,
+			Files:              preReviewFiles,
+			Diff:               worktree.DiffSummary(ctx, handle),
+			PrimaryEngine:      verifyRunnerName,
+			PrimaryVerdictJSON: verifyResult.ResultText,
+		}
+		if semAnalysis := semdiff.AnalyzeMultiFile(buildSemdiffInputs(ctx, handle)); len(semAnalysis.Changes) > 0 {
+			criticIn.SemanticSummary = semAnalysis.Summary
+		}
+		cv, critErr := e.SecondCritic.Challenge(ctx, criticIn)
+		if critErr != nil {
+			// FAIL CLOSED, matching the primary reviewer's error path:
+			// an unavailable critic must not silently become a rubber
+			// stamp. verification.second_opinion=false is the escape
+			// hatch for flaky provider environments.
+			evidence.ReviewPass = false
+			evidence.ReviewOutput = "second-opinion critic error: " + critErr.Error()
+			e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+			e.Worktrees.Cleanup(ctx, handle)
+			_ = e.advanceState(taskstate.Failed, "second-opinion critic error")
+			return nil, fmt.Errorf("second-opinion critic error: %w", critErr)
+		}
+		// Emit before the dissent early-return so the Governor observes
+		// blocking dissents too (same contract as emitReviewEvent).
+		e.emitSecondOpinionEvent(name, cv)
+		if cv.Dissent && cv.Severity == "blocking" {
+			evidence.ReviewPass = false
+			evidence.ReviewOutput = fmt.Sprintf("second-opinion dissent: %s | requested change: %s", cv.Reasoning, cv.RequestedChange)
+			if e.Wisdom != nil {
+				e.Wisdom.Record(e.Task, wisdom.Learning{
+					Category:    wisdom.Gotcha,
+					Description: fmt.Sprintf("second-opinion critic blocked a %s-approved change: %s", verifyRunnerName, cv.Reasoning),
+				})
+			}
+			e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+			e.Worktrees.Cleanup(ctx, handle)
+			_ = e.advanceState(taskstate.Failed, "second-opinion dissent unresolved")
+			return nil, fmt.Errorf("second-opinion dissent (blocking, %d findings): %s", len(cv.Findings), cv.Reasoning)
+		}
+		// Advisory dissent proceeds; its audit trail is the
+		// EventVerifySecondOpinion emitted above (evidence.Findings is
+		// a merge gate and must stay clean for non-blocking concerns).
 	}
 
 	// --- POST-REVIEW REVALIDATION ---

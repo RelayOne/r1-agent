@@ -482,6 +482,21 @@ func (o *Orchestrator) Run(ctx context.Context) (res workflow.Result, err error)
 			}
 		}
 	}
+	// Adversarial second critic at the merge gate: challenges a PASS
+	// verdict from the primary cross-model reviewer. Constructed only
+	// when the policy enables it AND a judge provider exists, so
+	// offline / no-key runs keep today's single-reviewer behavior.
+	// Kill-switches: `verification.second_opinion: false` in the
+	// policy, or R1_DISABLE_SECOND_OPINION=1 for a one-off run.
+	if o.policy.Verification.SecondOpinion && o.policy.Verification.CrossModelReview &&
+		os.Getenv("R1_DISABLE_SECOND_OPINION") != "1" {
+		if critProv := buildJudgeProvider(o.cfg); critProv != nil {
+			wf.SecondCritic = &workflow.LLMSecondCritic{
+				Provider: critProv,
+				Model:    o.cfg.NativeModel,
+			}
+		}
+	}
 	// Bridge verification observability into the v2 governance bus +
 	// ledger on governed runs (audit A037): the workflow engine executes
 	// its own policy-filtered pipeline per attempt, so the bridge

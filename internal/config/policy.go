@@ -345,6 +345,12 @@ type VerificationPolicy struct {
 	Lint             bool `json:"lint"`
 	CrossModelReview bool `json:"cross_model_review"`
 	ScopeCheck       bool `json:"scope_check"`
+	// SecondOpinion enables the adversarial second critic that
+	// challenges a PASSing cross-model review at the merge gate.
+	// Effective only when CrossModelReview is also on AND a judge
+	// provider can be constructed (offline / no-key runs skip it);
+	// `second_opinion: false` is the kill-switch.
+	SecondOpinion bool `json:"second_opinion"`
 }
 
 // DefaultPolicy returns the built-in policy with plan/execute/verify phases and standard protections.
@@ -371,7 +377,7 @@ func DefaultPolicy() Policy {
 			},
 		},
 		Files:        FilesPolicy{Protected: []string{".claude/", ".stoke/", "CLAUDE.md", ".env*", "r1.policy.yaml"}},
-		Verification: VerificationPolicy{Build: true, Tests: true, Lint: true, CrossModelReview: true, ScopeCheck: true},
+		Verification: VerificationPolicy{Build: true, Tests: true, Lint: true, CrossModelReview: true, ScopeCheck: true, SecondOpinion: true},
 		Skills:       DefaultSkillsConfig(),
 		Honesty:      DefaultHonestyConfig(),
 	}
@@ -430,6 +436,7 @@ verification:
   lint: required
   cross_model_review: required
   scope_check: required
+  second_opinion: required
 `
 }
 
@@ -643,7 +650,7 @@ func normalizePolicy(p Policy) Policy {
 	}
 	// Only restore default verification if the section was never explicitly provided.
 	// If a user wrote verification: with all fields false, honor that intent.
-	if !p.verificationExplicit && !p.Verification.Build && !p.Verification.Tests && !p.Verification.Lint && !p.Verification.CrossModelReview && !p.Verification.ScopeCheck {
+	if !p.verificationExplicit && !p.Verification.Build && !p.Verification.Tests && !p.Verification.Lint && !p.Verification.CrossModelReview && !p.Verification.ScopeCheck && !p.Verification.SecondOpinion {
 		p.Verification = d.Verification
 	}
 	// Governance defaults ON when the section was never explicitly provided.
@@ -852,6 +859,8 @@ func parsePolicyYAML(input string) (Policy, error) {
 				p.Verification.CrossModelReview = parsed
 			case "scope_check":
 				p.Verification.ScopeCheck = parsed
+			case "second_opinion":
+				p.Verification.SecondOpinion = parsed
 			default:
 				return Policy{}, fmt.Errorf("unknown verification key %q", key)
 			}

@@ -183,6 +183,8 @@ func (g *Governor) handle(ctx context.Context, ev *hub.Event) *hub.HookResponse 
 		g.onTask(ctx, ev, "failed")
 	case hub.EventVerifyCrossModelReview:
 		g.onReview(ctx, ev)
+	case hub.EventVerifySecondOpinion:
+		g.onSecondOpinion(ctx, ev)
 	case hub.EventVerifyBuildResult:
 		g.onVerify(ctx, ev)
 	case hub.EventMissionPlanStart:
@@ -367,6 +369,91 @@ func (g *Governor) onReview(ctx context.Context, ev *hub.Event) {
 		CreatedBy:     "governance.reviewer",
 		MissionID:     g.missionID,
 		Content:       content,
+	})
+}
+
+// onSecondOpinion records the adversarial second critic's verdict. An
+// "agree" writes a review.agree-style ledger node (the trust rules'
+// literal query strings, same contract as onReview). A "dissent" writes
+// a full nodes.Dissent-shaped node under the literal Type "dissent" AND
+// publishes ledger.node.added on the v2 bus — the first production
+// publisher of that event — so the dormant consensus machinery
+// (DissentRequiresAddress, priority 90) finally fires: the loop
+// transitions to resolving_dissents (persisted by the loops tracker)
+// and consensus.dissent.notification is published. The payload shape
+// matches the consensus rules' nodeAddedPayload (node_id / node_type /
+// status / loop_id / concern); LoopID is scoped to the task so
+// ConvergenceDetected / IterationThreshold observe a coherent loop.
+// The merge block itself lives in the workflow engine — this path is
+// audit/notification only and must never gate v1 execution.
+func (g *Governor) onSecondOpinion(ctx context.Context, ev *hub.Event) {
+	if ev.Lifecycle == nil {
+		return
+	}
+	custom := func(key string) string {
+		if ev.Custom == nil {
+			return ""
+		}
+		v, _ := ev.Custom[key].(string)
+		return v
+	}
+
+	if ev.Lifecycle.State != "dissent" {
+		if ev.Lifecycle.State != "agree" {
+			return
+		}
+		content, err := json.Marshal(map[string]string{"task_id": ev.TaskID})
+		if err != nil {
+			return
+		}
+		_, _ = g.ledger.AddNode(ctx, ledger.Node{
+			Type:          "review.agree",
+			SchemaVersion: 1,
+			CreatedBy:     "governance.second-critic",
+			MissionID:     g.missionID,
+			Content:       content,
+		})
+		return
+	}
+
+	content, err := json.Marshal(map[string]string{
+		"draft_ref":              ev.TaskID,
+		"dissenting_stance_id":   "governance.second-critic",
+		"dissenting_stance_role": "adversarial-reviewer",
+		"reasoning":              custom("reasoning"),
+		"requested_change":       custom("requested_change"),
+		"severity":               custom("severity"),
+		"task_id":                ev.TaskID,
+	})
+	if err != nil {
+		return
+	}
+	nodeID, err := g.ledger.AddNode(ctx, ledger.Node{
+		Type:          "dissent",
+		SchemaVersion: 1,
+		CreatedBy:     "governance.second-critic",
+		MissionID:     g.missionID,
+		Content:       content,
+	})
+	if err != nil {
+		return
+	}
+
+	payload, err := json.Marshal(map[string]string{
+		"node_id":   string(nodeID),
+		"node_type": "dissent",
+		"status":    "open",
+		"loop_id":   ev.TaskID,
+		"concern":   custom("severity"),
+	})
+	if err != nil {
+		return
+	}
+	_ = g.bus.Publish(bus.Event{
+		Type:      bus.EvtLedgerNodeAdded,
+		EmitterID: "governance.second-critic",
+		Scope:     bus.Scope{MissionID: g.missionID, TaskID: ev.TaskID, LoopID: ev.TaskID},
+		Payload:   payload,
 	})
 }
 
