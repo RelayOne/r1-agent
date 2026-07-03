@@ -138,13 +138,13 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	//
 	// OPT-IN for now: the sandbox engages only when the operator sets
 	// R1_NATIVE_SANDBOX explicitly (on|auto|bwrap|landlock|docker).
-	// Default runs stay unsandboxed because current containment only
-	// wraps the bash tool — notebook_cell_run and cron_create still exec
-	// on the host, and a sandboxed bash cannot run git in a linked
-	// worktree — so a default-on sandbox would be false assurance. Once
-	// engaged it is still fail-closed: if the requested backend cannot be
-	// enforced we refuse to dispatch rather than silently degrade. Config
-	// is env-first for the same reason as the policy gate
+	// Host-exec tools that can't be wrapped (notebook_cell_run/cron_create)
+	// are denied while engaged, and the worktree's real .git is allow-listed
+	// so git works; the sandbox stays opt-in only because egress is
+	// boolean-allow by default (no per-domain filtering). Once engaged it is
+	// still fail-closed: if the requested backend cannot be enforced we
+	// refuse to dispatch rather than silently degrade. Config is env-first
+	// for the same reason as the policy gate
 	// (policy_gate.go): NewNativeRunner has too many call sites to thread
 	// new fields through. See docs/native-sandbox.md.
 	if spec.SandboxEnabled {
@@ -152,10 +152,17 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 			slog.Info("native sandbox not engaged (opt-in via R1_NATIVE_SANDBOX=on)", "phase", spec.Phase.Name)
 		} else {
 			home, _ := os.UserHomeDir()
+			// A linked worktree's real .git lives OUTSIDE the worktree
+			// (the parent repo's common dir). Grant it write access so
+			// `git` works inside the sandbox — otherwise git status/commit
+			// fail closed. Nil for a normal checkout (its .git is already
+			// under the worktree AllowWrite grant).
+			allowWrite := append([]string(nil), spec.SandboxAllowWrite...)
+			allowWrite = append(allowWrite, sandbox.WorktreeGitDirs(spec.WorktreeDir)...)
 			pol := sandbox.Policy{
 				Mode:       mode,
 				AllowRead:  spec.SandboxAllowRead,
-				AllowWrite: spec.SandboxAllowWrite,
+				AllowWrite: allowWrite,
 				DenyRead: append(sandbox.DefaultDenyRead(home),
 					sandbox.WorkDirDenyRead(spec.WorktreeDir)...),
 				WriteCaches: sandbox.DefaultWriteCaches(home),

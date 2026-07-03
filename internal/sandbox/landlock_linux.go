@@ -74,9 +74,18 @@ func landlockFileAccess(abi int) uint64 {
 // is deliberately absent — that is where the credential stores live — with
 // three narrow exceptions appended in applyLandlock (git/go read their
 // per-user config on every invocation and hard-fail styles vary).
+//
+// /run is deliberately NOT granted wholesale: it holds daemon control
+// sockets (/run/docker.sock, /run/containerd/*, …) whose reachability is a
+// full host escape, and Landlock's allow-list is the only lever here — the
+// DenyRead socket mask (bwrap-only) does not apply to this backend. Instead
+// only the narrow DNS-resolver runtime path is granted so name resolution
+// keeps working when egress is allowed and /etc/resolv.conf symlinks into
+// /run. Anything under /run not listed here is unreadable by construction.
 var landlockROPaths = []string{
 	"/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64",
-	"/etc", "/opt", "/var", "/run", "/proc", "/sys", "/dev",
+	"/etc", "/opt", "/var", "/proc", "/sys", "/dev",
+	"/run/systemd/resolve", // resolv.conf stub target; NOT the daemon sockets under /run
 }
 
 // landlockRWPaths is the baseline write allow-list beyond the policy's
