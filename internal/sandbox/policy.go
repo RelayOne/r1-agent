@@ -27,6 +27,7 @@
 package sandbox
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,14 +154,18 @@ func ImageFromEnv() string {
 // sandboxed commands. These are AF_UNIX endpoints, and egress denial
 // (--unshare-net for bwrap, Landlock's TCP-only net restriction) does NOT
 // cover unix sockets — so a reachable /run/docker.sock is a full host
-// escape regardless of the network posture. The bwrap backend masks each
-// (tmpfs over a dir, /dev/null over a socket file); the Landlock backend
-// cannot rely on this list (it is allow-list-only) and instead keeps these
-// paths out of its read baseline (see landlockROPaths / the narrowed /run
-// grant). Paths are absolute and $HOME-independent, so they are masked even
-// when home is unknown.
+// escape regardless of the network posture.
+//
+// The bwrap backend genuinely masks each (tmpfs over a dir, /dev/null over a
+// socket file), so connect() to it fails. The Landlock backend CANNOT: it
+// does not mediate connect()/bind() on AF_UNIX pathname sockets at all
+// (landlock(7) limitation), and keeping a path out of the read allow-list
+// does nothing to stop connect() to it. The Landlock wrapper therefore fails
+// closed when a reachable daemon socket exists under egress-deny rather than
+// pretend to contain it (see landlockWrapper.Available). Paths are absolute
+// and $HOME-independent, so they are masked even when home is unknown.
 func DefaultDenySockets() []string {
-	return []string{
+	out := []string{
 		"/run/docker.sock",
 		"/var/run/docker.sock",
 		"/run/containerd",     // dir: containerd.sock + .ttrpc live here
@@ -170,6 +175,37 @@ func DefaultDenySockets() []string {
 		"/run/dbus/system_bus_socket",
 		"/run/systemd/private",
 	}
+	// Rootless docker/podman expose their daemon socket under the caller's
+	// XDG runtime dir, /run/user/<uid>/ — just as much a full escape as the
+	// rootful socket, and previously unmasked.
+	if uid := os.Getuid(); uid >= 0 {
+		base := fmt.Sprintf("/run/user/%d", uid)
+		out = append(out,
+			filepath.Join(base, "docker.sock"),
+			filepath.Join(base, "podman", "podman.sock"),
+			filepath.Join(base, "bus"), // rootless dbus session bus
+		)
+	}
+	return out
+}
+
+// ReachableDaemonSocket returns the first well-known daemon control socket
+// that exists on the host as a socket (or the containerd/podman dir that
+// holds one), or "" if none is present. Used by the Landlock backend to fail
+// closed under egress-deny — Landlock cannot block connect() to it, so its
+// mere presence defeats containment.
+func ReachableDaemonSocket() string {
+	for _, p := range DefaultDenySockets() {
+		fi, err := os.Lstat(p)
+		if err != nil {
+			continue
+		}
+		// A socket file, or a dir that plausibly holds a daemon socket.
+		if fi.Mode()&os.ModeSocket != 0 || fi.IsDir() {
+			return p
+		}
+	}
+	return ""
 }
 
 // DefaultDenyRead returns the credential paths (and daemon sockets) masked
