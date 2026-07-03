@@ -290,6 +290,31 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		}
 	}
 
+	// Event-sourced transcript (append-only JSONL of the full
+	// conversation). Fail-open exactly like the worker log: an
+	// unopenable path warns and the run proceeds. All writer methods
+	// are nil-receiver safe so downstream wiring stays unconditional.
+	var tw *transcriptWriter
+	if spec.TranscriptPath != "" && os.Getenv(EnvDisableTranscript) != "1" {
+		var twErr error
+		tw, twErr = newTranscriptWriter(spec.TranscriptPath)
+		if twErr != nil {
+			slog.Warn("transcript disabled: open failed", "path", spec.TranscriptPath, "err", twErr)
+			tw = nil
+		} else {
+			defer tw.Close()
+			tw.meta(transcriptMetaFor(spec, n.model, &wlc))
+		}
+	}
+
+	// Shadow-git checkpoints after each successful mutating tool call.
+	// nil when disabled, kill-switched, or the worktree isn't a git
+	// repo — every downstream use is nil-guarded (fail-open).
+	var shadow *shadowCheckpointer
+	if spec.ShadowCheckpoints && os.Getenv(EnvDisableShadowCheckpoint) != "1" {
+		shadow = newShadowCheckpointer(ctx, spec.WorktreeDir, spec.RuntimeDir)
+	}
+
 	// Create the tool handler that bridges tools.Registry → agentloop.ToolHandler
 	// and dispatches any ExtraTool calls to their attached handler.
 	handler := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
@@ -348,6 +373,17 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 				fmt.Fprintln(workerLog, string(b))
 			}
 		}
+		// Shadow checkpoint after each successful mutating tool call.
+		// take() serializes the git window internally (agentloop runs
+		// parallel tool_use blocks in goroutines); a failure is logged
+		// once and never fails the tool call.
+		if err == nil && shadow.eligible(name, writableTools) {
+			if rec, ckErr := shadow.take(ctx, name); ckErr != nil {
+				shadow.warnFailure(ckErr)
+			} else {
+				tw.checkpoint(rec)
+			}
+		}
 		return result, err
 	}
 
@@ -369,6 +405,18 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		MaxTokens:          16000,
 		SystemPrompt:       systemPrompt,
 		ThinkingBudget:     spec.Phase.ThinkingBudget,
+	}
+
+	// Transcript capture rides the PreTurnHook, which fires with the
+	// full history at the top of every turn — BEFORE compaction, so
+	// entries reflect the raw stream (the wrapped compactor below
+	// records rewrites). The final assistant message is appended after
+	// the last PreTurnHook ever fires; the post-Run flush catches it.
+	if tw != nil {
+		cfg.PreTurnHook = func(_ context.Context, turn int, messages []agentloop.Message) error {
+			tw.appendNew(messages, turn)
+			return nil
+		}
 	}
 
 	// Pre-end-turn build verification (Cline/Aider pattern).
@@ -523,7 +571,14 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	// telemetry reaches the same BudgetTracker as the loop's own turns.
 	if compactionEnabled(spec) {
 		cfg.CompactThreshold = spec.CompactThreshold
-		cfg.CompactFn = buildLLMCondenser(ctx, p, n.model, eventBus, condenserOptions{})
+		condense := buildLLMCondenser(ctx, p, n.model, eventBus, condenserOptions{})
+		// Record every history rewrite in the transcript — replay would
+		// silently diverge from what the model actually saw otherwise.
+		cfg.CompactFn = func(messages []agentloop.Message, estimatedTokens int) []agentloop.Message {
+			out := condense(messages, estimatedTokens)
+			tw.compaction(out)
+			return out
+		}
 	}
 
 	// Create and configure the loop
@@ -550,6 +605,13 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 
 	// Run the loop
 	result, err := loop.Run(ctx, userMessage)
+
+	// Flush the messages no PreTurnHook ever sees (at minimum the final
+	// assistant turn) and seal the transcript with the stop reason.
+	if result != nil {
+		tw.appendNew(result.Messages, result.Turns)
+		tw.end(result.StopReason)
+	}
 
 	duration := time.Since(start)
 	runResult := RunResult{

@@ -99,8 +99,20 @@ type TaskHook interface {
 
 // Engine drives the plan/execute/verify workflow loop for a single task, including retries and merge.
 type Engine struct {
-	RepoRoot         string
-	CortexEnabled    bool // wire deterministic cortex lobes into the native loop (threaded to RunSpec)
+	RepoRoot      string
+	CortexEnabled bool // wire deterministic cortex lobes into the native loop (threaded to RunSpec)
+	// RewindOnRetry makes a failed attempt rewind the worktree to the
+	// pre-attempt shadow-git checkpoint (worktree.RestoreFiles) instead
+	// of the §7 clean rebuild (Cleanup + Prepare + hook install). The
+	// restored state is byte-identical to a fresh worktree — the
+	// baseline is captured before the attempt writes anything — so
+	// behavior only gets faster, never different; any restore error
+	// falls back to the rebuild path. Also turns on per-tool-use shadow
+	// checkpoints in native-runner dispatches (RunSpec.ShadowCheckpoints).
+	// Opt-in: default false preserves the documented clean-worktree
+	// retry contract. Ignored in InPlace/DryRun modes (no per-task git
+	// worktree to restore).
+	RewindOnRetry    bool
 	Task             string
 	TaskType         model.TaskType
 	TaskVerification []string // per-task verification checklist from planner
@@ -595,6 +607,10 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	// attempt's retry prompt so later runs against a persistent wisdom store
 	// get the prior context instead of rediscovering it.
 	var priorFixHint string
+	// Shadow-git checkpoint SHA of the state the current attempt started
+	// from; the RewindOnRetry restore target. Empty when rewind is off or
+	// the baseline capture failed (retry then rebuilds per §7).
+	var rewindBaseline string
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// Budget gate: stop before spending more if over budget.
@@ -622,21 +638,50 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 
 		// §7: "Each retry starts from a clean worktree (fresh copy of main)."
 		// The learning is in the INSTRUCTIONS (retry brief), not in code state.
+		// RewindOnRetry reaches the same clean state by restoring the
+		// pre-attempt checkpoint in place — no rebuild, hooks stay
+		// installed, symlinked/ignored deps survive. Restore failure
+		// falls back to the rebuild path (fail-closed to proven behavior).
 		if attempt > 1 {
 			lastDiff = worktree.DiffSummary(ctx, handle)
-			e.Worktrees.Cleanup(ctx, handle)
-			retryName := fmt.Sprintf("%s-attempt-%d", name, attempt)
-			var prepErr error
-			handle, prepErr = e.Worktrees.Prepare(ctx, retryName)
-			if prepErr != nil {
-				return result, fmt.Errorf("prepare retry worktree: %w", prepErr)
+			rewound := false
+			if e.RewindOnRetry && rewindBaseline != "" {
+				if restoreErr := worktree.RestoreFiles(ctx, handle, rewindBaseline); restoreErr != nil {
+					log.Warn("rewind-on-retry restore failed; rebuilding worktree", "error", restoreErr)
+				} else {
+					log.Info("worktree rewound to pre-attempt checkpoint", "attempt", attempt)
+					rewound = true
+				}
 			}
-			if hookErr := hooks.Install(handle.RuntimeDir); hookErr != nil {
+			if !rewound {
 				e.Worktrees.Cleanup(ctx, handle)
-				return result, fmt.Errorf("hook install failed (safety boundary): %w", hookErr)
+				retryName := fmt.Sprintf("%s-attempt-%d", name, attempt)
+				var prepErr error
+				handle, prepErr = e.Worktrees.Prepare(ctx, retryName)
+				if prepErr != nil {
+					return result, fmt.Errorf("prepare retry worktree: %w", prepErr)
+				}
+				if hookErr := hooks.Install(handle.RuntimeDir); hookErr != nil {
+					e.Worktrees.Cleanup(ctx, handle)
+					return result, fmt.Errorf("hook install failed (safety boundary): %w", hookErr)
+				}
+				result.WorktreePath = handle.Path
+				result.Branch = handle.Branch
 			}
-			result.WorktreePath = handle.Path
-			result.Branch = handle.Branch
+		}
+
+		// Capture the state this attempt starts from so a failed attempt
+		// can rewind instead of rebuilding. Re-taken every attempt: a
+		// rebuild produces a new handle, and re-checkpointing a rewound
+		// tree is cheap (cached stat info). Failure downgrades this
+		// attempt's retry to the rebuild path — never fatal.
+		rewindBaseline = ""
+		if e.RewindOnRetry && !e.InPlace && !e.DryRun {
+			if sha, ckErr := worktree.ShadowCheckpoint(ctx, handle, 0); ckErr != nil {
+				log.Warn("rewind baseline checkpoint failed; a retry will rebuild the worktree", "error", ckErr)
+			} else {
+				rewindBaseline = sha
+			}
 		}
 
 		// Build execute prompt. P1: the plan block rides on the base
@@ -1815,6 +1860,14 @@ func readFileForReviewPrompt(filePath string, src []byte) string {
 
 // buildSpec creates a RunSpec for a phase and worktree handle.
 func (e Engine) buildSpec(phase engine.PhaseSpec, handle worktree.Handle) engine.RunSpec {
+	// Event-sourced transcript, one file per worktree+phase. Lives under
+	// the repo root's .stoke dir — NOT RuntimeDir, which is deleted
+	// between attempts — so it survives as the replay/resume source.
+	// Only the native runner consumes the field; CLI runners keep their
+	// own session transcripts. A rewound retry appends a second dispatch
+	// to the same file (meta entries mark the boundaries).
+	transcriptDir := r1dir.JoinFor(e.RepoRoot, "transcripts")
+	_ = os.MkdirAll(transcriptDir, 0o755)
 	return engine.RunSpec{
 		Prompt:            phase.Prompt,
 		CortexEnabled:     e.CortexEnabled,
@@ -1827,6 +1880,10 @@ func (e Engine) buildSpec(phase engine.PhaseSpec, handle worktree.Handle) engine
 		SandboxDomains:    sandboxDomainsForPhase(phase.Name),
 		SandboxAllowRead:  []string{filepath.Clean(handle.Path), handle.RuntimeDir},
 		SandboxAllowWrite: []string{filepath.Clean(handle.Path)}, // NO .stoke -- harness writes go to RuntimeDir
+		TranscriptPath:    filepath.Join(transcriptDir, handle.Name+"-"+phase.Name+".jsonl"),
+		// Only pay the per-write-tool checkpoint cost when the rewind
+		// path can actually consume the checkpoints.
+		ShadowCheckpoints: e.RewindOnRetry && !e.InPlace && !e.DryRun,
 	}
 }
 
