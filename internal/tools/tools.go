@@ -897,7 +897,7 @@ func (r *Registry) handleEdit(input json.RawMessage) (string, error) {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
-	path, pathErr := r.resolvePath(args.Path)
+	path, pathErr := r.resolveWritePath(args.Path)
 	if pathErr != nil {
 		return "", pathErr
 	}
@@ -959,6 +959,13 @@ func (r *Registry) handleWrite(input json.RawMessage) (string, error) {
 	// source with \\n and \\t double-escaped.)
 	args.Content = maybeUnescapeContent(args.Content)
 
+	// Protected-file deny runs before any content processing so the reason
+	// is unambiguous and we never partially handle a write we will refuse.
+	path, pathErr := r.resolveWritePath(args.Path)
+	if pathErr != nil {
+		return "", pathErr
+	}
+
 	// Pre-flight syntax check on code/data files: reject writes whose
 	// brackets, braces, parens, or string literals are unbalanced. The
 	// model gets a structured error and can retry with corrected
@@ -969,11 +976,6 @@ func (r *Registry) handleWrite(input json.RawMessage) (string, error) {
 	// text, and unknown extensions.
 	if synErr := validateContentSyntax(args.Path, args.Content); synErr != nil {
 		return "", synErr
-	}
-
-	path, pathErr := r.resolvePath(args.Path)
-	if pathErr != nil {
-		return "", pathErr
 	}
 
 	// Ensure parent directory exists
@@ -1206,6 +1208,49 @@ func (r *Registry) resolvePath(path string) (string, error) {
 	return resolved, nil
 }
 
+// resolveWritePath resolves a path for a WRITE and additionally denies the
+// harness/config files that the enforcer PreToolUse hook protects on the
+// Claude Code path. resolvePath only confines to workDir, so without this a
+// native write_file/str_replace/copy-out could overwrite CLAUDE.md, .env,
+// .claude/, .stoke/, .r1/, settings.json, or stoke.policy.yaml inside the
+// worktree — defeating the same protection the sub-agent hook enforces.
+// Fail-closed by default; set R1_ALLOW_PROTECTED_WRITES=1 to disable (e.g.
+// for a harness-authoring workflow that legitimately edits these).
+func (r *Registry) resolveWritePath(path string) (string, error) {
+	resolved, err := r.resolvePath(path)
+	if err != nil {
+		return "", err
+	}
+	if os.Getenv("R1_ALLOW_PROTECTED_WRITES") == "1" {
+		return resolved, nil
+	}
+	if isProtectedWritePath(resolved) {
+		return "", fmt.Errorf("protected file: refusing to write %q (.claude/.stoke/.r1/, CLAUDE.md, .env*, settings.json, stoke.policy.yaml). Set R1_ALLOW_PROTECTED_WRITES=1 to override", path)
+	}
+	return resolved, nil
+}
+
+// isProtectedWritePath reports whether an absolute path names one of the
+// harness/config files the enforcer guards, matching the same list as the
+// Claude Code PreToolUse hook.
+func isProtectedWritePath(resolved string) bool {
+	base := filepath.Base(resolved)
+	switch base {
+	case "CLAUDE.md", "stoke.policy.yaml", "settings.json":
+		return true
+	}
+	if base == ".env" || strings.HasPrefix(base, ".env.") {
+		return true
+	}
+	for _, part := range strings.Split(resolved, string(filepath.Separator)) {
+		switch part {
+		case ".claude", ".stoke", ".r1":
+			return true
+		}
+	}
+	return false
+}
+
 // --- Environment tool handlers ---
 
 func (r *Registry) handleEnvExec(ctx context.Context, input json.RawMessage) (string, error) {
@@ -1283,8 +1328,8 @@ func (r *Registry) handleEnvCopyOut(ctx context.Context, input json.RawMessage) 
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
-	// Resolve local destination path with confinement.
-	dstPath, err := r.resolvePath(args.Dst)
+	// Resolve local destination path with confinement + protected-write deny.
+	dstPath, err := r.resolveWritePath(args.Dst)
 	if err != nil {
 		return "", err
 	}

@@ -22,6 +22,17 @@ func TestBashBreakerBlocksCatastrophes(t *testing.T) {
 		":(){ :|:& };:",                  // fork bomb
 		"chmod -R 000 " + slash,
 		"cat x > /dev/sda",
+		// SECURITY gap #1: split / long / reordered flags must not bypass
+		// the destructive floor (old regex required r-before-f fused).
+		"rm -r -f " + slash,               // split short flags
+		"rm -f -r " + slash,               // split, force first
+		"rm --recursive --force " + slash, // long flags
+		"rm --force --recursive " + home,  // long flags, reordered
+		"rm -r -f " + home,                // split flags on home
+		"rm -r -f $HOME",
+		"rm -r -f ~/",
+		"chmod 777 -R " + slash,           // recursive flag AFTER the mode operand
+		"chown -R root:root " + slash,      // recursive ownership change on root
 	}
 	for _, c := range blocked {
 		if err := bashBreakerCheck(c); err == nil {
@@ -44,6 +55,12 @@ func TestBashBreakerAllowsRealCommands(t *testing.T) {
 		"dd if=input.bin of=output.bin", // file-to-file, not a device
 		"chmod -R 755 ./scripts",
 		"rm -rf /tmp/mybuild/cache", // under /tmp, not root itself
+		// Order-independent parsing must still NOT fire on safe targets.
+		"rm -r -f ./build",             // split flags, relative path
+		"rm --recursive --force ./dist", // long flags, relative path
+		"rm -r -f /tmp/build/x",        // split flags, under /tmp
+		"rm --recursive ./node_modules", // recursive but not forced, safe target
+		"chmod 777 -R ./scripts",       // reordered flag, safe target
 	}
 	for _, c := range allowed {
 		if err := bashBreakerCheck(c); err != nil {

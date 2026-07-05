@@ -22,9 +22,6 @@ import (
 // the payload.
 
 var (
-	// Recursive force-delete of a filesystem root or the home directory.
-	reRmRootHome = regexp.MustCompile(`\brm\s+(-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*\s+.*(/|~|\$HOME|\$\{HOME\})(\s|/|$)`)
-	reRmRfShort  = regexp.MustCompile(`\brm\s+-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*\s+.*(/|~|\$HOME|\$\{HOME\})(\s|/|$)`)
 	// Raw device / disk destruction.
 	reDdDisk = regexp.MustCompile(`\bdd\b[^|;&]*\bof=/dev/(sd|nvme|vd|hd|disk|mmcblk)`)
 	reMkfs   = regexp.MustCompile(`\bmkfs(\.\w+)?\b`)
@@ -32,9 +29,124 @@ var (
 	reRedirDisk = regexp.MustCompile(`>\s*/dev/(sd|nvme|vd|hd|disk|mmcblk)`)
 	// Classic fork bomb.
 	reForkBomb = regexp.MustCompile(`:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:`)
-	// chmod/chown -R against a filesystem root.
-	reChmodRoot = regexp.MustCompile(`\bch(mod|own)\s+(-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR]\S*\s+\S+\s+(/|~|\$HOME)(\s|$)`)
+	// A single operand that names a filesystem root or the home directory
+	// itself (bare `/`, `~`, `$HOME`, `${HOME}`, or a path directly under
+	// them like `~/` or `$HOME/x`). Deliberately does NOT match specific
+	// absolute subtrees such as `/tmp/build` or `/home/eric/proj` — the
+	// always-on floor only fires on the catastrophic root/home targets so it
+	// never false-positives on real build/test cleanup.
+	reRootHomeTarget = regexp.MustCompile(`^(/|~|\$HOME|\$\{HOME\})(/.*)?$`)
 )
+
+// rmDeletesRootHome reports whether a single command segment is a recursive
+// force `rm` of a filesystem root or the home directory. Flags are parsed as
+// independent booleans regardless of order or fusion, so `rm -rf /`,
+// `rm -r -f /`, `rm -f -r ~`, and `rm --recursive --force /` are all caught —
+// the old regex only matched r-before-f fused in a single flag token.
+func rmDeletesRootHome(seg string) bool {
+	fields := strings.Fields(seg)
+	if len(fields) == 0 || fields[0] != "rm" {
+		return false
+	}
+	rec, force := false, false
+	endFlags := false
+	var operands []string
+	for _, t := range fields[1:] {
+		if endFlags {
+			operands = append(operands, t)
+			continue
+		}
+		switch {
+		case t == "--":
+			endFlags = true
+		case strings.HasPrefix(t, "--"):
+			name := strings.TrimPrefix(t, "--")
+			if i := strings.IndexByte(name, '='); i >= 0 {
+				name = name[:i]
+			}
+			switch name {
+			case "recursive":
+				rec = true
+			case "force":
+				force = true
+			}
+		case strings.HasPrefix(t, "-") && len(t) > 1:
+			for _, c := range t[1:] {
+				switch c {
+				case 'r', 'R':
+					rec = true
+				case 'f':
+					force = true
+				}
+			}
+		default:
+			operands = append(operands, t)
+		}
+	}
+	if !rec || !force {
+		return false
+	}
+	for _, op := range operands {
+		if reRootHomeTarget.MatchString(op) {
+			return true
+		}
+	}
+	return false
+}
+
+// chmodRecursiveRoot reports whether a segment recursively changes
+// permissions/ownership on a filesystem root or the home directory. Like
+// rmDeletesRootHome, the recursive flag and the target operand are matched
+// independent of order, so `chmod 777 -R /` (flag after the mode) is caught.
+func chmodRecursiveRoot(seg string) bool {
+	fields := strings.Fields(seg)
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "chmod", "chown", "chgrp":
+	default:
+		return false
+	}
+	rec := false
+	endFlags := false
+	var operands []string
+	for _, t := range fields[1:] {
+		if endFlags {
+			operands = append(operands, t)
+			continue
+		}
+		switch {
+		case t == "--":
+			endFlags = true
+		case strings.HasPrefix(t, "--"):
+			name := strings.TrimPrefix(t, "--")
+			if i := strings.IndexByte(name, '='); i >= 0 {
+				name = name[:i]
+			}
+			if name == "recursive" {
+				rec = true
+			}
+		case strings.HasPrefix(t, "-") && len(t) > 1:
+			for _, c := range t[1:] {
+				if c == 'r' || c == 'R' {
+					rec = true
+				}
+			}
+		default:
+			operands = append(operands, t)
+		}
+	}
+	if !rec {
+		return false
+	}
+	for _, op := range operands {
+		if reRootHomeTarget.MatchString(op) {
+			return true
+		}
+	}
+	return false
+}
 
 // bashBreakerCheck returns a non-nil error naming the reason when command
 // contains an unambiguously catastrophic operation. It splits compound
@@ -53,13 +165,13 @@ func bashBreakerCheck(command string) error {
 			continue
 		}
 		switch {
-		case reRmRootHome.MatchString(seg) || reRmRfShort.MatchString(seg):
+		case rmDeletesRootHome(seg):
 			return fmt.Errorf("blocked by harness breaker: recursive force-delete of a filesystem root or home directory (%q)", seg)
 		case reDdDisk.MatchString(seg) || reRedirDisk.MatchString(seg):
 			return fmt.Errorf("blocked by harness breaker: raw write to a block device (%q)", seg)
 		case reMkfs.MatchString(seg) || reWipefs.MatchString(seg):
 			return fmt.Errorf("blocked by harness breaker: filesystem format/wipe (%q)", seg)
-		case reChmodRoot.MatchString(seg):
+		case chmodRecursiveRoot(seg):
 			return fmt.Errorf("blocked by harness breaker: recursive permission/ownership change on a filesystem root (%q)", seg)
 		}
 	}
