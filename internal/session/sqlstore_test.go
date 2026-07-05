@@ -90,6 +90,54 @@ func TestSQLStoreAttempts(t *testing.T) {
 	}
 }
 
+// TestSaveLearningDuplicateIssueDoesNotWipe proves SaveLearning is atomic:
+// input containing a duplicate `issue` used to DELETE all patterns and then
+// abort mid-loop on the UNIQUE(issue) constraint, leaving the table empty and
+// erasing accumulated learning. It must now either preserve the old data
+// (rollback) or commit the deduplicated new set — never lose everything.
+func TestSaveLearningDuplicateIssueDoesNotWipe(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewSQLStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Seed a durable pattern.
+	if err := s.SaveLearning(&Learning{Patterns: []Pattern{
+		{Issue: "seed-issue", Fix: "seed-fix", Occurrences: 3},
+	}}); err != nil {
+		t.Fatalf("seed SaveLearning: %v", err)
+	}
+
+	// Save a set that contains a duplicate issue — the historical footgun.
+	err = s.SaveLearning(&Learning{Patterns: []Pattern{
+		{Issue: "dup", Fix: "fix-a", Occurrences: 1},
+		{Issue: "dup", Fix: "fix-b", Occurrences: 2},
+		{Issue: "other", Fix: "fix-c", Occurrences: 1},
+	}})
+	if err != nil {
+		t.Fatalf("SaveLearning with duplicate issue should not error: %v", err)
+	}
+
+	// The table must NOT be empty (no silent total wipe).
+	got, err := s.LoadLearning()
+	if err != nil {
+		t.Fatalf("LoadLearning: %v", err)
+	}
+	if len(got.Patterns) == 0 {
+		t.Fatal("patterns table was wiped by a mid-loop failure")
+	}
+	// The deduplicated commit should contain both distinct issues.
+	issues := map[string]bool{}
+	for _, p := range got.Patterns {
+		issues[p.Issue] = true
+	}
+	if !issues["dup"] || !issues["other"] {
+		t.Fatalf("expected issues {dup, other}, got %v", issues)
+	}
+}
+
 func TestSQLStoreStats(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewSQLStore(dir)
