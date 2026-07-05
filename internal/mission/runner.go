@@ -426,15 +426,37 @@ func (r *Runner) runConsensus(ctx context.Context, m *Mission, summary *RunSumma
 		return "", fmt.Errorf("get consensus records: %w", err)
 	}
 
-	// Look at the most recent records for rejection
+	// Collapse to the most recent verdict per model before deciding whether a
+	// rejection still stands. Records are ORDER BY timestamp DESC, so the FIRST
+	// record seen for a given model is its latest verdict. Mirroring HasConsensus
+	// here is essential: a model that rejected earlier and later approved must
+	// NOT keep matching its stale reject record — otherwise the mission can never
+	// complete and every pass re-adds the same blocking gaps.
+	seen := make(map[string]bool)
+	var rejecting []ConsensusRecord
 	for _, rec := range records {
+		if seen[rec.Model] {
+			continue // an older verdict for a model we've already collapsed
+		}
+		seen[rec.Model] = true
 		if rec.Verdict == "reject" || rec.Verdict == "incomplete" {
+			rejecting = append(rejecting, rec)
+		}
+	}
+
+	if len(rejecting) > 0 {
+		for _, rec := range rejecting {
 			log.Printf("[mission] %s consensus rejected by %s: %s", m.ID, rec.Model, rec.Reasoning)
 			// Create gaps from rejection — apply scope expansion
 			// (nothing is "out of scope" or "pre-existing" — everything is in scope)
-			for _, gapDesc := range rec.GapsFound {
+			for i, gapDesc := range rec.GapsFound {
 				gapDesc = expandScope(gapDesc)
-				gapID := fmt.Sprintf("consensus-reject-%s-%d", m.ID, time.Now().UnixNano())
+				// Key the gap ID off the (stable) consensus record ID and the gap's
+				// index within that record rather than time.Now(). AddGap uses
+				// INSERT OR REPLACE, so re-scanning the same rejection re-uses the
+				// same ID and updates in place instead of accumulating duplicate
+				// gaps on every convergence pass.
+				gapID := fmt.Sprintf("consensus-reject-%s-%d-%d", m.ID, rec.ID, i)
 				r.store.AddGap(&Gap{
 					ID:          gapID,
 					MissionID:   m.ID,
@@ -443,8 +465,8 @@ func (r *Runner) runConsensus(ctx context.Context, m *Mission, summary *RunSumma
 					Description: fmt.Sprintf("Consensus rejection by %s: %s", rec.Model, gapDesc),
 				})
 			}
-			return PhaseExecuting, nil
 		}
+		return PhaseExecuting, nil
 	}
 
 	// No consensus yet but no rejections — need more votes

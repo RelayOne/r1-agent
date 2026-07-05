@@ -498,6 +498,93 @@ func TestRunSummary(t *testing.T) {
 	}
 }
 
+// --- Consensus rejection uses latest-per-model verdict ---
+
+// TestRunConsensusStaleRejectDoesNotBlock verifies that a model which rejected
+// in an earlier convergence pass and later approved is NOT held to its stale
+// reject record. Regression for the gap where runConsensus scanned all records
+// and routed back to Executing on the first reject in full history.
+func TestRunConsensusStaleRejectDoesNotBlock(t *testing.T) {
+	runner, store := newTestRunner(t)
+	m := createTestMission(t, store, "m-stale-reject")
+
+	// No PhaseConverged handler registered → with no standing rejection the
+	// runner should auto-complete rather than loop back to Executing.
+
+	// claude rejected first (creating gaps), then later approved.
+	if err := store.RecordConsensus(&ConsensusRecord{
+		MissionID: m.ID, Model: "claude", Verdict: "reject",
+		Reasoning: "missing edge case", GapsFound: []string{"needs edge test"},
+	}); err != nil {
+		t.Fatalf("record reject: %v", err)
+	}
+	if err := store.RecordConsensus(&ConsensusRecord{
+		MissionID: m.ID, Model: "claude", Verdict: "complete",
+	}); err != nil {
+		t.Fatalf("record complete: %v", err)
+	}
+	// codex has not voted yet → HasConsensus is false (needs 2 completes).
+
+	phase, err := runner.runConsensus(context.Background(), m, &RunSummary{})
+	if err != nil {
+		t.Fatalf("runConsensus: %v", err)
+	}
+	// claude's LATEST verdict is complete, so there is no standing rejection.
+	// With no handler and no rejection the runner auto-completes.
+	if phase == PhaseExecuting {
+		t.Fatalf("stale reject must not route back to Executing; got %s", phase)
+	}
+	if phase != PhaseCompleted {
+		t.Fatalf("expected PhaseCompleted, got %s", phase)
+	}
+	// The stale reject must NOT have re-created a blocking gap.
+	gaps, err := store.OpenGaps(m.ID)
+	if err != nil {
+		t.Fatalf("OpenGaps: %v", err)
+	}
+	if len(gaps) != 0 {
+		t.Fatalf("stale reject re-created %d gap(s); want 0", len(gaps))
+	}
+}
+
+// TestRunConsensusStandingRejectDoesNotDuplicateGaps verifies that a genuine
+// standing rejection routes back to Executing and that re-running the same
+// convergence pass reuses stable gap IDs instead of accumulating duplicates.
+func TestRunConsensusStandingRejectDoesNotDuplicateGaps(t *testing.T) {
+	runner, store := newTestRunner(t)
+	m := createTestMission(t, store, "m-standing-reject")
+
+	if err := store.RecordConsensus(&ConsensusRecord{
+		MissionID: m.ID, Model: "claude", Verdict: "reject",
+		Reasoning: "gaps remain", GapsFound: []string{"gap A", "gap B"},
+	}); err != nil {
+		t.Fatalf("record reject: %v", err)
+	}
+	if err := store.RecordConsensus(&ConsensusRecord{
+		MissionID: m.ID, Model: "codex", Verdict: "complete",
+	}); err != nil {
+		t.Fatalf("record complete: %v", err)
+	}
+
+	for pass := 1; pass <= 3; pass++ {
+		phase, err := runner.runConsensus(context.Background(), m, &RunSummary{})
+		if err != nil {
+			t.Fatalf("pass %d runConsensus: %v", pass, err)
+		}
+		if phase != PhaseExecuting {
+			t.Fatalf("pass %d: standing reject should route to Executing, got %s", pass, phase)
+		}
+		gaps, err := store.OpenGaps(m.ID)
+		if err != nil {
+			t.Fatalf("pass %d OpenGaps: %v", pass, err)
+		}
+		// Exactly one gap per GapsFound entry, regardless of how many passes ran.
+		if len(gaps) != 2 {
+			t.Fatalf("pass %d: expected 2 stable gaps, got %d (duplicate re-creation)", pass, len(gaps))
+		}
+	}
+}
+
 // --- Nil Store Returns Error ---
 
 func TestNewRunnerErrorsOnNilStore(t *testing.T) {
