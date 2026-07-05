@@ -358,6 +358,53 @@ describe("session-view — R1D-2.2 tool-use rendering via buildTurnElement", () 
     expect(toggle!.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("assigns a distinct data-tool-idx per tool block", () => {
+    const turn = {
+      id: "turn-multi-idx",
+      role: "assistant" as const,
+      chunks: [],
+      tools: [
+        { name: "bash", input: { cmd: "a" }, expanded: false },
+        { name: "read_file", input: { path: "b" }, expanded: false },
+        { name: "grep", input: { q: "c" }, expanded: false },
+      ],
+      status: "done" as const,
+    };
+    const li = buildTurnElement(turn as Parameters<typeof buildTurnElement>[0]);
+    const toggles = li.querySelectorAll<HTMLButtonElement>('[data-role="tool-toggle"]');
+    expect(toggles.length).toBe(3);
+    expect(toggles[0].dataset.toolIdx).toBe("0");
+    expect(toggles[1].dataset.toolIdx).toBe("1");
+    expect(toggles[2].dataset.toolIdx).toBe("2");
+  });
+
+  it("toggles only the clicked tool block, not tools[0] (multi-tool regression)", () => {
+    const turn = {
+      id: "turn-multi-toggle",
+      role: "assistant" as const,
+      chunks: [],
+      tools: [
+        { name: "bash", input: { cmd: "a" }, expanded: false },
+        { name: "read_file", input: { path: "b" }, expanded: false },
+      ],
+      status: "done" as const,
+    };
+    const li = buildTurnElement(turn as Parameters<typeof buildTurnElement>[0]);
+    const blocks = li.querySelectorAll(".r1-sv-tool-block");
+    const bodies = li.querySelectorAll<HTMLElement>('[data-role="tool-body"]');
+    const toggles = li.querySelectorAll<HTMLButtonElement>('[data-role="tool-toggle"]');
+    // Click the SECOND tool's toggle.
+    toggles[1].click();
+    // The second tool expands; the first is untouched.
+    expect(turn.tools[1].expanded).toBe(true);
+    expect(turn.tools[0].expanded).toBe(false);
+    expect(bodies[1].hidden).toBe(false);
+    expect(bodies[0].hidden).toBe(true);
+    expect(toggles[1].getAttribute("aria-expanded")).toBe("true");
+    expect(toggles[0].getAttribute("aria-expanded")).toBe("false");
+    expect(blocks.length).toBe(2);
+  });
+
   it("renders streaming indicator for streaming turns", () => {
     const turn = {
       id: "turn-5",
@@ -438,6 +485,48 @@ describe("session-view — R1D-2.3 markdown rendering", () => {
     // The raw script tag must not appear unescaped
     expect(li.innerHTML).not.toContain("<script>");
     expect(li.innerHTML).toContain("&lt;script&gt;");
+  });
+
+  it("escapes raw HTML in assistant/tool PROSE (stored-XSS regression)", () => {
+    // Prose originates from streamed LLM output / tool_result content and is
+    // written via li.innerHTML. A raw tag here must render as inert text, not
+    // a live element, or it executes inside the Tauri renderer (host IPC).
+    const turn = {
+      id: "turn-xss-prose",
+      role: "assistant" as const,
+      chunks: ["Look here: <img src=x onerror=alert(1)> and more"],
+      tools: [],
+      status: "done" as const,
+    };
+    const li = buildTurnElement(turn as Parameters<typeof buildTurnElement>[0]);
+    // No live <img> tag may exist in the rendered DOM (so onerror never fires).
+    expect(li.querySelector("img")).toBeNull();
+    // The tag must not survive as raw markup — only as escaped text.
+    expect(li.innerHTML).not.toContain("<img");
+    // The payload must appear as escaped text instead.
+    expect(li.innerHTML).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    // The visible text content is preserved verbatim.
+    const body = li.querySelector(".r1-sv-turn-text");
+    expect(body!.textContent).toContain("<img src=x onerror=alert(1)>");
+  });
+
+  it("still escapes raw tags inside fenced/inline code (no double-encoding)", () => {
+    const turn = {
+      id: "turn-code-escape",
+      role: "assistant" as const,
+      chunks: ["Inline `<b>&</b>` and:\n\n```html\n<b>&amp;</b>\n```"],
+      tools: [],
+      status: "done" as const,
+    };
+    const li = buildTurnElement(turn as Parameters<typeof buildTurnElement>[0]);
+    // No live <b> from the code content.
+    expect(li.querySelector(".r1-sv-turn-text b")).toBeNull();
+    // Inline code text preserved exactly (single-encoded, not &amp;amp;).
+    const inline = li.querySelector("code");
+    expect(inline!.textContent).toBe("<b>&</b>");
+    // Fenced code text preserved exactly.
+    const block = li.querySelector(".r1-sv-code-block code");
+    expect(block!.textContent).toBe("<b>&amp;</b>");
   });
 });
 

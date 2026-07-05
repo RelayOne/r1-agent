@@ -777,84 +777,11 @@ function refreshTurnElement(root: HTMLElement, turn: Turn): void {
   if (transcript) transcript.scrollTop = transcript.scrollHeight;
 }
 
+// buildTurnElement renders one transcript turn (prose + per-tool collapsible
+// blocks). Each tool block carries its own stable `data-tool-idx` so the
+// expand/collapse toggle mutates the correct tool (a prior non-indexed variant
+// hard-coded idx=0, making every tool block toggle tools[0]).
 function buildTurnElement(turn: Turn): HTMLLIElement {
-  const li = document.createElement("li");
-  li.className = `r1-sv-turn r1-sv-turn-${turn.role}`;
-  li.dataset.turnId = turn.id;
-  if (turn.status === "streaming") li.classList.add("is-streaming");
-  if (turn.status === "cancelled") li.classList.add("is-cancelled");
-
-  const roleLabel = turn.role === "assistant" ? "R1" : turn.role === "user" ? "You" : "System";
-  const textContent = turn.chunks.join("");
-
-  // R1D-2.3: rudimentary Markdown-to-HTML (code blocks + inline code).
-  const renderedText = renderMarkdown(textContent);
-
-  const toolBlocks = turn.tools.map((t) => buildToolBlock(t, turn.id)).join("");
-
-  li.innerHTML = `
-    <div class="r1-sv-turn-header">
-      <span class="r1-sv-turn-role">${escapeHtml(roleLabel)}</span>
-      ${turn.status === "streaming" ? `<span class="r1-sv-streaming-indicator" aria-label="Streaming">...</span>` : ""}
-      ${turn.status === "cancelled" ? `<span class="r1-sv-cancelled-badge">cancelled</span>` : ""}
-    </div>
-    <div class="r1-sv-turn-body">
-      ${renderedText ? `<div class="r1-sv-turn-text">${renderedText}</div>` : ""}
-      ${toolBlocks}
-    </div>
-  `;
-
-  // Wire tool-block expand/collapse.
-  li.querySelectorAll<HTMLButtonElement>('[data-role="tool-toggle"]').forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const idx = parseInt(btn.dataset.toolIdx ?? "0", 10);
-      const tool = turn.tools[idx];
-      if (!tool) return;
-      tool.expanded = !tool.expanded;
-      const body = btn.closest(".r1-sv-tool-block")?.querySelector<HTMLElement>(
-        '[data-role="tool-body"]',
-      );
-      if (body) body.hidden = !tool.expanded;
-      btn.setAttribute("aria-expanded", String(tool.expanded));
-      btn.textContent = tool.expanded ? "Collapse" : "Expand";
-    });
-  });
-
-  return li;
-}
-
-function buildToolBlock(tool: ToolBlock, _turnId: string): string {
-  const idx = 0; // injected per-tool below in the map caller
-  return `
-    <details class="r1-sv-tool-block" open="${tool.expanded}">
-      <summary class="r1-sv-tool-summary">
-        <span class="r1-sv-tool-name">${escapeHtml(tool.name)}</span>
-        <button
-          type="button"
-          class="r1-btn r1-sv-tool-toggle"
-          data-role="tool-toggle"
-          data-tool-idx="${idx}"
-          aria-expanded="${tool.expanded}"
-        >${tool.expanded ? "Collapse" : "Expand"}</button>
-      </summary>
-      <div class="r1-sv-tool-body" data-role="tool-body" ${tool.expanded ? "" : "hidden"}>
-        <div class="r1-sv-tool-section">
-          <span class="r1-sv-tool-label">Input</span>
-          <pre class="r1-sv-tool-pre"><code>${escapeHtml(safeStringify(tool.input))}</code></pre>
-        </div>
-        ${tool.output !== undefined
-          ? `<div class="r1-sv-tool-section">
-               <span class="r1-sv-tool-label">Output</span>
-               <pre class="r1-sv-tool-pre"><code>${escapeHtml(tool.output)}</code></pre>
-             </div>`
-          : ""}
-      </div>
-    </details>
-  `;
-}
-
-// Rebuild tool blocks with correct indices before rendering.
-function buildTurnElementWithIndexedTools(turn: Turn): HTMLLIElement {
   const li = document.createElement("li");
   li.className = `r1-sv-turn r1-sv-turn-${turn.role}`;
   li.dataset.turnId = turn.id;
@@ -926,17 +853,6 @@ function buildTurnElementWithIndexedTools(turn: Turn): HTMLLIElement {
   return li;
 }
 
-// Override buildTurnElement to use the indexed version.
-// (The non-indexed version above is kept for reference but this
-//  one is used by all call-sites via module-level reassignment.)
-const _buildTurnElement = buildTurnElementWithIndexedTools;
-
-// Re-export so refreshTurnElement and appendTurnElement call the real one.
-// We patch the module-level references at the bottom of the file.
-function buildTurnElementFinal(turn: Turn): HTMLLIElement {
-  return _buildTurnElement(turn);
-}
-
 // -------------------------------------------------------------------
 // Markdown renderer (R1D-2.3)
 // -------------------------------------------------------------------
@@ -944,17 +860,30 @@ function buildTurnElementFinal(turn: Turn): HTMLLIElement {
 function renderMarkdown(text: string): string {
   if (!text) return "";
 
-  // Fenced code blocks (``` lang\ncode\n```).
-  let html = text.replace(
+  // SECURITY (stored-XSS fix): HTML-escape the FULL text before any markdown
+  // transform. Turn prose originates from streamed LLM output and tool_result
+  // content, which may contain raw tags (e.g. `<img src=x onerror=...>`). This
+  // renderer's output is written via li.innerHTML, so any un-escaped tag would
+  // execute inside the Tauri renderer (which holds host IPC). Escaping up-front
+  // neutralizes every raw tag; the markdown regexes below then run against the
+  // already-escaped string. Because the text is escaped once here, the code /
+  // inline-code branches must NOT re-escape (that would double-encode `&`).
+  let html = escapeHtml(text);
+
+  // Fenced code blocks (``` lang\ncode\n```). Backticks and newlines survive
+  // escaping, so the fence structure is preserved; `code` is already escaped.
+  html = html.replace(
     /```(\w*)\n([\s\S]*?)```/g,
     (_match, lang, code: string) => {
-      const langAttr = lang ? ` class="language-${escapeHtml(lang)}"` : "";
-      return `<pre class="r1-sv-code-block"><code${langAttr}>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`;
+      // `lang` is [\w]* so it cannot carry markup; escaping is a harmless no-op
+      // that also avoids double-encoding.
+      const langAttr = lang ? ` class="language-${lang}"` : "";
+      return `<pre class="r1-sv-code-block"><code${langAttr}>${code.replace(/\n$/, "")}</code></pre>`;
     },
   );
 
-  // Inline code (`code`).
-  html = html.replace(/`([^`\n]+)`/g, (_m, code: string) => `<code>${escapeHtml(code)}</code>`);
+  // Inline code (`code`). Content is already escaped above.
+  html = html.replace(/`([^`\n]+)`/g, (_m, code: string) => `<code>${code}</code>`);
 
   // **bold** and *italic*.
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
@@ -998,5 +927,5 @@ function escapeAttributeValue(raw: string): string {
   return raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-// Export the canonical builder (indexed version).
-export { buildTurnElementFinal as buildTurnElement };
+// Export the canonical builder (per-tool indexed version).
+export { buildTurnElement };
