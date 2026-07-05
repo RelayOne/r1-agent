@@ -276,8 +276,12 @@ func (m *Manager) UpdateUtilization(poolID string, fiveHour, sevenDay float64, f
 		m.pools[i].SevenDayResetsAt = sevenDayReset
 		m.pools[i].LastPolled = time.Now()
 
-		// Reclassify status if not busy
-		if m.pools[i].Status != StatusBusy {
+		// Reclassify status if not busy. Never overwrite an open circuit
+		// breaker while its backoff window is still in the future — otherwise
+		// the poller silently clears the breaker and Acquire re-selects a
+		// rate-limited pool mid-backoff.
+		breakerOpen := m.pools[i].Status == StatusCircuitOpen && time.Now().Before(m.pools[i].CircuitBreakerUntil)
+		if m.pools[i].Status != StatusBusy && !breakerOpen {
 			switch {
 			case fiveHour > 95:
 				m.pools[i].Status = StatusExhausted
