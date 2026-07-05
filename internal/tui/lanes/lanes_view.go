@@ -8,6 +8,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // View is the canonical Bubble Tea v2 View entry point. It dispatches
@@ -305,7 +306,9 @@ func renderLanePeer(l *Lane, width int) string {
 		costStr,
 	)
 	if lipgloss.Width(row) > width {
-		row = row[:width]
+		// Width-aware, grapheme-safe cut: byte-slicing here would sever a
+		// multibyte rune (row can carry non-ASCII lane titles/activity).
+		row = ansi.Truncate(row, width, "")
 	}
 	return row
 }
@@ -423,7 +426,7 @@ func (m *Model) viewStatusBar(w int) string {
 	// width < 50 — collapse to short form: [N a M d X e] $cost.
 	short := fmt.Sprintf(" [%d a %d d %d e] $%.4f", active, done, errored, m.totalCost)
 	if lipgloss.Width(short) > w {
-		short = short[:w]
+		short = ansi.Truncate(short, w, "")
 	}
 	return statusBarStyle.Render(short)
 }

@@ -13,7 +13,7 @@
 //      every (re)connect with the per-session lastSeq from
 //      `store.sessions.lastSeq` (Last-Event-ID replay).
 //   7. Cleans up on unmount with a deliberate close (code 1000).
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { R1dClient } from "@/lib/api/r1d";
 import type { DaemonStore } from "@/lib/store/daemonStore";
 import type {
@@ -93,6 +93,9 @@ export function useDaemonSocket(opts: UseDaemonSocketOptions): UseDaemonSocketRe
       onHardCap: () => {
         s.getState().setHardCapped(true);
       },
+      onLatency: (ms) => {
+        s.getState().setLatency(ms);
+      },
       onSchemaError: (zerr, raw) => {
         onSchemaErrorRef.current?.(raw, zerr.message);
       },
@@ -156,5 +159,15 @@ export function useDaemonSocket(opts: UseDaemonSocketOptions): UseDaemonSocketRe
     clientRef.current.interrupt(sessionId);
   }, []);
 
-  return { subscribe, unsubscribe, sendMessage, interrupt, connect, disconnect };
+  // Memoize the returned handle so its identity is stable across
+  // renders. All deps are stable useCallbacks (empty dep arrays), so
+  // this memo never invalidates in practice — but callers that list the
+  // handle in an effect dependency array (e.g. SessionView / LaneFocus
+  // subscribe effects) must not see a new object every render, or they
+  // tear down and re-establish the WS subscription (and re-fire
+  // listLanes) on every streaming batch. See gap audit 2026-07-05.
+  return useMemo(
+    () => ({ subscribe, unsubscribe, sendMessage, interrupt, connect, disconnect }),
+    [subscribe, unsubscribe, sendMessage, interrupt, connect, disconnect],
+  );
 }

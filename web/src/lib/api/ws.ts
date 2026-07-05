@@ -53,6 +53,10 @@ export interface ResilientSocketOptions {
   onSchemaError?: (err: z.ZodError, raw: unknown) => void;
   /** Called when a non-JSON server frame arrives. */
   onParseError?: (raw: unknown) => void;
+  /** Called with the measured ping→pong round-trip time in ms whenever
+   *  the heartbeat completes a cycle (link quiet enough for a ping to
+   *  fire and a pong to return). */
+  onLatency?: (ms: number) => void;
 
   // Knobs (defaults below match the spec verbatim).
   baseBackoffMs?: number;       // 250
@@ -66,6 +70,8 @@ export interface ResilientSocketOptions {
   webSocketImpl?: typeof WebSocket;
   /** Test injection. Default: Math.random. */
   random?: () => number;
+  /** Test injection. Default: Date.now. Used to measure heartbeat RTT. */
+  now?: () => number;
 }
 
 const DEFAULTS = {
@@ -84,12 +90,13 @@ const CLOSE_NORMAL = 1000;
 export class ResilientSocket {
   private readonly opts: Required<Omit<ResilientSocketOptions,
     "getLastEventId" | "getSubscribedSessions" | "onStateChange" | "onHardCap" |
-    "onSchemaError" | "onParseError" | "webSocketImpl" | "random">> &
+    "onSchemaError" | "onParseError" | "onLatency" | "webSocketImpl" | "random" | "now">> &
     Pick<ResilientSocketOptions, "getLastEventId" | "getSubscribedSessions" | "onStateChange" |
-    "onHardCap" | "onSchemaError" | "onParseError">;
+    "onHardCap" | "onSchemaError" | "onParseError" | "onLatency">;
 
   private readonly webSocketImpl: typeof WebSocket;
   private readonly random: () => number;
+  private readonly now: () => number;
 
   private socket: WebSocket | undefined;
   private currentState: ResilientSocketState = "idle";
@@ -102,6 +109,9 @@ export class ResilientSocket {
   // Heartbeat
   private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
   private pongTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Timestamp (via this.now) of the most recent outstanding ping, or
+   *  undefined when no ping is awaiting a pong. Used to measure RTT. */
+  private lastPingSentAt: number | undefined;
   // Reconnect scheduling
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   // Manual close flag prevents auto-reconnect after .close().
@@ -118,6 +128,7 @@ export class ResilientSocket {
       ...(opts.onHardCap !== undefined && { onHardCap: opts.onHardCap }),
       ...(opts.onSchemaError !== undefined && { onSchemaError: opts.onSchemaError }),
       ...(opts.onParseError !== undefined && { onParseError: opts.onParseError }),
+      ...(opts.onLatency !== undefined && { onLatency: opts.onLatency }),
       baseBackoffMs: opts.baseBackoffMs ?? DEFAULTS.baseBackoffMs,
       maxBackoffMs: opts.maxBackoffMs ?? DEFAULTS.maxBackoffMs,
       jitterMs: opts.jitterMs ?? DEFAULTS.jitterMs,
@@ -127,6 +138,7 @@ export class ResilientSocket {
     };
     this.webSocketImpl = opts.webSocketImpl ?? (globalThis.WebSocket as typeof WebSocket);
     this.random = opts.random ?? Math.random;
+    this.now = opts.now ?? (() => Date.now());
   }
 
   // -------------------------------------------------------------------------
@@ -285,6 +297,14 @@ export class ResilientSocket {
       return;
     }
     const env = parsed.data;
+    // Heartbeat RTT: a pong replies to our most recent ping. Measure
+    // BEFORE resetHeartbeat (which clears lastPingSentAt) so the sample
+    // isn't lost. Only report when a ping is actually outstanding.
+    if (env.type === "pong" && this.lastPingSentAt !== undefined) {
+      const rtt = this.now() - this.lastPingSentAt;
+      this.lastPingSentAt = undefined;
+      if (rtt >= 0) this.opts.onLatency?.(rtt);
+    }
     this.receivedSinceOpen++;
     this.resetHeartbeat();
 
@@ -317,6 +337,8 @@ export class ResilientSocket {
   private scheduleNextPing(): void {
     this.heartbeatTimer = setTimeout(() => {
       if (this.currentState !== "open" || !this.socket) return;
+      // Stamp the send time so the matching pong yields an RTT sample.
+      this.lastPingSentAt = this.now();
       this.safeSend({ type: "ping" });
       // Watchdog: server has pongTimeoutMs to reply.
       this.pongTimer = setTimeout(() => {
@@ -336,6 +358,9 @@ export class ResilientSocket {
       clearTimeout(this.pongTimer);
       this.pongTimer = undefined;
     }
+    // Drop any outstanding ping timestamp; a pong that arrives after a
+    // heartbeat reset / reconnect must not produce a bogus RTT sample.
+    this.lastPingSentAt = undefined;
   }
 
   // -------------------------------------------------------------------------

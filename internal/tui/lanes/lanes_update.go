@@ -5,6 +5,7 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Update is the canonical Bubble Tea v2 Update method. It dispatches on
@@ -83,11 +84,42 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case laneListMsg:
 		m.mu.Lock()
-		// Replay: install snapshots without dropping any in-flight
-		// state we already have. The producer guarantees laneListMsg
-		// arrives before any tick / start for the same lane in the
-		// same flush window, so a simple "install missing, update
-		// existing" pass is correct.
+		// Replay: a laneListMsg is always a FULL authoritative snapshot
+		// (emitted once on subscribe and re-emitted on every reconnect),
+		// so it is the reconciliation source of truth. Install missing,
+		// update existing, and — critically — prune any lane we hold that
+		// is absent from the snapshot. Without the prune, a lane the
+		// daemon reaped while the TUI was disconnected would render
+		// forever and keep inflating status-bar counts / aggregate cost
+		// after a reconnect resubscribe.
+		snapIDs := make(map[string]struct{}, len(msg.Lanes))
+		for _, snap := range msg.Lanes {
+			snapIDs[snap.ID] = struct{}{}
+		}
+		if len(m.lanes) > 0 {
+			kept := m.lanes[:0]
+			for _, l := range m.lanes {
+				if _, present := snapIDs[l.ID]; present {
+					kept = append(kept, l)
+					continue
+				}
+				// Dropping this lane: clear any pending kill-confirm that
+				// targeted it so the modal can't dangle on a gone lane.
+				if m.confirmKill == l.ID {
+					m.confirmKill = ""
+				}
+			}
+			m.lanes = kept
+			// laneIndex is rebuilt below after the install/sort pass;
+			// stale entries are harmless until then because the install
+			// loop re-derives indices via the map lookup on live lanes
+			// only. Rebuild it now so the update-existing lookups below
+			// don't hit indices past the trimmed slice.
+			m.laneIndex = make(map[string]int, len(m.lanes))
+			for i, l := range m.lanes {
+				m.laneIndex[l.ID] = i
+			}
+		}
 		for _, snap := range msg.Lanes {
 			if idx, ok := m.laneIndex[snap.ID]; ok {
 				l := m.lanes[idx]
@@ -231,8 +263,15 @@ func (m *Model) recalcAggregates() {
 	m.totalLanes = len(m.lanes)
 }
 
-// truncate returns s clipped to n cells with an ellipsis suffix when
-// clipping was needed. n<=0 returns the empty string.
+// truncate returns s clipped to n display cells with an ellipsis suffix
+// when clipping was needed. n<=0 returns the empty string.
+//
+// Lane titles/roles/models and especially Activity come straight from
+// streamed LLM output and routinely contain non-ASCII text (em dashes,
+// curly quotes, emoji, CJK). ansi.Truncate measures East-Asian / emoji
+// display width and cuts on grapheme (rune) boundaries, so a multibyte
+// rune is never sliced in half into invalid UTF-8. The ellipsis counts
+// toward the n-cell budget, matching the old n-1 + "…" contract.
 //
 // Used by lanes_view.go renderers; lives here so tests in any sibling
 // file pick it up without import cycles.
@@ -240,12 +279,6 @@ func truncate(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
-	if len(s) <= n {
-		return s
-	}
-	if n <= 1 {
-		return "…"
-	}
-	return s[:n-1] + "…"
+	return ansi.Truncate(s, n, "…")
 }
 
