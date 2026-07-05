@@ -568,6 +568,64 @@ func TestDelayedEventSurvivesRestart(t *testing.T) {
 	})
 }
 
+// TestFiredDelayedEventDoesNotReplayAfterRestart proves that once a delayed
+// event's timer has fired and published, reopening the bus does NOT resurrect
+// and re-publish it (which previously caused duplicate side effects, since the
+// WAL only recorded schedule/cancel and never marked an entry as fired).
+func TestFiredDelayedEventDoesNotReplayAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+
+	b, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Count deliveries in the first incarnation and let the timer fire.
+	var firstCount int
+	var mu sync.Mutex
+	b.Subscribe(Pattern{TypePrefix: "worker."}, func(e Event) {
+		mu.Lock()
+		firstCount++
+		mu.Unlock()
+	})
+
+	evt := makeEvent(EvtWorkerSpawned, "w1")
+	if _, err = b.PublishDelayed(evt, 20*time.Millisecond); err != nil {
+		t.Fatalf("PublishDelayed: %v", err)
+	}
+
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return firstCount >= 1
+	})
+
+	b.Close()
+
+	// Reopen: the fired entry must not be replayed.
+	b2, err := New(dir)
+	if err != nil {
+		t.Fatalf("New (reopen): %v", err)
+	}
+	defer b2.Close()
+
+	var replayed int
+	var mu2 sync.Mutex
+	b2.Subscribe(Pattern{TypePrefix: "worker."}, func(e Event) {
+		mu2.Lock()
+		replayed++
+		mu2.Unlock()
+	})
+
+	time.Sleep(200 * time.Millisecond)
+
+	mu2.Lock()
+	defer mu2.Unlock()
+	if replayed != 0 {
+		t.Fatalf("fired delayed event was replayed after restart: got %d re-publications, want 0", replayed)
+	}
+}
+
 func TestCancellationSurvivesRestart(t *testing.T) {
 	dir := t.TempDir()
 

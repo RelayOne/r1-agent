@@ -11,7 +11,7 @@ import (
 
 // walDelayedRecord is the on-disk format for delayed event entries.
 type walDelayedRecord struct {
-	Action string        `json:"action"` // "schedule" or "cancel"
+	Action string        `json:"action"` // "schedule", "cancel", or "fired"
 	Entry  *delayedEntry `json:"entry,omitempty"`
 	ID     string        `json:"id,omitempty"` // for cancel actions
 }
@@ -203,6 +203,29 @@ func (w *WAL) AppendDelayedCancel(id string) error {
 	return w.delayedFile.Sync()
 }
 
+// AppendDelayedFired persists that a delayed event's timer has fired and the
+// event has been (or is about to be) published. It is a terminal record so
+// ReadDelayed will not resurrect and re-publish the entry after a restart.
+func (w *WAL) AppendDelayedFired(id string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	rec := walDelayedRecord{
+		Action: "fired",
+		ID:     id,
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+
+	if _, err := w.delayedFile.Write(data); err != nil {
+		return err
+	}
+	return w.delayedFile.Sync()
+}
+
 // ReadDelayed reads and replays the delayed log, returning only entries
 // that are still pending (scheduled but not cancelled and not yet fired).
 func (w *WAL) ReadDelayed() ([]*delayedEntry, error) {
@@ -230,7 +253,7 @@ func (w *WAL) ReadDelayed() ([]*delayedEntry, error) {
 			if rec.Entry != nil {
 				pending[rec.Entry.ID] = rec.Entry
 			}
-		case "cancel":
+		case "cancel", "fired":
 			delete(pending, rec.ID)
 		}
 	}
