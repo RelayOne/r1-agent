@@ -26,6 +26,7 @@
 package a2a
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -265,9 +266,14 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 
 // checkBearer tests `Authorization: Bearer <token>` against
 // the configured token. Case-insensitive on the "Bearer"
-// prefix; exact match on the token itself.
+// prefix; the token itself is compared in constant time so
+// the auth boundary does not leak token length or matched
+// prefix length via response timing (matches server/auth_middleware.go).
 func checkBearer(header, want string) bool {
-	if header == "" {
+	// Fail closed: an unset configured token never authenticates anything
+	// (the caller already skips auth when no token is set; this is defense
+	// in depth so an empty `want` can't be matched by an empty presented token).
+	if header == "" || want == "" {
 		return false
 	}
 	parts := strings.SplitN(header, " ", 2)
@@ -277,7 +283,8 @@ func checkBearer(header, want string) bool {
 	if !strings.EqualFold(parts[0], "Bearer") {
 		return false
 	}
-	return parts[1] == want
+	return len(parts[1]) == len(want) &&
+		subtle.ConstantTimeCompare([]byte(parts[1]), []byte(want)) == 1
 }
 
 func writeRPCResult(w http.ResponseWriter, id json.RawMessage, result any) {
