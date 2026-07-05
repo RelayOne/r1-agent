@@ -121,9 +121,15 @@ deploy_one() {
       args+=(--set-env-vars="R1_BUCKET=relayone-488319-r1-releases")
       ;;
     r1-coord-api)
-      # Coord API needs DB + JWT secret + Cloud SQL unix socket mount.
-      args+=(--set-secrets="DATABASE_URL=r1-$env-shared-DATABASE_URL:latest,AUTH_JWT_SECRET=r1-$env-shared-AUTH_JWT_SECRET:latest")
-      args+=(--add-cloudsql-instances="$PROJECT:$REGION:r1-$env-pg")
+      # Coord API needs the shared JWT secret to mint/verify tokens.
+      # DATABASE_URL + the Cloud SQL mount were dropped (audit A089): no
+      # services/ module reads DATABASE_URL, and binding an unused secret +
+      # mounting a Cloud SQL instance (r1-$env-pg) that may not exist made
+      # the deploy fail before the service ever started. This matches
+      # services/cloudbuild-deploy.yaml, which binds only AUTH_JWT_SECRET +
+      # CODERADAR_DSN for coord-api. Re-add both only alongside a coord-api
+      # persistence layer that actually consumes DATABASE_URL.
+      args+=(--set-secrets="AUTH_JWT_SECRET=r1-$env-shared-AUTH_JWT_SECRET:latest")
       ;;
     r1-admin)
       # Admin needs the coord-api URL so its widgets can hit /api/sessions etc.
