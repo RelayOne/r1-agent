@@ -399,3 +399,85 @@ func TestSetResult_ClearsError(t *testing.T) {
 		t.Errorf("Completed task with Result should have empty Error, got %q", got.Error)
 	}
 }
+
+// TestSubmit_BoundedEvictsTerminalTasks proves the store caps its size by
+// evicting old terminal tasks instead of growing without bound.
+func TestSubmit_BoundedEvictsTerminalTasks(t *testing.T) {
+	store := NewInMemoryTaskStore()
+	store.SetLimits(3, time.Hour)
+	ctx := context.Background()
+
+	// Fill the store with 3 terminal (canceled) tasks.
+	for i := 0; i < 3; i++ {
+		task, err := store.Submit(ctx, nil)
+		if err != nil {
+			t.Fatalf("submit %d: %v", i, err)
+		}
+		if _, err := store.Transition(ctx, task.ID, TaskCanceled, "cancel"); err != nil {
+			t.Fatalf("cancel %d: %v", i, err)
+		}
+	}
+
+	// A 4th submit must succeed by evicting an old terminal task, keeping
+	// the store bounded at the cap.
+	if _, err := store.Submit(ctx, nil); err != nil {
+		t.Fatalf("4th submit should evict + succeed: %v", err)
+	}
+	all, _ := store.List(ctx)
+	if len(all) > 3 {
+		t.Fatalf("store grew past cap: len=%d, want <=3", len(all))
+	}
+}
+
+// TestSubmit_FailsClosedWhenFullOfLiveTasks proves an unauthenticated peer
+// cannot exhaust memory: when the cap is reached and every task is still
+// in-flight (non-terminal, hence non-evictable), Submit fails closed.
+func TestSubmit_FailsClosedWhenFullOfLiveTasks(t *testing.T) {
+	store := NewInMemoryTaskStore()
+	store.SetLimits(2, time.Hour)
+	ctx := context.Background()
+
+	for i := 0; i < 2; i++ {
+		if _, err := store.Submit(ctx, nil); err != nil {
+			t.Fatalf("submit %d: %v", i, err)
+		}
+	}
+
+	_, err := store.Submit(ctx, nil)
+	if !errors.Is(err, ErrTaskStoreFull) {
+		t.Fatalf("expected ErrTaskStoreFull when full of live tasks, got %v", err)
+	}
+	all, _ := store.List(ctx)
+	if len(all) != 2 {
+		t.Fatalf("store must stay bounded at 2 live tasks, got %d", len(all))
+	}
+}
+
+// TestSubmit_EvictsTerminalTasksPastTTL proves terminal tasks are reclaimed
+// once their retention window elapses.
+func TestSubmit_EvictsTerminalTasksPastTTL(t *testing.T) {
+	store := NewInMemoryTaskStore()
+	store.SetLimits(1000, time.Minute)
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.SetClock(func() time.Time { return clock })
+	ctx := context.Background()
+
+	old, err := store.Submit(ctx, nil)
+	if err != nil {
+		t.Fatalf("submit old: %v", err)
+	}
+	if _, err := store.Transition(ctx, old.ID, TaskCanceled, "cancel"); err != nil {
+		t.Fatalf("cancel old: %v", err)
+	}
+
+	// Advance the clock beyond the TTL, then submit a fresh task which
+	// triggers eviction of the now-expired terminal task.
+	clock = clock.Add(2 * time.Minute)
+	if _, err := store.Submit(ctx, nil); err != nil {
+		t.Fatalf("submit fresh: %v", err)
+	}
+
+	if _, err := store.Get(ctx, old.ID); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("expired terminal task should be evicted, Get err=%v", err)
+	}
+}
