@@ -182,18 +182,22 @@ func TestPruneLeavesOriginalOnTmpFailure(t *testing.T) {
 		t.Fatalf("setup: entries=%d err=%v", len(entriesBefore), err)
 	}
 
-	// Make the checkpoints dir read-only so os.Create(tmp) fails.
-	cpDir := filepath.Dir(r1dir.JoinFor(dir, "checkpoints", "timeline.jsonl"))
-	if err := os.Chmod(cpDir, 0o500); err != nil {
+	// Force os.Create(tmp) to fail by occupying the deterministic tmp
+	// path (timeline.jsonl.prune-tmp) with a DIRECTORY: os.Create then
+	// fails EISDIR. Unlike a chmod-read-only dir, this also fails under
+	// root (chmod bits are bypassed by CAP_DAC_OVERRIDE), so the test
+	// exercises the failure path in CI containers too, which run as root.
+	tmpPath := r1dir.JoinFor(dir, "checkpoints", "timeline.jsonl") + ".prune-tmp"
+	if err := os.Mkdir(tmpPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(cpDir, 0o755)
+	defer os.RemoveAll(tmpPath)
 
 	if err := PruneTimelineAfter(dir, entriesBefore[0].ID); err == nil {
 		t.Fatal("expected error when tmp cannot be created")
 	}
 
-	os.Chmod(cpDir, 0o755)
+	os.RemoveAll(tmpPath)
 	entries, err := ListCheckpoints(dir)
 	if err != nil {
 		t.Fatalf("original timeline unreadable after failed prune: %v", err)
