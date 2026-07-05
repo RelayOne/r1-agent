@@ -799,6 +799,10 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 						waitCancel()
 					}
 					if acqErr != nil {
+						// Terminal failure — clean up the worktree/branch we
+						// prepared for this attempt so it doesn't leak on disk
+						// (a task that returns an error here is not resumed).
+						e.Worktrees.Cleanup(ctx, handle)
 						return result, fmt.Errorf("all pools exhausted for %s: %w", execProvider, acqErr)
 					}
 				}
@@ -824,9 +828,14 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				// Boulder's execCtx-only cancellation (parent still live) is
 				// left to fall through as a genuine failure.
 				if ctxErr := ctx.Err(); ctxErr != nil {
+					// Cancelled, not failed: leave the worktree in place for
+					// resume (do NOT clean up on this path).
 					return result, fmt.Errorf("execute phase (attempt %d) cancelled: %w", attempt, ctxErr)
 				}
 				_ = e.advanceState(taskstate.Failed, fmt.Sprintf("execute phase attempt %d failed: %s", attempt, runErr))
+				// Genuine failure → task advances to Failed and is not resumed;
+				// clean up the worktree/branch so it doesn't leak on disk.
+				e.Worktrees.Cleanup(ctx, handle)
 				return result, fmt.Errorf("execute phase (attempt %d): %w", attempt, runErr)
 			}
 
@@ -836,6 +845,8 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			if execResult.IsError && execResult.Subtype != "rate_limited" {
 				_ = e.advanceState(taskstate.Failed, fmt.Sprintf("execute phase attempt %d: agent error (%s): %s",
 					attempt, execResult.Subtype, truncate(execResult.ResultText, 200)))
+				// Terminal failure → not resumed; clean up the worktree/branch.
+				e.Worktrees.Cleanup(ctx, handle)
 				return result, fmt.Errorf("execute phase (attempt %d): agent reported error (subtype=%s)", attempt, execResult.Subtype)
 			}
 

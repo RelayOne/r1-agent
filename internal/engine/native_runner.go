@@ -522,44 +522,39 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	//      no ecosystem claims any modified file (generic text
 	//      projects, etc.).
 	if spec.WorktreeDir != "" {
-		buildChecked := false
 		extraCheck := spec.ExtraPreEndTurnCheck
-		cfg.PreEndTurnCheckFn = func(messages []agentloop.Message) string {
-			// Run build gate once per dispatch so repeated retries
-			// don't hammer tsc/go-build.
-			if !buildChecked {
-				buildChecked = true
-				if msg := runEcosystemGate(ctx, spec.WorktreeDir); msg != "" {
-					return msg
-				}
-				// No ecosystem match or no errors — fall back to
-				// the bash-command build gate for cases where the
-				// ecosystem registry doesn't cover the repo shape.
-				if buildCmd := detectBuildCommand(spec.WorktreeDir); buildCmd != "" {
-					cmd := exec.CommandContext(ctx, "bash", "-lc", buildCmd) // #nosec G204 -- CLI runner launches vetted provider binary with Stoke-generated args.
-					cmd.Dir = spec.WorktreeDir
-					out, err := cmd.CombinedOutput()
-					if err != nil {
-						output := string(out)
-						if len(output) > 4000 {
-							output = output[len(output)-4000:]
-						}
-						return fmt.Sprintf("Build command failed: %s\n\nErrors:\n%s", buildCmd, output)
-					}
-				}
+		// Re-verify the build on EVERY end_turn attempt (Cline verify-until-
+		// green), not just the first. The previous once-per-dispatch latch
+		// silently broke the guarantee: after the model was told "fix the
+		// build" and tried again, the second end_turn skipped the gate and a
+		// still-broken build was accepted. To avoid re-compiling when nothing
+		// changed, we cache the last result and only re-run the (potentially
+		// slow) tsc/go-build when the model has performed tool activity —
+		// write/edit/bash — since the previous check. A model that redeclares
+		// "done" without touching anything gets the cached failure back and
+		// stays blocked.
+		runBuildGate := func() string {
+			if msg := runEcosystemGate(ctx, spec.WorktreeDir); msg != "" {
+				return msg
 			}
-			// Chain to caller-provided check (descent-hardening
-			// spec-1 item 3: pre_completion_gate parser). Only
-			// runs AFTER build passes, because a broken build is
-			// a superset signal that overrides any gate text.
-			if extraCheck != nil {
-				finalText := extractFinalAssistantText(messages)
-				if _, reason := extraCheck(finalText); reason != "" {
-					return reason
+			// No ecosystem match or no errors — fall back to the
+			// bash-command build gate for cases where the ecosystem
+			// registry doesn't cover the repo shape.
+			if buildCmd := detectBuildCommand(spec.WorktreeDir); buildCmd != "" {
+				cmd := exec.CommandContext(ctx, "bash", "-lc", buildCmd) // #nosec G204 -- CLI runner launches vetted provider binary with Stoke-generated args.
+				cmd.Dir = spec.WorktreeDir
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					output := string(out)
+					if len(output) > 4000 {
+						output = output[len(output)-4000:]
+					}
+					return fmt.Sprintf("Build command failed: %s\n\nErrors:\n%s", buildCmd, output)
 				}
 			}
 			return ""
 		}
+		cfg.PreEndTurnCheckFn = buildPreEndTurnGate(runBuildGate, extraCheck)
 	}
 
 	// Honeypot evaluation (Track A Task 3). Forwards the caller-
@@ -1182,6 +1177,61 @@ func extractFinalAssistantText(messages []agentloop.Message) string {
 		return b.String()
 	}
 	return ""
+}
+
+// buildPreEndTurnGate wires the verify-until-green pre-end-turn check.
+//
+// runGate performs the (possibly slow) build verification and returns "" on
+// success or an error message describing the failure. extraCheck is the
+// optional caller-supplied completion gate that runs only AFTER the build
+// passes (a broken build is a superset signal).
+//
+// The gate re-verifies on EVERY end_turn attempt rather than latching after
+// the first: the old once-per-dispatch latch accepted a still-broken build on
+// the second end_turn once the injected "fix the build" errors had been shown.
+// To avoid recompiling when nothing changed, runGate is only invoked when tool
+// activity has advanced since the previous check; otherwise the cached result
+// is returned, so a model that redeclares "done" without editing stays blocked.
+func buildPreEndTurnGate(runGate func() string, extraCheck func(finalText string) (retry bool, reason string)) func([]agentloop.Message) string {
+	lastToolSig := -1
+	var cached string
+	return func(messages []agentloop.Message) string {
+		sig := countToolUseBlocks(messages)
+		if sig != lastToolSig {
+			lastToolSig = sig
+			cached = runGate()
+		}
+		if cached != "" {
+			return cached
+		}
+		if extraCheck != nil {
+			finalText := extractFinalAssistantText(messages)
+			if _, reason := extraCheck(finalText); reason != "" {
+				return reason
+			}
+		}
+		return ""
+	}
+}
+
+// countToolUseBlocks returns the total number of tool_use blocks across the
+// conversation. It is a cheap monotonic proxy for "has the model done work
+// since the last check": any write/edit/bash tool call bumps the count, so
+// the build-verification gate can re-run only when something may have changed
+// and otherwise reuse its cached result instead of recompiling.
+func countToolUseBlocks(messages []agentloop.Message) int {
+	n := 0
+	for _, m := range messages {
+		if m.Role != "assistant" {
+			continue
+		}
+		for _, c := range m.Content {
+			if c.Type == "tool_use" {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // pkgHasWorkspaces returns true when the root package.json
