@@ -57,6 +57,12 @@ interface RailState {
   items: Map<string, LaneSidebarItem>;
   selected: string | null;
   density: "verbose" | "normal" | "summary";
+  /**
+   * Non-null when the lane subscription for `sessionId` failed hard (host
+   * verb missing, session not found, channel drop). Surfaced in the rail's
+   * empty message so the rail never silently freezes on "No lanes yet."
+   */
+  error: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +171,7 @@ export function mountLaneRail(container: HTMLElement): LaneRailHandle {
     items: new Map(),
     selected: null,
     density: "normal",
+    error: null,
   };
   let unsub: LaneUnsubscribe | null = null;
   let disposed = false;
@@ -176,9 +183,11 @@ export function mountLaneRail(container: HTMLElement): LaneRailHandle {
         items,
         selectedLaneId: state.selected,
         density: state.density,
-        emptyMessage: state.sessionId
-          ? "No lanes yet."
-          : "No active session.",
+        emptyMessage: state.error
+          ? `Lane updates unavailable: ${state.error}`
+          : state.sessionId
+            ? "No lanes yet."
+            : "No active session.",
         onSelectLane: (laneId: string) => {
           state = { ...state, selected: laneId };
           render();
@@ -203,6 +212,7 @@ export function mountLaneRail(container: HTMLElement): LaneRailHandle {
       sessionId,
       items: new Map(),
       selected: null,
+      error: null,
     };
     render();
     if (!sessionId) return;
@@ -220,9 +230,16 @@ export function mountLaneRail(container: HTMLElement): LaneRailHandle {
         }
         unsub = teardownFn;
       })
-      .catch((_err) => {
-        // Swallow; the laneSubscription helper synthesises a
-        // killed-event into the consumer on hard subscribe failure.
+      .catch((err: unknown) => {
+        // Surface the failure in the rail instead of swallowing it. The
+        // synthetic killed-event path in laneSubscription only fires for the
+        // React hook (useLaneSubscription) and carries lane_id:"" which
+        // applyEvent's `killed` branch cannot match, so a direct subscriber
+        // like this rail would otherwise stay stuck on "No lanes yet." forever.
+        if (disposed || state.sessionId !== sessionId) return;
+        const reason = err instanceof Error ? err.message : "subscribe failed";
+        state = { ...state, error: reason };
+        render();
       });
   }
 

@@ -714,7 +714,7 @@ func (s *Store) RecordConsensus(c *ConsensusRecord) error {
 func (s *Store) HasConsensus(missionID string, requiredModels int) (bool, error) {
 	rows, err := s.db.Query(`
 		SELECT model, verdict FROM consensus
-		WHERE mission_id=? ORDER BY timestamp DESC`, missionID)
+		WHERE mission_id=? ORDER BY timestamp DESC, id DESC`, missionID)
 	if err != nil {
 		return false, fmt.Errorf("query consensus: %w", err)
 	}
@@ -748,7 +748,7 @@ func (s *Store) HasConsensus(missionID string, requiredModels int) (bool, error)
 func (s *Store) ConsensusRecords(missionID string) ([]ConsensusRecord, error) {
 	rows, err := s.db.Query(`
 		SELECT id, mission_id, model, verdict, reasoning, gaps_found, timestamp
-		FROM consensus WHERE mission_id=? ORDER BY timestamp DESC`, missionID)
+		FROM consensus WHERE mission_id=? ORDER BY timestamp DESC, id DESC`, missionID)
 	if err != nil {
 		return nil, fmt.Errorf("query consensus: %w", err)
 	}

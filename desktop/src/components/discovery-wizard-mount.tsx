@@ -74,6 +74,31 @@ export async function shouldShowDiscoveryWizard(): Promise<boolean | null> {
 }
 
 // ---------------------------------------------------------------------------
+// Error shaping
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract a human-readable message from a rejected Tauri `invoke`. The host's
+ * discovery verbs reject with a structured IpcError ({ stoke_code, message }),
+ * but a transport-level failure may surface as a plain string or Error. Fall
+ * back to a generic recovery hint so the wizard always shows *something*.
+ */
+export function describeIpcError(err: unknown): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string" && err.trim()) return err.trim();
+  if (err && typeof err === "object") {
+    const rec = err as Record<string, unknown>;
+    if (typeof rec.message === "string" && rec.message.trim()) {
+      return rec.message.trim();
+    }
+    if (typeof rec.stoke_code === "string" && rec.stoke_code.trim()) {
+      return rec.stoke_code.trim();
+    }
+  }
+  return "Reconnect failed. Make sure r1 is running, then try again.";
+}
+
+// ---------------------------------------------------------------------------
 // React mount wrapper
 // ---------------------------------------------------------------------------
 
@@ -146,17 +171,19 @@ export async function mountDiscoveryWizard(
   const handleReconnect = async (): Promise<void> => {
     try {
       await invoke("daemon_reconnect", {});
-      dispose();
-      options.onResolved();
     } catch (err) {
       if (typeof console !== "undefined") {
         console.error("[r1-desktop] daemon_reconnect failed", err);
       }
-      // Surface failure inline by re-rendering with a hint? Component
-      // currently doesn't accept an error prop, so we leave the wizard
-      // open and let the user retry. (Sister Rust PR will land
-      // structured errors here.)
+      // Propagate a friendly message so DiscoveryWizard can render the
+      // failure inline (role="alert") instead of the button silently
+      // flickering back to "Reconnect". daemon_reconnect returns a
+      // structured IpcError (discovery_error_to_ipc), so prefer its
+      // message. Do NOT dispose — keep the wizard open for retry.
+      throw new Error(describeIpcError(err));
     }
+    dispose();
+    options.onResolved();
   };
 
   const handleAcceptSidecar = (): void => {

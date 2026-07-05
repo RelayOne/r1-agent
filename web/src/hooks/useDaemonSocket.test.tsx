@@ -246,6 +246,38 @@ describe("useDaemonSocket", () => {
     expect(fake.connectCalls).toBe(0);
   });
 
+  it("returns a referentially stable handle across re-renders", async () => {
+    // Regression: an unmemoized return object gave a new identity every
+    // render, so effects listing `socket` in their dep array (SessionView /
+    // LaneFocus subscribe effects) re-ran on every streaming batch —
+    // tearing down and re-establishing the WS subscription dozens of times
+    // per second. The handle must be identity-stable when its inputs don't
+    // change. See gap audit 2026-07-05.
+    const fake = makeFakeClient();
+    const store = createDaemonStore("d11", { schedule: () => 0, cancel: () => {} });
+    const seen: Array<ReturnType<typeof useDaemonSocket>> = [];
+    let bump: () => void = () => {};
+    function HostRerender(): React.ReactElement {
+      const [, setTick] = React.useState(0);
+      bump = () => setTick((t) => t + 1);
+      const handle = useDaemonSocket({ client: fake.client, store });
+      seen.push(handle);
+      return <div />;
+    }
+    await act(async () => {
+      render(<HostRerender />);
+    });
+    // Force several re-renders that do not change client/store.
+    await act(async () => { bump(); });
+    await act(async () => { bump(); });
+    await act(async () => { bump(); });
+    expect(seen.length).toBeGreaterThanOrEqual(4);
+    const first = seen[0];
+    for (const h of seen) {
+      expect(h).toBe(first);
+    }
+  });
+
   it("unmount triggers a deliberate close on the client", async () => {
     const fake = makeFakeClient();
     const store = createDaemonStore("d10", { schedule: () => 0, cancel: () => {} });

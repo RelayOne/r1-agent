@@ -33,7 +33,19 @@ steps:
         # Private RelayOne modules (heroa, coderadar) cannot be fetched on CI
         # without GH auth; vendoring is the workaround. See
         # plans/grand-plan/F-N+45-1-r1-agent-CI-needs-private-repo-auth.md.
-        ls vendor/modules.txt > /dev/null
+        #
+        # Real consistency gate (offline; no network / GH auth needed). The
+        # old `ls vendor/modules.txt` only proved the file existed — it could
+        # not catch a hand-edited go.mod, a stale modules.txt, or a vendored
+        # dep that was deleted. `go list -mod=vendor ./...` forces Go's own
+        # vendor consistency check: it fails loudly with "inconsistent
+        # vendoring" when vendor/modules.txt is out of sync with go.mod, and
+        # "cannot find package" when an imported package is missing from
+        # vendor/. GOFLAGS pins vendor mode so nothing tries to hit the proxy.
+        set -euo pipefail
+        export GOFLAGS=-mod=vendor GOPROXY=off
+        test -f vendor/modules.txt
+        go list -mod=vendor ./... > /dev/null
 
   - name: 'golang:1.25'
     id: build

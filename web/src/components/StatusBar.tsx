@@ -45,7 +45,8 @@ export interface StatusBarProps {
   /** When provided, lane + cost segments scope to this session. When
    *  null, totals span the whole daemon. */
   sessionId?: SessionId | null;
-  /** Latency in ms reported by the WS heartbeat. */
+  /** Explicit latency override (ms). When omitted, the segment reads the
+   *  live heartbeat RTT from the store (ui.latencyMs). */
   latencyMs?: number | null;
 }
 
@@ -94,6 +95,9 @@ export function StatusBar({
   // just the subscription — because we recompute via store.getState().
   useStore(store, (s) => s.lanes.byKey);
   useStore(store, (s) => s.sessions.byId);
+  // Live heartbeat RTT from the store; the optional prop overrides it.
+  const storeLatency = useStore(store, (s) => s.ui.latencyMs);
+  const latency = latencyMs ?? storeLatency;
 
   const counts = laneCounts(store, sessionId ?? null);
   const cost = sessionCost(store, sessionId ?? null);
@@ -121,8 +125,8 @@ export function StatusBar({
       </span>
 
       <span data-testid="status-bar-latency">
-        {typeof latencyMs === "number"
-          ? `${Math.round(latencyMs)} ms`
+        {typeof latency === "number"
+          ? `${Math.round(latency)} ms`
           : "— ms"}
       </span>
 

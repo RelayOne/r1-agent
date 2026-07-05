@@ -202,13 +202,31 @@ func (s *SQLStore) addPattern(issue, fix string) {
 }
 
 func (s *SQLStore) SaveLearning(l *Learning) error {
-	if _, err := s.db.Exec("DELETE FROM patterns"); err != nil {
+	// Wipe + re-insert must be atomic: without a surrounding transaction a
+	// mid-loop failure (duplicate issue tripping the UNIQUE constraint, disk
+	// full, SQLITE_BUSY, or a cancelled process) would leave the DELETE
+	// committed and the patterns table partially or fully erased — silently
+	// losing learning accumulated across sessions.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin learning tx: %w", err)
+	}
+	// Rollback is a no-op after a successful Commit; the error is
+	// intentionally discarded (explicit assignment rather than a nolint).
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec("DELETE FROM patterns"); err != nil {
 		return fmt.Errorf("delete patterns: %w", err)
 	}
 	for _, p := range l.Patterns {
-		if _, err := s.db.Exec("INSERT INTO patterns (issue, fix, occurrences) VALUES (?, ?, ?)", p.Issue, p.Fix, p.Occurrences); err != nil {
+		// INSERT OR REPLACE tolerates duplicate issues in the input rather
+		// than aborting the whole save on the UNIQUE(issue) constraint.
+		if _, err := tx.Exec("INSERT OR REPLACE INTO patterns (issue, fix, occurrences) VALUES (?, ?, ?)", p.Issue, p.Fix, p.Occurrences); err != nil {
 			return fmt.Errorf("insert pattern: %w", err)
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit learning tx: %w", err)
 	}
 	return nil
 }

@@ -170,7 +170,11 @@ func (r *Registry) handleNotebookCellRun(ctx context.Context, input json.RawMess
 		return "", fmt.Errorf("source is required")
 	}
 
-	resolved, err := r.resolvePath(args.Path)
+	// notebook_cell_run writes the notebook back in place, so it must go
+	// through the write-resolver's protected-file deny (like write_file /
+	// str_replace) — plain resolvePath only confines to the worktree and
+	// would let a native call overwrite CLAUDE.md / .claude/settings.json.
+	resolved, err := r.resolveWritePath(args.Path)
 	if err != nil {
 		return "", err
 	}

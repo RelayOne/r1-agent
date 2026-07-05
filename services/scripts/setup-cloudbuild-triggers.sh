@@ -16,19 +16,8 @@ REPO="${REPO:-r1-agent-repo}"
 REPO_RESOURCE="projects/${PROJECT}/locations/${REGION}/connections/${CONNECTION}/repositories/${REPO}"
 SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-projects/${PROJECT}/serviceAccounts/claude-eric-agent@${PROJECT}.iam.gserviceaccount.com}"
 
-sample_rate_for_env() {
-  local env="$1"
-  case "$env" in
-    dev|staging) echo "1.0" ;;
-    prod) echo "0.1" ;;
-    *) echo "0.1" ;;
-  esac
-}
-
 create_trigger() {
   local name="$1" branch="$2" env="$3"
-  local coderadar_sample_rate
-  coderadar_sample_rate="$(sample_rate_for_env "$env")"
   echo
   echo "==> trigger ${name} (branch=${branch}, env=${env})"
   if gcloud builds triggers describe "$name" --region="$REGION" --project="$PROJECT" >/dev/null 2>&1; then
@@ -43,7 +32,7 @@ create_trigger() {
     --repository="$REPO_RESOURCE" \
     --branch-pattern="^${branch}\$" \
     --build-config=services/cloudbuild-deploy.yaml \
-    --substitutions="_ENV=${env},_CODERADAR_SAMPLE_RATE=${coderadar_sample_rate}" \
+    --substitutions="_ENV=${env}" \
     --description="r1 SaaS deploy (${env}) — build + deploy r1-coord-api / r1-docs / r1-downloads-cdn / r1-admin on push to ${branch}"
   echo "   trigger ${name} created"
 }

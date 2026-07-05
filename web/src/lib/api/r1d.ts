@@ -65,6 +65,8 @@ export interface ConnectOptions {
   onStateChange?: (state: ResilientSocketState, reason?: string) => void;
   onHardCap?: (lastError: string | undefined) => void;
   onSchemaError?: (err: z.ZodError, raw: unknown) => void;
+  /** Heartbeat round-trip time in ms, reported on each ping/pong cycle. */
+  onLatency?: (ms: number) => void;
 }
 
 export class R1dClient {
@@ -207,6 +209,7 @@ export class R1dClient {
       ...(opts.onStateChange !== undefined && { onStateChange: opts.onStateChange }),
       ...(opts.onHardCap !== undefined && { onHardCap: opts.onHardCap }),
       ...(opts.onSchemaError !== undefined && { onSchemaError: opts.onSchemaError }),
+      ...(opts.onLatency !== undefined && { onLatency: opts.onLatency }),
       ...(this.opts.webSocketImpl !== undefined && { webSocketImpl: this.opts.webSocketImpl }),
     });
     await this.socket.connect();

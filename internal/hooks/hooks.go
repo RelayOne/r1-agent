@@ -201,25 +201,62 @@ esac
 # Block dangerous bash commands (using extracted command string)
 if [ "$TOOL_NAME" = "Bash" ] && [ -n "$COMMAND" ]; then
     CMD="$COMMAND"
+    # Quote-stripped copy so redirect/write-target matching is not evaded
+    # by wrapping a protected path in quotes (e.g. > "CLAUDE.md").
+    CMDN="${CMD//\"/}"
+    CMDN="${CMDN//\'/}"
+
+    # Protected-file writes via the shell. The Write|Edit case above never
+    # sees Bash, so without this a shell redirect could overwrite or
+    # exfiltrate-append into .env / CLAUDE.md / .claude/ / settings.json.
+    # Same protected list as the Write|Edit guard.
+    PROT='(\.claude/|\.stoke/|\.r1/|CLAUDE\.md|\.env|settings\.json|stoke\.policy\.yaml)'
+    # Allow an arbitrary directory prefix (absolute, $PWD/, ../, ...) between
+    # the redirect operator and the protected name — a model naturally emits
+    # a full path, and the old (\./)? only caught a bare or ./-prefixed name.
+    if echo "$CMDN" | grep -qE "(>>?|[0-9]+>)[[:space:]]*[^|;&<>[:space:]]*${PROT}"; then
+        BLOCK "Protected file: shell redirect into .claude/.stoke/CLAUDE.md/.env/settings.json/stoke.policy.yaml blocked."
+    fi
+    if echo "$CMDN" | grep -qE "(^|[[:space:]])(tee|sed|dd|cp|mv|install|ln|truncate)([[:space:]])[^|;&]*${PROT}"; then
+        BLOCK "Protected file: shell write (tee/sed -i/dd/cp/mv into a protected path) blocked."
+    fi
+
+    # Git global-option prefix: matches an optional run of global flags
+    # (-C <dir>, -c <kv>, --git-dir=, --work-tree=, --paginate, ...) between
+    # the git word and the subcommand, so "git -C . push" cannot slip past
+    # a guard that only looked for a bare "git push".
+    GITPRE='(^|[^A-Za-z0-9_])git([[:space:]]+(-C[[:space:]]+[^[:space:]]+|-c[[:space:]]+[^[:space:]]+|--git-dir[=[:space:]][^[:space:]]+|--work-tree[=[:space:]][^[:space:]]+|--namespace[=[:space:]][^[:space:]]+|-p|--paginate|--no-pager|--bare|--exec-path[=[:space:]][^[:space:]]+))*[[:space:]]+'
 
     # Git mutations that hide work from verification
-    echo "$CMD" | grep -qE '\bgit\s+stash\b' && BLOCK "git stash hides work from verification. Commit or revert."
-    echo "$CMD" | grep -q 'git checkout -- \.' && BLOCK "Mass revert. Use specific file paths."
-    echo "$CMD" | grep -qE 'git\s+reset\s+--hard' && BLOCK "git reset --hard destroys evidence."
-    echo "$CMD" | grep -qE 'git\s+push' && BLOCK "git push blocked. Stoke controls when to push."
-    echo "$CMD" | grep -qE 'git\s+rebase' && BLOCK "git rebase blocked in Stoke-managed worktrees."
-    echo "$CMD" | grep -qE 'git\s+commit.*--no-verify' && BLOCK "git commit --no-verify blocked. Hooks must run."
-    echo "$CMD" | grep -qE 'git\s+force' && BLOCK "Force operations blocked."
+    echo "$CMD" | grep -qE "${GITPRE}stash([[:space:]]|$)" && BLOCK "git stash hides work from verification. Commit or revert."
+    echo "$CMD" | grep -qE "${GITPRE}checkout[[:space:]]+--[[:space:]]+\." && BLOCK "Mass revert. Use specific file paths."
+    echo "$CMD" | grep -qE "${GITPRE}reset[[:space:]]+--hard" && BLOCK "git reset --hard destroys evidence."
+    echo "$CMD" | grep -qE "${GITPRE}push" && BLOCK "git push blocked. Stoke controls when to push."
+    echo "$CMD" | grep -qE "${GITPRE}rebase" && BLOCK "git rebase blocked in Stoke-managed worktrees."
+    echo "$CMD" | grep -qE "${GITPRE}commit.*--no-verify" && BLOCK "git commit --no-verify blocked. Hooks must run."
+    echo "$CMD" | grep -qE "${GITPRE}(push|update-ref)[^;&|]*--force|${GITPRE}push[^;&|]*-f([[:space:]]|$)" && BLOCK "Force operations blocked."
 
     # Nested Claude/Codex sessions
     echo "$CMD" | grep -qE '\bclaude\b.*--dangerously-skip-permissions' && BLOCK "Cannot spawn nested Claude sessions."
     echo "$CMD" | grep -qE '\bclaude\b.*-p\b' && BLOCK "Cannot spawn nested Claude headless sessions."
     echo "$CMD" | grep -qE '\bcodex\b.*exec\b' && BLOCK "Cannot spawn nested Codex sessions."
 
-    # Destructive commands
+    # Destructive commands. Recursive-force rm / recursive chmod of a
+    # filesystem root or home are matched with the recursive and force
+    # flags detected independently (any order, split or fused) plus a
+    # bare root/home target operand.
+    REC='((^|[[:space:]])--recursive([[:space:]]|$))|((^|[[:space:]])-[a-zA-Z]*[rR])'
+    FORCE='((^|[[:space:]])--force([[:space:]]|$))|((^|[[:space:]])-[a-zA-Z]*f)'
+    TGT='[[:space:]](/|~|\$HOME|\$\{HOME\})([[:space:]]|/|$)'
+    if echo "$CMD" | grep -qE '\brm\b' && echo "$CMD" | grep -qE "$REC" && echo "$CMD" | grep -qE "$FORCE" && echo "$CMD" | grep -qE "$TGT"; then
+        BLOCK "Destructive: recursive force-delete of a filesystem root or home blocked."
+    fi
     echo "$CMD" | grep -qE 'rm\s+-rf\s+/' && BLOCK "Destructive: rm -rf / blocked."
     echo "$CMD" | grep -qE 'rm\s+-rf\s+~' && BLOCK "Destructive: rm -rf ~ blocked."
     echo "$CMD" | grep -qE '\bsudo\s+rm\b' && BLOCK "Destructive: sudo rm blocked."
+    if echo "$CMD" | grep -qE '\bch(mod|own|grp)\b' && echo "$CMD" | grep -qE "$REC" && echo "$CMD" | grep -qE "$TGT"; then
+        BLOCK "Destructive: recursive permission/ownership change on a filesystem root or home blocked."
+    fi
     echo "$CMD" | grep -qE 'chmod\s+-R\s+777' && BLOCK "Destructive: chmod -R 777 blocked."
 
     # Remote code execution

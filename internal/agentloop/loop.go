@@ -687,10 +687,15 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 		}
 
 		// Execute tools and collect results
-		toolResults, hasError := l.executeTools(ctx, assistantBlocks)
+		toolResults, _, hasHandlerError := l.executeTools(ctx, assistantBlocks)
 
-		// Track consecutive errors
-		if hasError {
+		// Track consecutive errors. Only GENUINE handler execution failures
+		// count toward the abort budget — infrastructure denials (throttle,
+		// policy, promptguard) set is_error on the tool_result so the model
+		// can see and adapt, but a denied tool is not an execution error and
+		// must not trip max_errors (which would kill a rate-limited or
+		// policy-gated session that should be allowed to wait/recover).
+		if hasHandlerError {
 			consecutiveErrors++
 		} else {
 			consecutiveErrors = 0
@@ -797,7 +802,18 @@ func (l *Loop) buildRequest(messages []Message) provider.ChatRequest {
 }
 
 // executeTools runs all tool_use blocks and returns tool_result blocks.
-func (l *Loop) executeTools(ctx context.Context, blocks []ContentBlock) ([]ContentBlock, bool) {
+//
+// It reports two distinct error signals:
+//   - hasError: any tool_result carries is_error (denial OR genuine failure).
+//     Callers surface this to the model; it keeps the existing meaning.
+//   - hasHandlerError: at least one tool handler actually executed and
+//     returned an error (a genuine execution failure). Infrastructure denials
+//     — throttle, ValidateToolInput, hub policy Deny, promptguard — set
+//     hasError but NOT hasHandlerError, because a *denied* tool is not an
+//     execution error and must not count toward the loop's consecutive-error
+//     abort budget (otherwise a rate-limited or policy-gated session is killed
+//     with max_errors instead of being allowed to wait/recover).
+func (l *Loop) executeTools(ctx context.Context, blocks []ContentBlock) (results []ContentBlock, hasError, hasHandlerError bool) {
 	var toolCalls []ContentBlock
 	for _, b := range blocks {
 		if b.Type == blockToolUse {
@@ -806,12 +822,11 @@ func (l *Loop) executeTools(ctx context.Context, blocks []ContentBlock) ([]Conte
 	}
 
 	if len(toolCalls) == 0 {
-		return nil, false
+		return nil, false, false
 	}
 
 	// Execute tools in parallel when multiple are requested
-	results := make([]ContentBlock, len(toolCalls))
-	hasError := false
+	results = make([]ContentBlock, len(toolCalls))
 	var mu sync.Mutex
 
 	execOne := func(idx int, tc ContentBlock) {
@@ -921,6 +936,10 @@ func (l *Loop) executeTools(ctx context.Context, blocks []ContentBlock) ([]Conte
 		defer mu.Unlock()
 		if err != nil {
 			hasError = true
+			// A genuine handler execution failure — this one DOES count
+			// toward the consecutive-error abort budget (unlike the
+			// denial branches above, which set only hasError).
+			hasHandlerError = true
 			results[idx] = ContentBlock{
 				Type:      "tool_result",
 				ToolUseID: tc.ID,
@@ -965,7 +984,7 @@ func (l *Loop) executeTools(ctx context.Context, blocks []ContentBlock) ([]Conte
 		wg.Wait()
 	}
 
-	return results, hasError
+	return results, hasError, hasHandlerError
 }
 
 // extractText concatenates all text blocks from a response.

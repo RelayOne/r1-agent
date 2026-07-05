@@ -84,6 +84,7 @@ export const DiscoveryWizard: React.FC<DiscoveryWizardProps> =
     } = props;
 
     const [reconnecting, setReconnecting] = React.useState(false);
+    const [reconnectError, setReconnectError] = React.useState<string | null>(null);
     const [copied, setCopied] = React.useState(false);
 
     const handleCopy = React.useCallback(async () => {
@@ -101,8 +102,19 @@ export const DiscoveryWizard: React.FC<DiscoveryWizardProps> =
 
     const handleReconnect = React.useCallback(async () => {
       setReconnecting(true);
+      setReconnectError(null);
       try {
         await onReconnect();
+      } catch (err) {
+        // Surface reconnect failure on-screen. This is the primary
+        // first-launch recovery flow; a silent console.error left the
+        // button flickering back to "Reconnect" with no explanation of
+        // why (daemon still absent, sidecar spawn failed, etc.).
+        setReconnectError(
+          err instanceof Error && err.message
+            ? err.message
+            : "Reconnect failed. Make sure r1 is running, then try again.",
+        );
       } finally {
         setReconnecting(false);
       }
@@ -157,6 +169,14 @@ export const DiscoveryWizard: React.FC<DiscoveryWizardProps> =
           >
             {reconnecting ? "Reconnecting…" : "Reconnect"}
           </button>
+          {reconnectError ? (
+            <p
+              className="r1-discovery-wizard__error"
+              role="alert"
+            >
+              {reconnectError}
+            </p>
+          ) : null}
         </section>
 
         <section className="r1-discovery-wizard__option">

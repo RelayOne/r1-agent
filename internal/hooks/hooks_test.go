@@ -125,6 +125,75 @@ func TestPreToolUse_Negative(t *testing.T) {
 			name:  "git commit no-verify",
 			input: `{"tool_name":"Bash","tool_input":{"command":"git commit --no-verify -m 'bypass'"}}`,
 		},
+		// SECURITY gap #3: git -C bypasses the mutation guards.
+		{
+			name:  "git -C push",
+			input: `{"tool_name":"Bash","tool_input":{"command":"git -C . push origin main"}}`,
+		},
+		{
+			name:  "git -C reset hard",
+			input: `{"tool_name":"Bash","tool_input":{"command":"git -C /repo reset --hard HEAD~3"}}`,
+		},
+		{
+			name:  "git -c then push",
+			input: `{"tool_name":"Bash","tool_input":{"command":"git -c user.name=x push"}}`,
+		},
+		// SECURITY gap #3: split/long rm flags bypass the destructive guard.
+		{
+			name:  "rm split flags root",
+			input: `{"tool_name":"Bash","tool_input":{"command":"rm -r -f /"}}`,
+		},
+		{
+			name:  "rm long flags home",
+			input: `{"tool_name":"Bash","tool_input":{"command":"rm --recursive --force ~"}}`,
+		},
+		{
+			name:  "rm fr fused reversed root",
+			input: `{"tool_name":"Bash","tool_input":{"command":"rm -fr /"}}`,
+		},
+		{
+			name:  "chmod recursive flag after mode on root",
+			input: `{"tool_name":"Bash","tool_input":{"command":"chmod 777 -R /"}}`,
+		},
+		// SECURITY gap #2: shell writes to protected files.
+		{
+			name:  "redirect overwrite CLAUDE.md",
+			input: `{"tool_name":"Bash","tool_input":{"command":"echo pwned > CLAUDE.md"}}`,
+		},
+		{
+			name:  "redirect quoted CLAUDE.md",
+			input: `{"tool_name":"Bash","tool_input":{"command":"echo pwned > \"CLAUDE.md\""}}`,
+		},
+		{
+			name:  "append to .env",
+			input: `{"tool_name":"Bash","tool_input":{"command":"echo SECRET=1 >> .env"}}`,
+		},
+		{
+			name:  "sed -i on settings.json",
+			input: `{"tool_name":"Bash","tool_input":{"command":"sed -i s/a/b/ .claude/settings.json"}}`,
+		},
+		{
+			name:  "tee into .env",
+			input: `{"tool_name":"Bash","tool_input":{"command":"echo X | tee .env"}}`,
+		},
+		// gap-fix-review: a directory prefix before the protected name must
+		// not evade the redirect guard (the old (\./)? only caught bare/./).
+		{
+			name:  "redirect to absolute-path CLAUDE.md",
+			input: `{"tool_name":"Bash","tool_input":{"command":"echo pwned > /home/eric/repos/r1-agent/CLAUDE.md"}}`,
+		},
+		{
+			name:  "redirect to $PWD CLAUDE.md",
+			input: `{"tool_name":"Bash","tool_input":{"command":"echo pwned > $PWD/CLAUDE.md"}}`,
+		},
+		{
+			name:  "append to absolute-path settings.json",
+			input: `{"tool_name":"Bash","tool_input":{"command":"echo x >> /abs/.claude/settings.json"}}`,
+		},
+		{
+			name:  "redirect via dotdot path to CLAUDE.md",
+			input: `{"tool_name":"Bash","tool_input":{"command":"echo x > docs/../CLAUDE.md"}}`,
+		},
 	}
 
 	for _, tc := range tests {
@@ -172,6 +241,26 @@ func TestPreToolUse_Positive(t *testing.T) {
 		{
 			name:  "git add and commit",
 			input: `{"tool_name":"Bash","tool_input":{"command":"git add -A && git commit -m 'feat: add tests'"}}`,
+		},
+		{
+			name:  "git -C log is read-only",
+			input: `{"tool_name":"Bash","tool_input":{"command":"git -C . log --oneline -5"}}`,
+		},
+		{
+			name:  "read protected file is allowed",
+			input: `{"tool_name":"Bash","tool_input":{"command":"cat CLAUDE.md"}}`,
+		},
+		{
+			name:  "redirect to non-protected file",
+			input: `{"tool_name":"Bash","tool_input":{"command":"echo hi > build.log"}}`,
+		},
+		{
+			name:  "recursive rm of build dir",
+			input: `{"tool_name":"Bash","tool_input":{"command":"rm -r -f ./build"}}`,
+		},
+		{
+			name:  "chmod recursive on scripts dir",
+			input: `{"tool_name":"Bash","tool_input":{"command":"chmod 755 -R ./scripts"}}`,
 		},
 	}
 

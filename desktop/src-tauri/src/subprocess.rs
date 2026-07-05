@@ -213,6 +213,16 @@ impl SubprocessManager {
         let pending_clone = Arc::clone(&pending);
         let app_clone = app.clone();
         let sid = session_id.clone();
+
+        // The child handle is shared between (a) cancel_session, which
+        // SIGTERM/SIGKILLs it, and (b) the stdout reader task below, which
+        // reaps it after EOF to learn the *real* exit status. Whichever path
+        // removes the session from ManagerState first owns the child; the other
+        // observes `None` and defers.
+        let child_handle: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(Some(child)));
+        let child_handle_reader = Arc::clone(&child_handle);
+        let state_reader = Arc::clone(&self.state);
+
         tokio::spawn(async move {
             let mut reader = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = reader.next_line().await {
@@ -256,16 +266,54 @@ impl SubprocessManager {
                     }
                 }
             }
-            // Subprocess exited — notify WebView.
+            // Subprocess stdout hit EOF: the child has exited for SOME reason
+            // (crash, non-zero exit, terminating signal, or clean shutdown). We
+            // must NOT blindly report `reason:"ok"` — a crashed run reported as
+            // a clean end leaves a dead session the UI presents as pausable /
+            // resumable, and a later Resume hits the torn-down stdin writer with
+            // an opaque error instead of a real crash notice.
+
+            // 1. Remove the dead session. If it is already gone, cancel_session
+            //    removed it first and owns the child kill → report cancellation.
+            let was_present = {
+                let mut st = state_reader.lock().await;
+                st.sessions.remove(&sid).is_some()
+            };
+
+            // 2. Fail every in-flight RPC so callers get an immediate error
+            //    rather than blocking for the full 30 s timeout on a dead child.
+            {
+                let mut map = pending_clone.lock().await;
+                for (_id, tx) in map.drain() {
+                    let _ = tx.send(Err(IpcError {
+                        code: -32603,
+                        stoke_code: "internal".to_string(),
+                        message: "r1 subprocess exited before responding".to_string(),
+                    }));
+                }
+            }
+
+            // 3. Determine the terminal reason from the actual exit status.
+            let reason = if !was_present {
+                // cancel_session already removed the session and owns the child.
+                "cancelled"
+            } else {
+                let mut guard = child_handle_reader.lock().await;
+                match guard.take() {
+                    Some(mut child) => ended_reason_from_wait(child.wait().await),
+                    // Child already reaped elsewhere: an unexpected EOF with no
+                    // status is treated as a failure, never a clean end.
+                    None => "error",
+                }
+            };
+
             let _ = app_clone.emit("session://ended", serde_json::json!({
                 "event": "session.ended",
                 "session_id": sid,
-                "reason": "ok",
+                "reason": reason,
                 "at": chrono::Utc::now().to_rfc3339(),
             }));
         });
-
-        let child_handle: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(Some(child)));
 
         let session = Session {
             session_id: session_id.clone(),
@@ -472,6 +520,25 @@ async fn route_lane_event(app: &AppHandle, event_name: &str, resp: &RpcResponse)
 }
 
 // ---------------------------------------------------------------------------
+// Terminal-reason classification for an exited subprocess.
+// ---------------------------------------------------------------------------
+
+/// Map a child `wait()` outcome to a `session.ended` reason string.
+///
+/// A clean exit (status code 0) is `"ok"`; a non-zero exit code, a terminating
+/// signal (e.g. SIGKILL/SIGSEGV — a crash), or a `wait()` error is `"error"`.
+/// This is the single source of truth for whether an unexpected subprocess exit
+/// is surfaced to the UI as a crash rather than a resumable pause.
+fn ended_reason_from_wait(
+    status: std::io::Result<std::process::ExitStatus>,
+) -> &'static str {
+    match status {
+        Ok(s) if s.success() => "ok",
+        _ => "error",
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Forward a server-pushed event to the Tauri event bus.
 // ---------------------------------------------------------------------------
 
@@ -568,3 +635,54 @@ fn resolve_r1_binary() -> PathBuf {
 
 #[cfg(unix)]
 extern crate libc;
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::ended_reason_from_wait;
+
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+    #[cfg(unix)]
+    use std::process::ExitStatus;
+
+    // On Unix, ExitStatus::from_raw takes the raw wait() status word: the low 7
+    // bits are the terminating signal and bits 8..16 hold the exit code. So an
+    // exit code of N is `N << 8`, and a bare signal number means the process was
+    // killed by that signal (a crash).
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_exit_is_ok() {
+        // Exit code 0 → clean shutdown.
+        assert_eq!(ended_reason_from_wait(Ok(ExitStatus::from_raw(0))), "ok");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nonzero_exit_is_error() {
+        // Exit code 1 → the run failed; must not be reported as a clean end.
+        assert_eq!(ended_reason_from_wait(Ok(ExitStatus::from_raw(1 << 8))), "error");
+        // Exit code 137 (128+9, the shell convention for SIGKILL) as a plain
+        // code also classifies as error.
+        assert_eq!(ended_reason_from_wait(Ok(ExitStatus::from_raw(137 << 8))), "error");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn signal_kill_is_error() {
+        // Killed by SIGKILL (9) / SIGSEGV (11): a crash, never "ok".
+        assert_eq!(ended_reason_from_wait(Ok(ExitStatus::from_raw(9))), "error");
+        assert_eq!(ended_reason_from_wait(Ok(ExitStatus::from_raw(11))), "error");
+    }
+
+    #[test]
+    fn wait_error_is_error() {
+        // If we cannot even reap the child, treat it as a failure.
+        let err = std::io::Error::new(std::io::ErrorKind::Other, "wait failed");
+        assert_eq!(ended_reason_from_wait(Err(err)), "error");
+    }
+}

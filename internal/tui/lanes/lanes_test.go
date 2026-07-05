@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -36,6 +37,48 @@ func (f *fakeTransport) Pin(_ context.Context, id string, p bool) error {
 	}
 	f.pinned[id] = p
 	return nil
+}
+
+// TestTruncate_RuneAware confirms truncate never severs a multibyte
+// rune (which would emit invalid UTF-8 that renders as a replacement
+// glyph), clips on display-cell width — not byte length — and appends
+// the ellipsis within the width budget. Regression for gap audit
+// 2026-07-05: lane titles / activity come from streamed LLM output and
+// routinely contain non-ASCII (em dashes, curly quotes, emoji, CJK).
+func TestTruncate_RuneAware(t *testing.T) {
+	cases := []struct {
+		name string
+		s    string
+		n    int
+		want string
+	}{
+		{"empty budget", "hello", 0, ""},
+		{"fits ascii", "hello", 10, "hello"},
+		{"exact ascii", "hello", 5, "hello"},
+		{"clip ascii", "hello world", 5, "hell…"},
+		{"n=1 clips to ellipsis", "hello", 1, "…"},
+		// Multibyte: each em dash is 1 display cell but 3 bytes. A byte
+		// slice at s[:n-1] would cut mid-rune; the width-aware truncate
+		// must not.
+		{"em dashes fit", "a—b—c", 5, "a—b—c"},
+		{"em dashes clip", "a—b—c—d—e", 5, "a—b—…"},
+		// CJK: each ideograph is 2 display cells, 3 bytes.
+		{"cjk fits", "你好", 4, "你好"},
+		{"cjk clip", "你好世界", 5, "你好…"},
+		// Emoji (wide). Must not split the multibyte sequence.
+		{"emoji clip", "😀😀😀😀", 3, "😀…"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := truncate(tc.s, tc.n)
+			if got != tc.want {
+				t.Errorf("truncate(%q, %d) = %q, want %q", tc.s, tc.n, got, tc.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Errorf("truncate(%q, %d) = %q is not valid UTF-8", tc.s, tc.n, got)
+			}
+		})
+	}
 }
 
 // TestLaneStatus_Glyph confirms the spec §"Implementation Checklist"
@@ -236,15 +279,75 @@ func TestUpdate_LaneListReplaysAndSorts(t *testing.T) {
 			t.Errorf("lanes[%d].ID=%q want %q", i, m.lanes[i].ID, w)
 		}
 	}
-	// Re-replay with same ids must update existing lanes, not duplicate.
+	// Re-replay a full snapshot with the same ids must update existing
+	// lanes, not duplicate. (A laneListMsg is always a full snapshot, so
+	// every still-live lane must be present for it not to be pruned.)
 	m.Update(laneListMsg{Lanes: []LaneSnapshot{
 		{ID: "A", StartedAt: t0, Status: StatusRunning},
+		{ID: "M", StartedAt: t1, Status: StatusBlocked},
+		{ID: "Z", StartedAt: t2, Status: StatusRunning},
 	}})
 	if len(m.lanes) != 3 {
 		t.Errorf("after re-replay len(lanes)=%d want 3", len(m.lanes))
 	}
 	if m.lanes[0].Status != StatusRunning {
 		t.Errorf("A status not updated, got %v", m.lanes[0].Status)
+	}
+}
+
+// TestUpdate_LaneListPrunesReapedLanes confirms a full-snapshot replay
+// is authoritative: lanes absent from the new snapshot (e.g. reaped by
+// the daemon while the TUI was disconnected) are dropped rather than
+// lingering forever. Regression for gap audit 2026-07-05.
+func TestUpdate_LaneListPrunesReapedLanes(t *testing.T) {
+	m := New("s", &fakeTransport{})
+	t0 := time.Now()
+	t1 := t0.Add(time.Second)
+	t2 := t0.Add(2 * time.Second)
+	m.Update(laneListMsg{Lanes: []LaneSnapshot{
+		{ID: "A", StartedAt: t0, Status: StatusRunning, CostUSD: 1.0},
+		{ID: "M", StartedAt: t1, Status: StatusBlocked, CostUSD: 2.0},
+		{ID: "Z", StartedAt: t2, Status: StatusRunning, CostUSD: 4.0},
+	}})
+	if len(m.lanes) != 3 {
+		t.Fatalf("setup: len(lanes)=%d want 3", len(m.lanes))
+	}
+	// Arm a kill-confirm on a lane that is about to be reaped.
+	m.confirmKill = "Z"
+
+	// Reconnect snapshot: Z was reaped; only A and M remain.
+	m.Update(laneListMsg{Lanes: []LaneSnapshot{
+		{ID: "A", StartedAt: t0, Status: StatusRunning, CostUSD: 1.0},
+		{ID: "M", StartedAt: t1, Status: StatusDone, CostUSD: 2.0},
+	}})
+	if len(m.lanes) != 2 {
+		t.Fatalf("after prune len(lanes)=%d want 2", len(m.lanes))
+	}
+	if _, ok := m.laneIndex["Z"]; ok {
+		t.Errorf("reaped lane Z still present in laneIndex")
+	}
+	for _, l := range m.lanes {
+		if l.ID == "Z" {
+			t.Errorf("reaped lane Z still present in m.lanes")
+		}
+	}
+	// laneIndex must be consistent with the trimmed slice.
+	for i, l := range m.lanes {
+		if m.laneIndex[l.ID] != i {
+			t.Errorf("laneIndex[%q]=%d want %d", l.ID, m.laneIndex[l.ID], i)
+		}
+	}
+	// Aggregate cost must no longer count the reaped lane (1.0+2.0=3.0).
+	if m.totalCost != 3.0 {
+		t.Errorf("totalCost=%v want 3.0 (reaped lane cost dropped)", m.totalCost)
+	}
+	// The pending kill-confirm on the reaped lane must be cleared.
+	if m.confirmKill != "" {
+		t.Errorf("confirmKill=%q want empty after its lane was reaped", m.confirmKill)
+	}
+	// Surviving lane M's state must still update from the snapshot.
+	if m.laneIndex["M"] < 0 || m.lanes[m.laneIndex["M"]].Status != StatusDone {
+		t.Errorf("surviving lane M status not updated to Done")
 	}
 }
 
