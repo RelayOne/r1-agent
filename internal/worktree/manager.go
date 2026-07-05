@@ -150,15 +150,29 @@ func (m *Manager) Prepare(ctx context.Context, explicitName string) (Handle, err
 // sharedDepDirs returns dependency directories that can be safely shared
 // across worktrees via symlinks. Returns a fresh slice each call to prevent
 // mutation of a package-level variable.
+//
+// Only read-mostly *dependency caches* belong here — directories that are
+// populated once (by a package manager) and thereafter only read during a
+// build. Symlinking one of these into every parallel worktree is the whole
+// point: it avoids reinstalling deps per worktree.
+//
+// Build-OUTPUT / build-STATE directories must NOT be shared. When N worktrees
+// build concurrently and all point their output dir at one shared location,
+// their compilers race to write the same object files, caches, and lock files
+// and corrupt each other's builds. That excludes:
+//   - "target"      — Cargo (and sbt) compiled-artifact output
+//   - "__pycache__" — CPython bytecode, rewritten on every import/run
+//   - ".gradle"     — Gradle's per-project build state + file locks
+//
+// ".m2" (Maven's local artifact repository) stays: it is a dependency cache,
+// not build output, and Maven's own locking makes a shared local repo safe —
+// the same reason CI jobs routinely share ~/.m2.
 func sharedDepDirs() []string {
 	return []string{
-		"node_modules",
-		"vendor",
-		".venv",
-		"target",      // Rust
-		"__pycache__",
-		".gradle",
-		".m2",
+		"node_modules", // npm/yarn/pnpm install cache
+		"vendor",       // Go vendored deps (read-only)
+		".venv",        // Python virtualenv (read-only after creation)
+		".m2",          // Maven local artifact repository (dep cache, self-locked)
 	}
 }
 
