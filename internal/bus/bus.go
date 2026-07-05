@@ -820,6 +820,9 @@ func (b *Bus) PublishDelayed(evt Event, delay time.Duration) (string, error) {
 		}
 		delete(b.delayed, cancelID)
 		b.mu.Unlock()
+		// Durably mark the entry consumed BEFORE publishing so a restart
+		// never resurrects and re-fires an already-fired delayed event.
+		_ = b.wal.AppendDelayedFired(cancelID)
 		_ = b.Publish(de.Event)
 	})
 
@@ -888,6 +891,9 @@ func (b *Bus) restoreDelayed() error {
 			}
 			delete(b.delayed, cancelID)
 			b.mu.Unlock()
+			// Mark consumed durably before publishing so a subsequent
+			// restart does not resurrect this restored entry a second time.
+			_ = b.wal.AppendDelayedFired(cancelID)
 			_ = b.Publish(de.Event)
 		})
 		b.delayed[cancelID] = e

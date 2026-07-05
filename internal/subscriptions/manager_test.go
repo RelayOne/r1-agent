@@ -114,6 +114,53 @@ func TestCircuitBreakerResetsAfterTimeout(t *testing.T) {
 	}
 }
 
+// TestUpdateUtilizationPreservesOpenBreaker guards against the poller silently
+// clearing an open circuit breaker: while CircuitBreakerUntil is in the future,
+// a utilization poll must NOT reclassify the pool back to Idle/Throttled and let
+// Acquire re-select the rate-limited pool mid-backoff.
+func TestUpdateUtilizationPreservesOpenBreaker(t *testing.T) {
+	m := NewManager([]Pool{
+		{ID: "c1", Provider: ProviderClaude},
+	})
+
+	// Trip the breaker (3 consecutive rate-limit failures).
+	for i := 0; i < 3; i++ {
+		p, err := m.Acquire(ProviderClaude, "task")
+		if err != nil {
+			t.Fatalf("acquire %d: %v", i, err)
+		}
+		m.Release(p.ID, true)
+	}
+
+	// Simulate the background poller reporting low utilization while the
+	// 5-minute backoff window is still open.
+	m.UpdateUtilization("c1", 10, 5, time.Now().Add(time.Hour), time.Now().Add(time.Hour))
+
+	m.mu.Lock()
+	gotStatus := m.pools[0].Status
+	m.mu.Unlock()
+	if gotStatus != StatusCircuitOpen {
+		t.Fatalf("poller cleared open breaker: Status=%v, want StatusCircuitOpen", gotStatus)
+	}
+
+	// Acquire must still refuse the pool while the breaker is open.
+	if _, err := m.Acquire(ProviderClaude, "task-after-poll"); err == nil {
+		t.Error("expected error: breaker should still be open after utilization poll")
+	}
+
+	// Once the window elapses, a poll may reclassify normally again.
+	m.mu.Lock()
+	m.pools[0].CircuitBreakerUntil = time.Now().Add(-time.Second)
+	m.mu.Unlock()
+	m.UpdateUtilization("c1", 10, 5, time.Now(), time.Now())
+	m.mu.Lock()
+	gotStatus = m.pools[0].Status
+	m.mu.Unlock()
+	if gotStatus != StatusIdle {
+		t.Fatalf("after breaker expiry, Status=%v, want StatusIdle", gotStatus)
+	}
+}
+
 func TestUpdateUtilizationThreadSafe(t *testing.T) {
 	m := NewManager([]Pool{
 		{ID: "c1", Provider: ProviderClaude},

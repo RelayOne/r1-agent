@@ -27,7 +27,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -163,20 +165,91 @@ type TaskStore interface {
 	List(ctx context.Context) ([]Task, error)
 }
 
+// ErrTaskStoreFull is returned by Submit when the store has
+// reached its live-task cap and no terminal tasks can be
+// evicted to make room. Fail-closed: an unauthenticated peer
+// cannot exhaust process memory by submitting unbounded tasks.
+var ErrTaskStoreFull = errors.New("a2a: task store is full")
+
+// DefaultMaxTasks bounds the number of retained tasks in an
+// InMemoryTaskStore. DefaultTaskTTL is how long a terminal
+// task is retained (for status polling) before it is eligible
+// for eviction. Both are overridable via SetLimits and the
+// STOKE_A2A_MAX_TASKS / STOKE_A2A_TASK_TTL_SEC env vars.
+const (
+	DefaultMaxTasks = 10000
+	DefaultTaskTTL  = time.Hour
+)
+
 // InMemoryTaskStore is the reference TaskStore. Thread-safe.
 type InMemoryTaskStore struct {
-	mu    sync.Mutex
-	tasks map[string]*Task
-	now   func() time.Time
+	mu       sync.Mutex
+	tasks    map[string]*Task
+	now      func() time.Time
+	maxTasks int
+	ttl      time.Duration
 }
 
 // NewInMemoryTaskStore returns an empty in-memory store. Uses
 // time.Now() as its clock; tests that want determinism can
 // set SetClock.
 func NewInMemoryTaskStore() *InMemoryTaskStore {
-	return &InMemoryTaskStore{
-		tasks: map[string]*Task{},
-		now:   func() time.Time { return time.Now().UTC() },
+	s := &InMemoryTaskStore{
+		tasks:    map[string]*Task{},
+		now:      func() time.Time { return time.Now().UTC() },
+		maxTasks: DefaultMaxTasks,
+		ttl:      DefaultTaskTTL,
+	}
+	if v, err := strconv.Atoi(os.Getenv("STOKE_A2A_MAX_TASKS")); err == nil && v > 0 {
+		s.maxTasks = v
+	}
+	if v, err := strconv.Atoi(os.Getenv("STOKE_A2A_TASK_TTL_SEC")); err == nil && v > 0 {
+		s.ttl = time.Duration(v) * time.Second
+	}
+	return s
+}
+
+// SetLimits overrides the store's task cap and terminal-task
+// retention TTL. A non-positive value leaves that limit
+// unchanged. Intended for tests and explicit configuration.
+func (s *InMemoryTaskStore) SetLimits(maxTasks int, ttl time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if maxTasks > 0 {
+		s.maxTasks = maxTasks
+	}
+	if ttl > 0 {
+		s.ttl = ttl
+	}
+}
+
+// evictLocked reclaims space before a new Submit. It first
+// drops terminal tasks whose retention window has elapsed,
+// then — if still at the cap — evicts the oldest terminal
+// tasks (FIFO by UpdatedAt). Non-terminal tasks are never
+// evicted, so in-flight work is never silently dropped.
+// Caller must hold s.mu.
+func (s *InMemoryTaskStore) evictLocked(now time.Time) {
+	for id, t := range s.tasks {
+		if t.Status.IsTerminal() && now.Sub(t.UpdatedAt) >= s.ttl {
+			delete(s.tasks, id)
+		}
+	}
+	for len(s.tasks) >= s.maxTasks {
+		oldestID := ""
+		var oldest time.Time
+		for id, t := range s.tasks {
+			if !t.Status.IsTerminal() {
+				continue
+			}
+			if oldestID == "" || t.UpdatedAt.Before(oldest) {
+				oldestID, oldest = id, t.UpdatedAt
+			}
+		}
+		if oldestID == "" {
+			return // nothing terminal left to evict
+		}
+		delete(s.tasks, oldestID)
 	}
 }
 
@@ -198,6 +271,12 @@ func (s *InMemoryTaskStore) Submit(_ context.Context, prompt json.RawMessage) (T
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
+	// Bound memory: reclaim terminal tasks, then fail closed if the store
+	// is still full of live work rather than growing without limit.
+	s.evictLocked(now)
+	if len(s.tasks) >= s.maxTasks {
+		return Task{}, ErrTaskStoreFull
+	}
 	id := uuid.NewString()
 	t := &Task{
 		ID:        id,
