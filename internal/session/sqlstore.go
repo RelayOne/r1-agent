@@ -211,7 +211,9 @@ func (s *SQLStore) SaveLearning(l *Learning) error {
 	if err != nil {
 		return fmt.Errorf("begin learning tx: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
+	// Rollback is a no-op after a successful Commit; the error is
+	// intentionally discarded (explicit assignment rather than a nolint).
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec("DELETE FROM patterns"); err != nil {
 		return fmt.Errorf("delete patterns: %w", err)
