@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 )
@@ -38,16 +39,83 @@ var (
 	reRootHomeTarget = regexp.MustCompile(`^(/|~|\$HOME|\$\{HOME\})(/.*)?$`)
 )
 
+// stripQuotes removes a single layer of surrounding matching single or
+// double quotes from an operand, so a quoted catastrophic target like
+// `"/"` or `'/'` is compared by the value the shell would use, not the
+// quoted literal (which would slip past an anchored target match).
+func stripQuotes(s string) string {
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
+}
+
+// isAssignment reports whether tok is a leading `NAME=VALUE` shell
+// assignment (applied as a one-command env var, e.g. `FOO=bar rm -rf /`),
+// so the command word underneath can be recognized.
+func isAssignment(tok string) bool {
+	eq := strings.IndexByte(tok, '=')
+	if eq <= 0 {
+		return false
+	}
+	for j, c := range tok[:eq] {
+		switch {
+		case c == '_', c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+		case j > 0 && c >= '0' && c <= '9':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// commandWord returns the effective command name and its remaining
+// argument tokens. It skips leading NAME=VALUE assignments, strips a
+// leading backslash (`\rm`, used to bypass a shell alias), and reduces an
+// absolute/relative path to its basename (`/bin/rm`, `/usr/bin/chmod`) so
+// the breaker recognizes the command however it is spelled — the previous
+// literal-first-token check let `/bin/rm -rf /` and `\rm -rf /` through.
+func commandWord(fields []string) (string, []string) {
+	i := 0
+	for i < len(fields) && isAssignment(fields[i]) {
+		i++
+	}
+	if i >= len(fields) {
+		return "", nil
+	}
+	raw := strings.TrimPrefix(fields[i], `\`)
+	return path.Base(raw), fields[i+1:]
+}
+
+// isRootHomeTarget reports whether an operand names a filesystem root or
+// the home directory (or a glob/quote spelling of one) — the only targets
+// the always-on floor fires on. It unquotes the operand and treats the
+// catastrophic globs `/*`, `/.`, `/home/*` and the home-content globs
+// `~/*`, `$HOME/*` as root/home, while deliberately NOT matching arbitrary
+// absolute subtrees (`/tmp/build`, `/home/eric/proj`) or relative globs
+// (`mydir/*`) so real cleanup commands never false-positive.
+func isRootHomeTarget(op string) bool {
+	op = stripQuotes(op)
+	switch op {
+	case "/", "/*", "/.", "/home", "/home/*", "/home/.":
+		return true
+	}
+	return reRootHomeTarget.MatchString(op)
+}
+
 // rmDeletesRootHome reports whether a single command segment is a recursive
 // force `rm` of a filesystem root or the home directory. Flags are parsed as
 // independent booleans regardless of order or fusion, so `rm -rf /`,
 // `rm -r -f /`, `rm -f -r ~`, and `rm --recursive --force /` are all caught —
 // the old regex only matched r-before-f fused in a single flag token.
 func rmDeletesRootHome(seg string) bool {
-	fields := strings.Fields(seg)
-	if len(fields) == 0 || fields[0] != "rm" {
+	cmd, args := commandWord(strings.Fields(seg))
+	if cmd != "rm" {
 		return false
 	}
+	fields := append([]string{"rm"}, args...)
 	rec, force := false, false
 	endFlags := false
 	var operands []string
@@ -87,7 +155,7 @@ func rmDeletesRootHome(seg string) bool {
 		return false
 	}
 	for _, op := range operands {
-		if reRootHomeTarget.MatchString(op) {
+		if isRootHomeTarget(op) {
 			return true
 		}
 	}
@@ -99,15 +167,13 @@ func rmDeletesRootHome(seg string) bool {
 // rmDeletesRootHome, the recursive flag and the target operand are matched
 // independent of order, so `chmod 777 -R /` (flag after the mode) is caught.
 func chmodRecursiveRoot(seg string) bool {
-	fields := strings.Fields(seg)
-	if len(fields) == 0 {
-		return false
-	}
-	switch fields[0] {
+	cmd, args := commandWord(strings.Fields(seg))
+	switch cmd {
 	case "chmod", "chown", "chgrp":
 	default:
 		return false
 	}
+	fields := append([]string{cmd}, args...)
 	rec := false
 	endFlags := false
 	var operands []string
@@ -141,7 +207,7 @@ func chmodRecursiveRoot(seg string) bool {
 		return false
 	}
 	for _, op := range operands {
-		if reRootHomeTarget.MatchString(op) {
+		if isRootHomeTarget(op) {
 			return true
 		}
 	}
