@@ -96,6 +96,9 @@ export interface UiSlice {
     | "closed";
   /** Surfaces hard-cap reconnect failures to the ConnectionLostBanner. */
   hardCapped: boolean;
+  /** WS heartbeat round-trip latency in ms, or null until the first
+   *  ping/pong cycle completes. Drives the StatusBar latency segment. */
+  latencyMs: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +121,7 @@ export interface DaemonState
   setTheme: (theme: UiSlice["theme"]) => void;
   setConnectionState: (s: UiSlice["connectionState"]) => void;
   setHardCapped: (v: boolean) => void;
+  setLatency: (ms: number | null) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +215,7 @@ function emptyUiSlice(): UiSlice {
     theme: "system",
     connectionState: "idle",
     hardCapped: false,
+    latencyMs: null,
   };
 }
 
@@ -407,6 +412,13 @@ export function createDaemonStore(
         set((prev) => ({ ...prev, ui: { ...prev.ui, connectionState: s } })),
 
       setHardCapped: (v) => set((prev) => ({ ...prev, ui: { ...prev.ui, hardCapped: v } })),
+
+      setLatency: (ms) =>
+        set((prev) =>
+          prev.ui.latencyMs === ms
+            ? prev
+            : { ...prev, ui: { ...prev.ui, latencyMs: ms } },
+        ),
     };
   });
 

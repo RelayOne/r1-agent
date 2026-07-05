@@ -93,6 +93,9 @@ export function useDaemonSocket(opts: UseDaemonSocketOptions): UseDaemonSocketRe
       onHardCap: () => {
         s.getState().setHardCapped(true);
       },
+      onLatency: (ms) => {
+        s.getState().setLatency(ms);
+      },
       onSchemaError: (zerr, raw) => {
         onSchemaErrorRef.current?.(raw, zerr.message);
       },
