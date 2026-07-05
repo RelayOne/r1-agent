@@ -176,6 +176,24 @@ func TestPreToolUse_Negative(t *testing.T) {
 			name:  "tee into .env",
 			input: `{"tool_name":"Bash","tool_input":{"command":"echo X | tee .env"}}`,
 		},
+		// gap-fix-review: a directory prefix before the protected name must
+		// not evade the redirect guard (the old (\./)? only caught bare/./).
+		{
+			name:  "redirect to absolute-path CLAUDE.md",
+			input: `{"tool_name":"Bash","tool_input":{"command":"echo pwned > /home/eric/repos/r1-agent/CLAUDE.md"}}`,
+		},
+		{
+			name:  "redirect to $PWD CLAUDE.md",
+			input: `{"tool_name":"Bash","tool_input":{"command":"echo pwned > $PWD/CLAUDE.md"}}`,
+		},
+		{
+			name:  "append to absolute-path settings.json",
+			input: `{"tool_name":"Bash","tool_input":{"command":"echo x >> /abs/.claude/settings.json"}}`,
+		},
+		{
+			name:  "redirect via dotdot path to CLAUDE.md",
+			input: `{"tool_name":"Bash","tool_input":{"command":"echo x > docs/../CLAUDE.md"}}`,
+		},
 	}
 
 	for _, tc := range tests {

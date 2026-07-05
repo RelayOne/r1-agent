@@ -211,7 +211,10 @@ if [ "$TOOL_NAME" = "Bash" ] && [ -n "$COMMAND" ]; then
     # exfiltrate-append into .env / CLAUDE.md / .claude/ / settings.json.
     # Same protected list as the Write|Edit guard.
     PROT='(\.claude/|\.stoke/|\.r1/|CLAUDE\.md|\.env|settings\.json|stoke\.policy\.yaml)'
-    if echo "$CMDN" | grep -qE "(>>?|[0-9]+>)[[:space:]]*(\./)?${PROT}"; then
+    # Allow an arbitrary directory prefix (absolute, $PWD/, ../, ...) between
+    # the redirect operator and the protected name — a model naturally emits
+    # a full path, and the old (\./)? only caught a bare or ./-prefixed name.
+    if echo "$CMDN" | grep -qE "(>>?|[0-9]+>)[[:space:]]*[^|;&<>[:space:]]*${PROT}"; then
         BLOCK "Protected file: shell redirect into .claude/.stoke/CLAUDE.md/.env/settings.json/stoke.policy.yaml blocked."
     fi
     if echo "$CMDN" | grep -qE "(^|[[:space:]])(tee|sed|dd|cp|mv|install|ln|truncate)([[:space:]])[^|;&]*${PROT}"; then
