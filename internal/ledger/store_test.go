@@ -20,12 +20,22 @@ func TestWriteNodeChainFailureLeavesNoOrphan(t *testing.T) {
 	chainDir := filepath.Join(root, "chain")
 	contentDir := filepath.Join(root, "content")
 
-	// Make the chain dir read-only so the chain write fails after the
-	// content tier has been written.
-	if err := os.Chmod(chainDir, 0o500); err != nil {
+	// Force the chain write to fail after the content tier is written, by
+	// replacing the chain DIR with a regular file: atomicWriteFile's
+	// os.CreateTemp(chainDir, ...) then fails ENOTDIR. Unlike a
+	// chmod-read-only dir, ENOTDIR is not bypassed by root
+	// (CAP_DAC_OVERRIDE), so the orphan-cleanup path is exercised in CI
+	// containers too, which run as root.
+	if err := os.RemoveAll(chainDir); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(chainDir, 0o755)
+	if err := os.WriteFile(chainDir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		os.Remove(chainDir)
+		os.MkdirAll(chainDir, 0o755)
+	}()
 
 	n := Node{ID: "n-orphan", Type: "test", Content: []byte(`{"k":"v"}`)}
 	if err := s.WriteNode(n); err == nil {
@@ -37,8 +47,12 @@ func TestWriteNodeChainFailureLeavesNoOrphan(t *testing.T) {
 
 	// Recovery: after the failure clears, a retry must fully persist —
 	// under the OLD chain-first ordering the dedup guard made retries a
-	// silent no-op with the content unrecoverable.
-	os.Chmod(chainDir, 0o755)
+	// silent no-op with the content unrecoverable. Restore chainDir to a
+	// real directory (it was replaced with a file to inject the failure).
+	os.Remove(chainDir)
+	if err := os.MkdirAll(chainDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.WriteNode(n); err != nil {
 		t.Fatalf("retry after failure: %v", err)
 	}
