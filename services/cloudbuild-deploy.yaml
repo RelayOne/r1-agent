@@ -272,11 +272,19 @@ steps:
         "${DEPLOY_ARGS[@]}"
 
   # CodeRadar dogfood smoke (spec coderadar-dogfood.md T8).
+  #
+  # Split across two images by necessity: resolving the DSN needs `gcloud`
+  # (cloud-sdk image), but `make smoke-coderadar` builds/tests the main
+  # go 1.25.5 module and must use the golang:1.25 toolchain — the previous
+  # single step ran `apt-get install golang-go` on cloud-sdk:slim, which
+  # ships Debian's stale go and cannot compile a go 1.25 module, so the
+  # smoke step failed on every deploy.
+  #
+  # Step 1 (cloud-sdk): resolve + materialize the DSN, or signal skip.
   # Prefers r1-${_ENV}-shared-CODERADAR_DSN when present and otherwise
-  # falls back to relayone-coderadar-dsn, which exists today. Skip when
-  # neither secret exists or when the Cloud Build service account cannot
-  # read the resolved secret value.
-  - id: smoke-coderadar
+  # falls back to relayone-coderadar-dsn, which exists today. Skips when
+  # neither secret exists or the Cloud Build SA cannot read the value.
+  - id: resolve-coderadar-dsn
     name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
     waitFor: ['deploy-coord-api']
     entrypoint: bash
@@ -284,19 +292,39 @@ steps:
       - -c
       - |
         set -euo pipefail
+        # Ephemeral handoff to the golang:1.25 step below. /workspace is
+        # per-build scratch, discarded when the build ends.
+        rm -f /workspace/coderadar_dsn /workspace/coderadar_skip
         CODERADAR_SECRET="relayone-coderadar-dsn"
         if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
           CODERADAR_SECRET="r1-${_ENV}-shared-CODERADAR_DSN"
         elif ! gcloud secrets describe "$$CODERADAR_SECRET" >/dev/null 2>&1; then
           echo "skip: no CodeRadar DSN secret found; skipping smoke-coderadar"
+          touch /workspace/coderadar_skip
           exit 0
         fi
-        apt-get update -qq && apt-get install -y -qq golang-go make
         if ! CODERADAR_DSN_VALUE=$$(gcloud secrets versions access latest --secret=$$CODERADAR_SECRET 2>/dev/null); then
           echo "skip: unable to access $$CODERADAR_SECRET from Cloud Build; skipping smoke-coderadar"
+          touch /workspace/coderadar_skip
           exit 0
         fi
-        export CODERADAR_DSN="$$CODERADAR_DSN_VALUE"
+        printf '%s' "$$CODERADAR_DSN_VALUE" > /workspace/coderadar_dsn
+
+  # Step 2 (golang:1.25): run the actual smoke against the resolved DSN.
+  # golang:1.25 already provides go 1.25 + make + gcc, so no apt install.
+  - id: smoke-coderadar
+    name: 'golang:1.25'
+    waitFor: ['resolve-coderadar-dsn']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        if [ -f /workspace/coderadar_skip ]; then
+          echo "skip: resolve-coderadar-dsn signalled skip; nothing to smoke"
+          exit 0
+        fi
+        export CODERADAR_DSN="$$(cat /workspace/coderadar_dsn)"
         export R1_ENV=${_ENV}
         make smoke-coderadar ENV=${_ENV}
 
