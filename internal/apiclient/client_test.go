@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -233,5 +234,84 @@ func TestBuildOpenAIBody(t *testing.T) {
 	msgs, _ := parsed["messages"].([]any)
 	if len(msgs) != 2 {
 		t.Errorf("expected 2 messages (system + user), got %d", len(msgs))
+	}
+}
+
+// TestStreamAnthropicUsageMerge proves the SSE parser preserves input tokens
+// reported in message_start even though the later message_delta reports only
+// output_tokens (with input_tokens implicitly 0). Wholesale overwrite of
+// finalUsage would zero the input tokens and undercount cost, bypassing budget
+// enforcement on the native runner.
+func TestStreamAnthropicUsageMerge(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		// message_start carries input + cache tokens.
+		w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1200,\"cache_read_input_tokens\":300,\"cache_creation_input_tokens\":50}}}\n\n"))
+		w.Write([]byte("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n"))
+		// message_delta carries only output tokens (input implicitly 0).
+		w.Write([]byte("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":42}}\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	c := NewClient(Config{Provider: ProviderAnthropic, APIKey: "test-key", BaseURL: server.URL})
+
+	usage, err := c.Stream(context.Background(), Request{
+		Messages: []Message{{Role: "user", Content: "Hi"}},
+	}, func(e StreamEvent) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.InputTokens != 1200 {
+		t.Errorf("input tokens dropped: want 1200, got %d", usage.InputTokens)
+	}
+	if usage.OutputTokens != 42 {
+		t.Errorf("output tokens: want 42, got %d", usage.OutputTokens)
+	}
+	if usage.CacheRead != 300 {
+		t.Errorf("cache_read tokens: want 300, got %d", usage.CacheRead)
+	}
+	if usage.CacheWrite != 50 {
+		t.Errorf("cache_creation tokens: want 50, got %d", usage.CacheWrite)
+	}
+}
+
+// TestStreamAnthropicLargeFrame proves a single SSE frame larger than bufio's
+// default 64KB token limit is parsed intact rather than truncating the stream
+// with bufio.ErrTooLong and silently dropping the remainder.
+func TestStreamAnthropicLargeFrame(t *testing.T) {
+	bigText := strings.Repeat("x", 200*1024) // 200KB, well past the 64KB default
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		frame, _ := json.Marshal(map[string]any{
+			"type":  "content_block_delta",
+			"delta": map[string]any{"type": "text_delta", "text": bigText},
+		})
+		w.Write([]byte("data: " + string(frame) + "\n\n"))
+		// A usage-bearing event after the big frame; if the scanner had
+		// truncated, this would never be reached and usage would be zero.
+		w.Write([]byte("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	c := NewClient(Config{Provider: ProviderAnthropic, APIKey: "test-key", BaseURL: server.URL})
+
+	var got string
+	usage, err := c.Stream(context.Background(), Request{
+		Messages: []Message{{Role: "user", Content: "Hi"}},
+	}, func(e StreamEvent) {
+		if e.Type == "text" {
+			got += e.Text
+		}
+	})
+	if err != nil {
+		t.Fatalf("large frame should parse without scan error: %v", err)
+	}
+	if len(got) != len(bigText) {
+		t.Errorf("large text delta truncated: want %d bytes, got %d", len(bigText), len(got))
+	}
+	if usage.OutputTokens != 7 {
+		t.Errorf("events after large frame dropped: want output 7, got %d", usage.OutputTokens)
 	}
 }

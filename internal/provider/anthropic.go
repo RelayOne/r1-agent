@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -872,8 +873,19 @@ func (p *OpenAICompatProvider) ChatStream(req ChatRequest, onEvent func(stream.E
 	if fullText.Len() > 0 {
 		result.Content = append(result.Content, ResponseContent{Type: blockTypeText, Text: fullText.String()})
 	}
-	for i := 0; i < len(toolCallMap); i++ {
-		tc := toolCallMap[i]
+	// Emit tool uses in ascending provider-index order. The map is keyed by
+	// the provider's tool_call index, which is NOT guaranteed to be a
+	// contiguous 0-based sequence — some OpenAI-compatible backends send
+	// sparse or non-zero-based indices. Iterating 0..len(map) would read the
+	// wrong keys (missing high indices, hitting nil for absent low ones), so
+	// collect and sort the actual keys instead.
+	indices := make([]int, 0, len(toolCallMap))
+	for idx := range toolCallMap {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+	for _, idx := range indices {
+		tc := toolCallMap[idx]
 		if tc == nil {
 			continue
 		}

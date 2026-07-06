@@ -439,6 +439,13 @@ func parseOpenAIResponse(data []byte) (*Response, error) {
 
 func (c *Client) parseSSE(body io.Reader, handler StreamHandler) (*Usage, error) {
 	scanner := bufio.NewScanner(body)
+	// A single SSE frame (large tool_use input or a big text delta) can far
+	// exceed bufio's default 64KB max token size; without a larger buffer
+	// scanner.Scan() returns bufio.ErrTooLong and the rest of the stream is
+	// silently dropped (partial result + generic scan error). Match the direct
+	// provider path (internal/provider/anthropic.go) and allow up to 10MB.
+	const maxSSEFrame = 10 << 20 // 10MB
+	scanner.Buffer(make([]byte, 0, 64*1024), maxSSEFrame)
 	var finalUsage Usage
 
 	for scanner.Scan() {
@@ -457,11 +464,37 @@ func (c *Client) parseSSE(body io.Reader, handler StreamHandler) (*Usage, error)
 			handler(*event)
 		}
 		if usage != nil {
-			finalUsage = *usage
+			// Anthropic splits usage across events: message_start carries
+			// input_tokens (+ cache fields) while message_delta carries the
+			// final output_tokens with input_tokens=0. Overwriting wholesale
+			// would zero out the input tokens captured earlier, undercounting
+			// cost by most of the true spend. Merge non-zero fields instead so
+			// every dimension survives whichever event reported it.
+			mergeUsage(&finalUsage, usage)
 		}
 	}
 
 	return &finalUsage, scanner.Err()
+}
+
+// mergeUsage folds any non-zero field from src into dst, preserving values
+// already captured from earlier usage-bearing events in the stream.
+func mergeUsage(dst *Usage, src *Usage) {
+	if src == nil {
+		return
+	}
+	if src.InputTokens > 0 {
+		dst.InputTokens = src.InputTokens
+	}
+	if src.OutputTokens > 0 {
+		dst.OutputTokens = src.OutputTokens
+	}
+	if src.CacheRead > 0 {
+		dst.CacheRead = src.CacheRead
+	}
+	if src.CacheWrite > 0 {
+		dst.CacheWrite = src.CacheWrite
+	}
 }
 
 func (c *Client) parseSSEData(data string) (*StreamEvent, *Usage) {
@@ -472,6 +505,18 @@ func (c *Client) parseSSEData(data string) (*StreamEvent, *Usage) {
 		return parseOpenAISSE(data)
 	}
 	return nil, nil
+}
+
+// readAnthropicCacheUsage copies Anthropic's cache token counters out of a
+// usage map into u when present. Both message_start and message_delta may carry
+// them, so callers merge across events (see mergeUsage).
+func readAnthropicCacheUsage(u *Usage, usage map[string]any) {
+	if v, ok := usage["cache_read_input_tokens"].(float64); ok {
+		u.CacheRead = int(v)
+	}
+	if v, ok := usage["cache_creation_input_tokens"].(float64); ok {
+		u.CacheWrite = int(v)
+	}
 }
 
 func parseAnthropicSSE(data string) (*StreamEvent, *Usage) {
@@ -503,6 +548,7 @@ func parseAnthropicSSE(data string) (*StreamEvent, *Usage) {
 			if v, ok := usage["output_tokens"].(float64); ok {
 				u.OutputTokens = int(v)
 			}
+			readAnthropicCacheUsage(u, usage)
 		}
 		if event != nil || u != nil {
 			return event, u
@@ -514,6 +560,7 @@ func parseAnthropicSSE(data string) (*StreamEvent, *Usage) {
 				if v, ok := usage["input_tokens"].(float64); ok {
 					u.InputTokens = int(v)
 				}
+				readAnthropicCacheUsage(u, usage)
 				return nil, u
 			}
 		}
