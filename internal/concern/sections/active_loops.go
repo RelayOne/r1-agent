@@ -9,7 +9,7 @@ import (
 )
 
 // ActiveLoops queries non-terminal loop nodes in the current mission.
-func ActiveLoops(ctx context.Context, scope Scope, l *ledger.Ledger) (string, error) {
+func ActiveLoops(ctx context.Context, scope Scope, l *ledger.Ledger, maxItems int) (string, error) {
 	nodes, err := l.Query(ctx, ledger.QueryFilter{
 		Type:      "loop",
 		MissionID: scope.MissionID,
@@ -38,5 +38,5 @@ func ActiveLoops(ctx context.Context, scope Scope, l *ledger.Ledger) (string, er
 	if len(active) == 0 {
 		return "(no active loops)", nil
 	}
-	return renderNodeList(active, "summary", 0), nil
+	return renderNodeList(active, "summary", maxItems), nil
 }

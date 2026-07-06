@@ -191,16 +191,24 @@ func (w *Workspace) Publish(n Note) error {
 
 	w.mu.Lock()
 	n.ID = fmt.Sprintf("note-%d", w.seq)
-	w.seq++
 	if n.EmittedAt.IsZero() {
 		n.EmittedAt = time.Now().UTC()
 	}
 	n.Round = w.currentRound
-	w.notes = append(w.notes, n)
+	// Durable-write-FIRST. If the WAL write fails we must NOT leave the
+	// Note in the in-memory slice: an appended-then-failed Note would be
+	// visible to Snapshot / UnresolvedCritical / Drain but absent from the
+	// durable log, so a crash-recovery replay would silently lose it and
+	// the in-memory and durable views would diverge. Persist under the
+	// lock; only on success do we advance seq and append. On failure seq
+	// is left unchanged so the next Publish reuses this ID and the
+	// invariant "seq == len(notes)" holds.
 	if err := writeNote(w.durable, n); err != nil {
 		w.mu.Unlock()
 		return err
 	}
+	w.seq++
+	w.notes = append(w.notes, n)
 	subs := make([]func(Note), 0, len(w.subs))
 	for _, fn := range w.subs {
 		subs = append(subs, fn)

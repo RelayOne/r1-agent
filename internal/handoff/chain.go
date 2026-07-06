@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/RelayOne/r1/internal/mission"
 )
@@ -236,12 +237,35 @@ func (c *Chain) BuildContext(missionID string, maxTokens int) (string, error) {
 		}
 	}
 
-	// Truncate if still over budget
+	// Truncate if still over budget. Slice on a rune boundary (never mid
+	// multibyte character) and guard against a tiny budget driving the cut
+	// point negative (slice out of range panic).
 	if len(result) > charBudget {
-		result = result[:charBudget-20] + "\n\n[context truncated]\n"
+		const marker = "\n\n[context truncated]\n"
+		limit := charBudget - len(marker)
+		if limit < 0 {
+			limit = 0
+		}
+		result = safeTruncateBytes(result, limit) + marker
 	}
 
 	return result, nil
+}
+
+// safeTruncateBytes returns s shortened to at most n bytes without splitting a
+// multibyte UTF-8 rune. It backs the cut point down to the nearest rune start
+// so the result is always valid UTF-8, and treats n <= 0 as an empty string.
+func safeTruncateBytes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if n >= len(s) {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // Count returns the number of handoffs for a mission.
@@ -268,9 +292,19 @@ func parseList(s string) []string {
 	return items
 }
 
+// truncate shortens s to at most maxLen runes (not bytes), appending an
+// ellipsis when it clips. It is rune-aware so multibyte text is never cut mid
+// character, and bounds-safe for tiny maxLen values.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if maxLen <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen-3] + "..."
+	r := []rune(s)
+	if maxLen <= 3 {
+		return string(r[:maxLen])
+	}
+	return string(r[:maxLen-3]) + "..."
 }

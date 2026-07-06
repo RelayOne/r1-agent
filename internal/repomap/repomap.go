@@ -357,11 +357,15 @@ func (rm *RepoMap) renderLocked(budget int) string {
 		return sorted[i].rank > sorted[j].rank
 	})
 
+	written := 0
 	for _, g := range sorted {
 		// Estimate tokens for this file section
 		sectionTokens := 3 + len(g.symbols)*2 // header + symbols
 		if tokensUsed+sectionTokens > budget {
-			sb.WriteString(fmt.Sprintf("\n... (%d more files)\n", len(sorted)-len(groups)))
+			// Report how many file sections were actually dropped. (The old
+			// code used len(sorted)-len(groups), which is always 0 because
+			// sorted is built from groups.)
+			sb.WriteString(fmt.Sprintf("\n... (%d more files)\n", len(sorted)-written))
 			break
 		}
 
@@ -384,6 +388,7 @@ func (rm *RepoMap) renderLocked(budget int) string {
 		}
 		sb.WriteString("\n")
 		tokensUsed += sectionTokens
+		written++
 	}
 
 	return sb.String()

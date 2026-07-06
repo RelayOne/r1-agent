@@ -226,6 +226,19 @@ func (tx *Transaction) Commit() error {
 				return fmt.Errorf("write temp for %s: %w", op.Path, err)
 			}
 			tmp.Close()
+			// os.CreateTemp makes the temp 0600; renaming it over an
+			// existing file would strip that file's real mode (e.g. an
+			// executable bit). Match the target's current mode before the
+			// rename, falling back to 0644 for genuinely new files.
+			mode := os.FileMode(0644)
+			if fi, statErr := os.Stat(op.Path); statErr == nil {
+				mode = fi.Mode().Perm()
+			}
+			if err := os.Chmod(tmp.Name(), mode); err != nil { // #nosec G302 -- mode mirrors the target file's existing/default perms.
+				os.Remove(tmp.Name())
+				cleanup()
+				return fmt.Errorf("chmod temp for %s: %w", op.Path, err)
+			}
 			stg = append(stg, staged{tmpPath: tmp.Name(), op: op})
 		}
 	}

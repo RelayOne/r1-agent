@@ -59,6 +59,10 @@ type PlanItem struct {
 type CompletionCriteria struct {
 	// PlanCompletionThreshold is the minimum fraction of PlanItems that
 	// must verify (test passes or symbols present). 1.0 = all items.
+	// UNSET (0 / omitted) defaults to 1.0 at scoring time — an omitted
+	// threshold does NOT disable the plan gate (that would let a mission
+	// completing 0 of N items score as satisfied). Set an explicit fraction
+	// in (0,1] for a looser bar.
 	PlanCompletionThreshold float64 `yaml:"plan_completion_threshold"`
 	// DeliveryRatioMin is the minimum DeliveryRatio.Percent (see
 	// internal/bench/delivery_ratio.go::Compute) the diff must achieve.

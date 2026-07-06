@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/hub"
 )
 
@@ -45,6 +46,50 @@ func TestPublish(t *testing.T) {
 	}
 	if stored.Round != 0 {
 		t.Fatalf("Round=%d, want 0", stored.Round)
+	}
+}
+
+// TestPublishDurableWriteFailure_NoInMemoryDivergence proves that when
+// the durable WAL write fails, Publish returns the error and does NOT
+// leave the Note in the in-memory store. Otherwise the Note would be
+// visible to Snapshot/UnresolvedCritical/Drain but absent from the
+// durable log — a crash replay would silently lose it, diverging the two
+// views. The failure is injected deterministically (no timing / no root
+// sensitivity) by closing the durable bus so every subsequent Publish
+// returns "bus: closed".
+func TestPublishDurableWriteFailure_NoInMemoryDivergence(t *testing.T) {
+	b, err := bus.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("bus.New: %v", err)
+	}
+	if err := b.Close(); err != nil {
+		t.Fatalf("bus.Close: %v", err)
+	}
+
+	w := NewWorkspace(nil, b)
+	if err := w.Publish(validPublishNote()); err == nil {
+		t.Fatal("Publish succeeded despite a failed durable write; want error")
+	}
+
+	// In-memory state must be untouched: nothing visible, nothing drained.
+	if snap := w.Snapshot(); len(snap) != 0 {
+		t.Fatalf("in-memory notes diverged from durable log: Snapshot has %d, want 0", len(snap))
+	}
+	if crit := w.UnresolvedCritical(); len(crit) != 0 {
+		t.Fatalf("UnresolvedCritical exposed an unpersisted Note: %d, want 0", len(crit))
+	}
+	drained, _ := w.Drain(0)
+	if len(drained) != 0 {
+		t.Fatalf("Drain returned an unpersisted Note: %d, want 0", len(drained))
+	}
+
+	// seq must not have advanced, so the invariant seq == len(notes) holds
+	// and the next successful Publish reuses note-0.
+	w.mu.RLock()
+	seq, n := w.seq, len(w.notes)
+	w.mu.RUnlock()
+	if seq != 0 || n != 0 {
+		t.Fatalf("seq=%d len(notes)=%d after failed write, want 0/0", seq, n)
 	}
 }
 

@@ -8,7 +8,7 @@ import (
 )
 
 // ResearchReports queries research report nodes referenced by the current draft.
-func ResearchReports(ctx context.Context, scope Scope, l *ledger.Ledger) (string, error) {
+func ResearchReports(ctx context.Context, scope Scope, l *ledger.Ledger, maxItems int) (string, error) {
 	nodes, err := l.Query(ctx, ledger.QueryFilter{
 		Type:      "research",
 		MissionID: scope.MissionID,
@@ -19,5 +19,5 @@ func ResearchReports(ctx context.Context, scope Scope, l *ledger.Ledger) (string
 	if len(nodes) == 0 {
 		return "(no research reports)", nil
 	}
-	return renderNodeList(nodes, "findings", 0), nil
+	return renderNodeList(nodes, "findings", maxItems), nil
 }

@@ -8,7 +8,7 @@ import (
 )
 
 // ApplicableSkills queries skill nodes matching the current mission.
-func ApplicableSkills(ctx context.Context, scope Scope, l *ledger.Ledger) (string, error) {
+func ApplicableSkills(ctx context.Context, scope Scope, l *ledger.Ledger, maxItems int) (string, error) {
 	nodes, err := l.Query(ctx, ledger.QueryFilter{
 		Type:      "skill",
 		MissionID: scope.MissionID,
@@ -19,5 +19,5 @@ func ApplicableSkills(ctx context.Context, scope Scope, l *ledger.Ledger) (strin
 	if len(nodes) == 0 {
 		return "", nil
 	}
-	return renderNodeList(nodes, "description", 0), nil
+	return renderNodeList(nodes, "description", maxItems), nil
 }

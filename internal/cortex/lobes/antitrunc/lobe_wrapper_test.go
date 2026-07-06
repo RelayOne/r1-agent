@@ -130,6 +130,48 @@ func TestLobe_NilWorkspace_NoOp(t *testing.T) {
 	}
 }
 
+// TestLobe_ReRun_DoesNotDuplicateOpenFinding proves the Lobe is
+// idempotent across Rounds: running it repeatedly on the same still-open
+// state does not append duplicate SevCritical Notes for a finding that
+// already has an unresolved Note. Without dedupe the unresolved-critical
+// set escalates by one per Round and the loop can never clear it.
+func TestLobe_ReRun_DoesNotDuplicateOpenFinding(t *testing.T) {
+	dir := t.TempDir()
+	plan := filepath.Join(dir, "plan.md")
+	if err := os.WriteFile(plan, []byte("- [x] one\n- [ ] two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ws := cortex.NewWorkspace(nil, nil)
+	l := NewAntiTruncLobe(ws, plan, "")
+
+	in := cortex.LobeInput{History: historyOf("i'll stop here for now")}
+
+	// Three consecutive Rounds against identical state.
+	for round := 0; round < 3; round++ {
+		if err := l.Run(context.Background(), in); err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+	}
+
+	// Two distinct findings are open (the truncation phrase + the unchecked
+	// plan), each should have exactly one Note despite three Runs.
+	notes := criticalNotes(ws)
+	if len(notes) != 2 {
+		t.Fatalf("expected 2 critical Notes after 3 re-runs, got %d: %+v", len(notes), notes)
+	}
+
+	// No two open Notes may share the same (Title, Body) identity.
+	seen := make(map[string]bool)
+	for _, n := range notes {
+		k := n.Title + "\x00" + n.Body
+		if seen[k] {
+			t.Errorf("duplicate open Note: %q", n.Title)
+		}
+		seen[k] = true
+	}
+}
+
 func TestLobe_AllFourSignals_FourNotes(t *testing.T) {
 	dir := t.TempDir()
 	plan := filepath.Join(dir, "plan.md")

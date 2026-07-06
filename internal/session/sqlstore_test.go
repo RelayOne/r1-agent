@@ -183,3 +183,68 @@ func TestSQLStoreMissing(t *testing.T) {
 		t.Error("empty db should return empty attempts")
 	}
 }
+
+// TestAddPatternSurfacesError proves the learned-pattern write no longer
+// swallows its INSERT error. Previously addPattern discarded the Exec result,
+// so a disk/constraint/closed-DB failure silently lost the learning.
+func TestAddPatternSurfacesError(t *testing.T) {
+	s, err := NewSQLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Happy path: a normal add persists and is recallable.
+	if err := s.addPattern("build fails on missing import", "run goimports"); err != nil {
+		t.Fatalf("addPattern (open db): %v", err)
+	}
+	l, err := s.LoadLearning()
+	if err != nil {
+		t.Fatalf("LoadLearning: %v", err)
+	}
+	found := false
+	for _, p := range l.Patterns {
+		if p.Issue == "build fails on missing import" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected learned pattern to persist")
+	}
+
+	// Failure path: after Close, the write must error rather than be dropped.
+	s.Close()
+	if err := s.addPattern("this cannot be saved", "never"); err == nil {
+		t.Error("addPattern on a closed DB should return an error, not silently lose the learning")
+	}
+}
+
+// TestSaveAttemptAutoLearnPersists proves the SaveAttempt auto-learn path
+// (success following a prior failure) records the resolved pattern.
+func TestSaveAttemptAutoLearnPersists(t *testing.T) {
+	s, err := NewSQLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if err := s.SaveAttempt(Attempt{TaskID: "T9", Number: 1, Success: false, FailSummary: "nil pointer in handler"}); err != nil {
+		t.Fatalf("SaveAttempt #1: %v", err)
+	}
+	if err := s.SaveAttempt(Attempt{TaskID: "T9", Number: 2, Success: true}); err != nil {
+		t.Fatalf("SaveAttempt #2: %v", err)
+	}
+
+	l, err := s.LoadLearning()
+	if err != nil {
+		t.Fatalf("LoadLearning: %v", err)
+	}
+	found := false
+	for _, p := range l.Patterns {
+		if p.Issue == "nil pointer in handler" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected auto-learned pattern from resolved failure, got %+v", l.Patterns)
+	}
+}

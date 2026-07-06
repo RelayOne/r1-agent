@@ -4,6 +4,76 @@ import (
 	"testing"
 )
 
+// TestAnalyzeSameNameDifferentReceivers proves that a change to one of two
+// same-named methods on different receiver types is NOT silently dropped.
+// Before the qualified-identity fix, both methods keyed to the bare name
+// "Do", so one clobbered the other in the symbol map and its change was lost.
+func TestAnalyzeSameNameDifferentReceivers(t *testing.T) {
+	// A.Do is declared FIRST, so under bare-name keying B.Do (declared last)
+	// wins the "Do" map slot and A.Do's change is silently dropped. We change
+	// A.Do (the non-survivor) precisely to expose that masking.
+	old := "package main\n\n" +
+		"type A struct{}\n" +
+		"type B struct{}\n" +
+		"func (a *A) Do() int { return 1 }\n" +
+		"func (b *B) Do() int { return 2 }\n"
+	new := "package main\n\n" +
+		"type A struct{}\n" +
+		"type B struct{}\n" +
+		"func (a *A) Do() string { return \"one\" }\n" +
+		"func (b *B) Do() int { return 2 }\n"
+
+	a := Analyze(old, new, "main.go")
+
+	var sigChanges []SymbolChange
+	for _, c := range a.Changes {
+		if c.Name == "Do" && (c.Kind == KindSignature || c.Kind == KindModified) {
+			sigChanges = append(sigChanges, c)
+		}
+	}
+	if len(sigChanges) != 1 {
+		t.Fatalf("expected exactly 1 change to a Do method, got %d: %+v", len(sigChanges), a.Changes)
+	}
+	if sigChanges[0].Kind != KindSignature {
+		t.Errorf("expected signature change on A.Do, got %s", sigChanges[0].Kind)
+	}
+	// The unchanged A.Do must not appear as removed/added.
+	for _, c := range a.Changes {
+		if c.Name == "Do" && (c.Kind == KindRemoved || c.Kind == KindAdded) {
+			t.Errorf("unexpected %s change for a Do method: %+v", c.Kind, c)
+		}
+	}
+}
+
+// TestAnalyzeFuncAndMethodSameName proves a package func and a method sharing
+// a name are tracked independently (removing the func must not be masked by
+// the method still existing).
+func TestAnalyzeFuncAndMethodSameName(t *testing.T) {
+	old := "package main\n\n" +
+		"type A struct{}\n" +
+		"func Run() {}\n" +
+		"func (a *A) Run() {}\n"
+	// Remove the package-level func Run; keep the method A.Run.
+	new := "package main\n\n" +
+		"type A struct{}\n" +
+		"func (a *A) Run() {}\n"
+
+	a := Analyze(old, new, "main.go")
+
+	removedFunc := false
+	for _, c := range a.Changes {
+		if c.Kind == KindRemoved && c.Name == "Run" && c.SymbolType == "func" {
+			removedFunc = true
+		}
+		if c.Name == "Run" && c.SymbolType == "method" && c.Kind != KindModified {
+			t.Errorf("method A.Run should be unchanged, got %s", c.Kind)
+		}
+	}
+	if !removedFunc {
+		t.Errorf("expected package func Run to be detected as removed, changes: %+v", a.Changes)
+	}
+}
+
 func TestAnalyzeAdded(t *testing.T) {
 	old := "package main\n\nfunc Existing() {}\n"
 	new := "package main\n\nfunc Existing() {}\n\nfunc NewFunc() {}\n"

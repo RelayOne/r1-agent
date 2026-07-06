@@ -145,7 +145,11 @@ func (idx *Index) QueryNodes(f QueryFilter) ([]NodeID, error) {
 		query += " AND created_at <= ?"
 		args = append(args, f.Until.UTC().Format("2006-01-02T15:04:05.999999999Z"))
 	}
-	query += " ORDER BY created_at ASC"
+	// (created_at, id) is a deterministic total order — an id tiebreak so
+	// equal-timestamp rows return in a stable order instead of SQLite's
+	// unspecified row order, keeping index consumers in lockstep with the
+	// verify/linkage total order (STOKE-002).
+	query += " ORDER BY created_at ASC, id ASC"
 	if f.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", f.Limit)
 	}

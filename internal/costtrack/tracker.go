@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -50,9 +51,17 @@ var ModelPricing = map[string]Pricing{
 		InputPerMillion:  2.5,
 		OutputPerMillion: 10.0,
 	},
+	"gpt-4o-mini": {
+		InputPerMillion:  0.15,
+		OutputPerMillion: 0.6,
+	},
 	"o3-mini": {
 		InputPerMillion:  1.1,
 		OutputPerMillion: 4.4,
+	},
+	"o3": {
+		InputPerMillion:  2.0,
+		OutputPerMillion: 8.0,
 	},
 	"codex-mini": {
 		InputPerMillion:  1.5,
@@ -306,12 +315,70 @@ func (t *Tracker) Summary() string {
 	return b.String()
 }
 
-// ComputeCost calculates the USD cost for a single request.
+// unknownModelHits counts ComputeCost calls that could not resolve the model
+// name to a known pricing tier and fell back to the default. A nonzero value
+// means some spend is priced with the default tier and may be inaccurate —
+// surfaced for observability and tests.
+var unknownModelHits atomic.Int64
+
+// OnUnknownModel, if set, is invoked with the unresolved model name each time
+// ComputeCost falls back to default pricing. It lets callers log or alert
+// without costtrack taking a logging dependency (avoids an import cycle).
+var OnUnknownModel func(model string)
+
+// UnknownModelHits returns how many times ComputeCost fell back to default
+// pricing because the model name did not resolve to a known tier.
+func UnknownModelHits() int64 { return unknownModelHits.Load() }
+
+// NormalizeModel maps a runner name or dated model ID (e.g.
+// "claude-opus-4-20250514") to a canonical pricing key in ModelPricing. It
+// returns the canonical key and whether a confident match was found. Bare
+// runner labels that carry no tier information (e.g. "claude", "native")
+// return ("", false) so ComputeCost can fall back and signal — those need the
+// resolved model ID threaded in at the Record call site to price correctly.
+func NormalizeModel(model string) (string, bool) {
+	if _, ok := ModelPricing[model]; ok {
+		return model, true
+	}
+	m := strings.ToLower(strings.TrimSpace(model))
+	switch {
+	case strings.Contains(m, "opus"):
+		return "claude-opus-4", true
+	case strings.Contains(m, "sonnet"):
+		return "claude-sonnet-4", true
+	case strings.Contains(m, "haiku"):
+		return "claude-haiku-3.5", true
+	case strings.Contains(m, "gpt-4o-mini"):
+		return "gpt-4o-mini", true
+	case strings.Contains(m, "gpt-4o"):
+		return "gpt-4o", true
+	case strings.Contains(m, "o3-mini"):
+		return "o3-mini", true
+	case strings.Contains(m, "o3"):
+		return "o3", true
+	case strings.Contains(m, "codex"):
+		return "codex-mini", true
+	}
+	return "", false
+}
+
+// ComputeCost calculates the USD cost for a single request. The model name is
+// normalized (dated suffixes stripped, tier keywords matched) before lookup so
+// that dated IDs like "claude-opus-4-20250514" are not silently mispriced as
+// Sonnet. Names that cannot be resolved fall back to Sonnet pricing but signal
+// via unknownModelHits / OnUnknownModel so the miscount is observable rather
+// than silent.
 func ComputeCost(model string, inputTokens, outputTokens, cacheRead, cacheWrite int) float64 {
-	pricing, ok := ModelPricing[model]
-	if !ok {
-		// Default to sonnet pricing
+	var pricing Pricing
+	if key, matched := NormalizeModel(model); matched {
+		pricing = ModelPricing[key]
+	} else {
+		// Default to sonnet pricing, but make the fallback observable.
 		pricing = ModelPricing["claude-sonnet-4"]
+		unknownModelHits.Add(1)
+		if OnUnknownModel != nil {
+			OnUnknownModel(model)
+		}
 	}
 
 	cost := float64(inputTokens) * pricing.InputPerMillion / 1_000_000

@@ -102,7 +102,15 @@ func (s *Store) VerifyChain(ctx context.Context) error {
 			}
 		}
 		bucket := byMission[mission]
+		// Total order (CreatedAt, then ID). The ID tiebreak makes ordering
+		// deterministic on equal timestamps instead of depending on
+		// ListNodes' filesystem order, and keeps this in lockstep with the
+		// linkage side (latestInMissionUnlocked) so a chain that linkage
+		// built verifies and a reordered one does not.
 		sort.SliceStable(bucket, func(i, j int) bool {
+			if bucket[i].CreatedAt.Equal(bucket[j].CreatedAt) {
+				return bucket[i].ID < bucket[j].ID
+			}
 			return bucket[i].CreatedAt.Before(bucket[j].CreatedAt)
 		})
 		for i := 1; i < len(bucket); i++ {

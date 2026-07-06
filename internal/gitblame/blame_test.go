@@ -1,6 +1,9 @@
 package gitblame
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -154,6 +157,97 @@ func TestImpactSummaryEmpty(t *testing.T) {
 	summary := fb.ImpactSummary(1, 10)
 	if summary != "no lines in range" {
 		t.Errorf("expected no lines, got %s", summary)
+	}
+}
+
+// TestParsePorcelainSHA256 proves the header parser accepts SHA-256 (64-hex)
+// object names, not just 40-hex SHA-1, so blame works in sha256 repos.
+func TestParsePorcelainSHA256(t *testing.T) {
+	sha := "0000000000000000000000000000000000000000000000000000000000000abc" // 64 hex
+	out := sha + " 1 1 1\n" +
+		"author Carol\n" +
+		"author-time 1700000000\n" +
+		"\tpackage main\n"
+	fb, err := ParsePorcelain("main.go", out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fb.Lines) != 1 {
+		t.Fatalf("expected 1 line, got %d", len(fb.Lines))
+	}
+	if fb.Lines[0].Commit != sha {
+		t.Errorf("expected 64-hex commit %s, got %q", sha, fb.Lines[0].Commit)
+	}
+	if fb.Lines[0].Author != "Carol" {
+		t.Errorf("expected Carol, got %q", fb.Lines[0].Author)
+	}
+}
+
+// TestParsePorcelainMalformed proves a stray content line with no preceding
+// header is not emitted as a line with an empty commit/author, and a bad
+// author-time does not corrupt parsing.
+func TestParsePorcelainMalformed(t *testing.T) {
+	out := "\torphan content line before any header\n" +
+		"abc123def456abc123def456abc123def456abc1 1 1 1\n" +
+		"author Dave\n" +
+		"author-time not-a-number\n" +
+		"\treal line\n"
+	fb, err := ParsePorcelain("x.go", out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fb.Lines) != 1 {
+		t.Fatalf("expected only the well-formed line, got %d: %+v", len(fb.Lines), fb.Lines)
+	}
+	if fb.Lines[0].Author != "Dave" || fb.Lines[0].Content != "real line" {
+		t.Errorf("unexpected line: %+v", fb.Lines[0])
+	}
+	if !fb.Lines[0].Date.IsZero() {
+		t.Errorf("bad author-time should leave a zero date, got %v", fb.Lines[0].Date)
+	}
+}
+
+// TestBlameDashPrefixedPath proves the "--" separator makes Blame treat a
+// path that looks like a flag (leading "-") as a pathspec. Without "--", git
+// parses "-weird.txt" as an unknown option and the blame fails.
+func TestBlameDashPrefixedPath(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(gitPath, args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Tester", "GIT_AUTHOR_EMAIL=tester@example.com",
+			"GIT_COMMITTER_NAME=Tester", "GIT_COMMITTER_EMAIL=tester@example.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	const name = "-weird.txt" // a path that looks like a flag
+	run("init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("line one\nline two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// "--" ends option parsing for add/commit as well.
+	run("add", "--", name)
+	run("commit", "-q", "-m", "add dash-prefixed file")
+
+	fb, err := Blame(dir, name)
+	if err != nil {
+		t.Fatalf("Blame on dash-prefixed path failed (missing '--' separator?): %v", err)
+	}
+	if len(fb.Lines) != 2 {
+		t.Fatalf("expected 2 blamed lines, got %d", len(fb.Lines))
+	}
+	if fb.Lines[0].Author != "Tester" {
+		t.Errorf("expected author Tester, got %q", fb.Lines[0].Author)
 	}
 }
 

@@ -493,3 +493,145 @@ func TestSemanticSearchIndexUpdatesOnAdd(t *testing.T) {
 		t.Fatal("expected results after adding new entry")
 	}
 }
+
+// TestAddIsIncrementalNotFullRebuild proves the vector index no longer rebuilds
+// the entire corpus on every Add (the O(N^2) ingestion gap). Each entry
+// introduces fresh vocabulary, which under the old code forced a full rebuild
+// per Add; the deferred-rebuild strategy must keep rebuilds well sublinear
+// while still indexing every document.
+func TestAddIsIncrementalNotFullRebuild(t *testing.T) {
+	s := newTestStore(t)
+
+	const n = 60
+	for i := 0; i < n; i++ {
+		// Each entry carries three unique out-of-vocabulary terms.
+		content := fmt.Sprintf("uniquetokenalpha%d uniquetokenbeta%d uniquetokengamma%d", i, i, i)
+		if err := s.Add(&Entry{
+			ID:      fmt.Sprintf("r-%d", i),
+			Topic:   "corpus",
+			Query:   fmt.Sprintf("query%d", i),
+			Content: content,
+		}); err != nil {
+			t.Fatalf("Add %d: %v", i, err)
+		}
+	}
+
+	s.vecMu.RLock()
+	rebuilds := s.vecRebuilds
+	count := 0
+	if s.vecIdx != nil {
+		count = s.vecIdx.Count()
+	}
+	s.vecMu.RUnlock()
+
+	// A per-Add rebuild would be ~n; the lazy strategy rebuilds at most once
+	// (the initial cold build on the first Add) during ingestion — the vocab
+	// rebuild is deferred to the next SemanticSearch.
+	if rebuilds >= n {
+		t.Errorf("vecRebuilds=%d for %d Adds — index is rebuilding the whole corpus per Add", rebuilds, n)
+	}
+	if rebuilds > 2 {
+		t.Errorf("vecRebuilds=%d for %d Adds — expected the full rebuild to be deferred, not per-Add", rebuilds, n)
+	}
+	// Every document must still be present in the index (nothing dropped).
+	if count != n {
+		t.Errorf("vector index has %d docs, want %d — incremental Add lost documents", count, n)
+	}
+
+	// Correctness preserved: an early entry (covered by a rebuild) is findable.
+	results, err := s.SemanticSearch("uniquetokenalpha0", 5)
+	if err != nil {
+		t.Fatalf("SemanticSearch: %v", err)
+	}
+	found := false
+	for _, r := range results {
+		if r.Entry.ID == "r-0" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected r-0 findable by its unique term after incremental ingestion; got %+v", results)
+	}
+}
+
+// TestDeleteRemovesVector proves Delete drops the entry's vector so it can no
+// longer surface in SemanticSearch (no orphan left behind).
+func TestDeleteRemovesVector(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Add(&Entry{ID: "v1", Topic: "orphan", Query: "q", Content: "distinctivevector alpha beta"}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.vecMu.RLock()
+	present := s.vecIdx != nil && s.vecIdx.Get("v1") != nil
+	s.vecMu.RUnlock()
+	if !present {
+		t.Fatal("expected v1 to be indexed before delete")
+	}
+
+	if err := s.Delete("v1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	s.vecMu.RLock()
+	orphan := s.vecIdx != nil && s.vecIdx.Get("v1") != nil
+	s.vecMu.RUnlock()
+	if orphan {
+		t.Error("vector for v1 orphaned in index after Delete")
+	}
+
+	// And it must not come back through SemanticSearch.
+	results, err := s.SemanticSearch("distinctivevector", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range results {
+		if r.Entry.ID == "v1" {
+			t.Error("deleted entry v1 still returned by SemanticSearch")
+		}
+	}
+}
+
+// TestPruneRemovesVectors proves Prune drops the vectors of every pruned entry,
+// leaving no orphans in the in-memory index.
+func TestPruneRemovesVectors(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Add(&Entry{ID: "p1", Topic: "stale", Query: "q1", Content: "alpha beta gamma"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Add(&Entry{ID: "p2", Topic: "stale", Query: "q2", Content: "delta epsilon zeta"}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.vecMu.RLock()
+	before := s.vecIdx.Count()
+	s.vecMu.RUnlock()
+	if before != 2 {
+		t.Fatalf("index count before prune = %d, want 2", before)
+	}
+
+	// Force both entries old (matches TestPrune; avoids UTC/local timezone
+	// lexicographic pitfalls of a future cutoff).
+	old := time.Now().Add(-48 * time.Hour).Format(time.RFC3339Nano)
+	s.db.Exec("UPDATE entries SET updated_at=? WHERE id IN ('p1','p2')", old)
+
+	removed, err := s.Prune(time.Now().Add(-24 * time.Hour))
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("pruned %d entries, want 2", removed)
+	}
+
+	s.vecMu.RLock()
+	after := s.vecIdx.Count()
+	orphanP1 := s.vecIdx.Get("p1") != nil
+	orphanP2 := s.vecIdx.Get("p2") != nil
+	s.vecMu.RUnlock()
+	if after != 0 {
+		t.Errorf("index count after prune = %d, want 0 (orphaned vectors remain)", after)
+	}
+	if orphanP1 || orphanP2 {
+		t.Error("pruned entries left orphaned vectors in the index")
+	}
+}
