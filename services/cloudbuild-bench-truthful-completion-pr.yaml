@@ -20,7 +20,7 @@ options:
 
 steps:
   - id: build
-    name: 'golang:1.25'
+    name: 'golang:1.26'
     waitFor: ['-']
     entrypoint: bash
     args:
@@ -31,7 +31,7 @@ steps:
         go build -trimpath -o /workspace/r1-bench-bin ./cmd/r1-bench
 
   - id: test
-    name: 'golang:1.25'
+    name: 'golang:1.26'
     waitFor: ['build']
     entrypoint: bash
     args:

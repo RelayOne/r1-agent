@@ -41,7 +41,7 @@ steps:
   # step an auth regression in r1-coord-api would build and auto-deploy
   # to prod with its own passing test suite never executed anywhere.
   - id: test-services
-    name: 'golang:1.25'
+    name: 'golang:1.26'
     waitFor: ['-']
     entrypoint: bash
     args:
@@ -275,7 +275,7 @@ steps:
   #
   # Split across two images by necessity: resolving the DSN needs `gcloud`
   # (cloud-sdk image), but `make smoke-coderadar` builds/tests the main
-  # go 1.25.5 module and must use the golang:1.25 toolchain — the previous
+  # go 1.25.5 module and must use the golang:1.26 toolchain — the previous
   # single step ran `apt-get install golang-go` on cloud-sdk:slim, which
   # ships Debian's stale go and cannot compile a go 1.25 module, so the
   # smoke step failed on every deploy.
@@ -292,7 +292,7 @@ steps:
       - -c
       - |
         set -euo pipefail
-        # Ephemeral handoff to the golang:1.25 step below. /workspace is
+        # Ephemeral handoff to the golang:1.26 step below. /workspace is
         # per-build scratch, discarded when the build ends.
         rm -f /workspace/coderadar_dsn /workspace/coderadar_skip
         CODERADAR_SECRET="relayone-coderadar-dsn"
@@ -310,10 +310,10 @@ steps:
         fi
         printf '%s' "$$CODERADAR_DSN_VALUE" > /workspace/coderadar_dsn
 
-  # Step 2 (golang:1.25): run the actual smoke against the resolved DSN.
-  # golang:1.25 already provides go 1.25 + make + gcc, so no apt install.
+  # Step 2 (golang:1.26): run the actual smoke against the resolved DSN.
+  # golang:1.26 already provides go 1.25 + make + gcc, so no apt install.
   - id: smoke-coderadar
-    name: 'golang:1.25'
+    name: 'golang:1.26'
     waitFor: ['resolve-coderadar-dsn']
     entrypoint: bash
     args:

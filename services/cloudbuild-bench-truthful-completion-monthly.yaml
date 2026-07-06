@@ -25,7 +25,7 @@ options:
 
 steps:
   - id: build-r1-bench
-    name: 'golang:1.25'
+    name: 'golang:1.26'
     waitFor: ['-']
     entrypoint: bash
     args:
@@ -71,7 +71,7 @@ steps:
         done < /workspace/mission-ids.txt
 
   - id: aggregate
-    name: 'golang:1.25'
+    name: 'golang:1.26'
     waitFor: ['run-matrix']
     entrypoint: bash
     args:

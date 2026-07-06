@@ -12,7 +12,7 @@ steps:
   # installed to /usr/local/bin in a separate install-deps step do
   # not survive into later steps (audit A044 — the previous split
   # made this step fail with 'goreleaser: command not found').
-  - name: 'golang:1.25'
+  - name: 'golang:1.26'
     id: goreleaser
     entrypoint: bash
     args:

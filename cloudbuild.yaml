@@ -23,7 +23,7 @@ steps:
         npm run test --workspace=web
     waitFor: ['-']
 
-  - name: 'golang:1.25'
+  - name: 'golang:1.26'
     id: vendor-check
     entrypoint: bash
     args:
@@ -47,7 +47,7 @@ steps:
         test -f vendor/modules.txt
         go list -mod=vendor ./... > /dev/null
 
-  - name: 'golang:1.25'
+  - name: 'golang:1.26'
     id: build
     waitFor: ['web-build', 'vendor-check']
     entrypoint: bash
@@ -59,13 +59,13 @@ steps:
     env:
       - 'CGO_ENABLED=1'
 
-  - name: 'golang:1.25'
+  - name: 'golang:1.26'
     id: vet
     waitFor: ['vendor-check']
     entrypoint: go
     args: ['vet', '-mod=vendor', './...']
 
-  - name: 'golang:1.25'
+  - name: 'golang:1.26'
     id: lint-lane-events
     waitFor: ['vendor-check']
     entrypoint: bash
@@ -78,13 +78,13 @@ steps:
   # enabled. A single stray cwd-mutating call inside a goroutine handler
   # silently leaks workdir between concurrent sessions (risk R1, see
   # spec §11.5). Fails the build red on any unannotated hit.
-  - name: 'golang:1.25'
+  - name: 'golang:1.26'
     id: lint-chdir
     waitFor: ['vendor-check']
     entrypoint: bash
     args: ['tools/lint-no-chdir.sh']
 
-  - name: 'golang:1.25'
+  - name: 'golang:1.26'
     id: test
     waitFor: ['vet']
     entrypoint: bash
@@ -96,7 +96,7 @@ steps:
     env:
       - 'CGO_ENABLED=1'
 
-  - name: 'golang:1.25'
+  - name: 'golang:1.26'
     id: race
     waitFor: ['vet']
     entrypoint: bash
@@ -108,7 +108,7 @@ steps:
     env:
       - 'CGO_ENABLED=1'
 
-  - name: 'golang:1.25'
+  - name: 'golang:1.26'
     id: antitrunc-verify
     waitFor: ['test']
     entrypoint: bash
@@ -126,7 +126,7 @@ steps:
           exit 1
         }
 
-  - name: 'golang:1.25'
+  - name: 'golang:1.26'
     id: build-multi-platform-r1
     waitFor: ['build', 'test', 'race', 'antitrunc-verify']
     entrypoint: bash
