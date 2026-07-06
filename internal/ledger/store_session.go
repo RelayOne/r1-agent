@@ -13,7 +13,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // ListNodesForSession returns chain nodes whose MissionID matches
@@ -75,7 +78,14 @@ func (s *Store) ListEdgesForSession(sessionID string) ([]Edge, error) {
 // step's hex is the result. Deterministic + downstream-verifiable
 // without re-loading the ledger.
 func (s *Store) ChainRootHashForSession(sessionID string) (string, error) {
-	nodes, err := s.ListNodesForSession(sessionID)
+	// Read chain-tier headers ONLY. The chain root hashes header-tier fields
+	// (ID + ContentCommitment) and must stay computable even when the content
+	// tier is absent, redacted, or failing its commitment check — the root is
+	// a structural quantity, orthogonal to content-tier integrity. Routing
+	// through ReadNode (which now verifies the content commitment, fail-closed)
+	// would make a tampered or redacted content tier silently drop nodes out
+	// of the root, changing it for the wrong reason.
+	nodes, err := s.listChainHeadersForSession(sessionID)
 	if err != nil {
 		return "", err
 	}
@@ -97,6 +107,51 @@ func (s *Store) ChainRootHashForSession(sessionID string) (string, error) {
 		prev = h.Sum(nil)
 	}
 	return hex.EncodeToString(prev), nil
+}
+
+// listChainHeadersForSession reads chain-tier records only ({root}/chain/
+// *.json) — no content tier, no content-commitment verification — filtered by
+// MissionID. Used by ChainRootHashForSession, whose hash is over header-tier
+// fields alone and must succeed regardless of content-tier state. Empty
+// sessionID returns every chain header (mirrors ListNodesForSession).
+func (s *Store) listChainHeadersForSession(sessionID string) ([]Node, error) {
+	entries, err := os.ReadDir(s.chainDir)
+	if err != nil {
+		return nil, fmt.Errorf("read chain dir: %w", err)
+	}
+	out := make([]Node, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(s.chainDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var cr chainRecord
+		if err := json.Unmarshal(data, &cr); err != nil {
+			continue
+		}
+		if sessionID != "" && cr.MissionID != sessionID {
+			continue
+		}
+		n := Node{
+			ID:                cr.ID,
+			Type:              cr.Type,
+			SchemaVersion:     cr.SchemaVersion,
+			CreatedBy:         cr.CreatedBy,
+			MissionID:         cr.MissionID,
+			ParentHash:        cr.ParentHash,
+			ContentCommitment: cr.ContentCommitment,
+		}
+		if cr.CreatedAt != "" {
+			if t, perr := parseTimestamp(cr.CreatedAt); perr == nil {
+				n.CreatedAt = t
+			}
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 // CanonicalManifestSignBody returns the bytes a v2 tracebundle

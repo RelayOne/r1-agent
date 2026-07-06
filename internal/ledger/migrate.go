@@ -211,7 +211,13 @@ func MigrateParentHash(ctx context.Context, ledger *Ledger, dryRun bool) (*Migra
 
 	report := &MigrationReport{MissionsScanned: len(byMission)}
 	for _, bucket := range byMission {
+		// Total order (CreatedAt, then ID) — same tiebreak as
+		// verify.go/latestInMissionUnlocked so migration + verification agree
+		// on equal-timestamp ordering (STOKE-002).
 		sort.SliceStable(bucket, func(i, j int) bool {
+			if bucket[i].CreatedAt.Equal(bucket[j].CreatedAt) {
+				return bucket[i].ID < bucket[j].ID
+			}
 			return bucket[i].CreatedAt.Before(bucket[j].CreatedAt)
 		})
 		for i, n := range bucket {
@@ -252,7 +258,13 @@ func VerifyChain(ctx context.Context, ledger *Ledger) ([]ChainBreak, error) {
 	}
 	var breaks []ChainBreak
 	for mission, bucket := range byMission {
+		// Total order (CreatedAt, then ID) — same tiebreak as
+		// verify.go/latestInMissionUnlocked so migration + verification agree
+		// on equal-timestamp ordering (STOKE-002).
 		sort.SliceStable(bucket, func(i, j int) bool {
+			if bucket[i].CreatedAt.Equal(bucket[j].CreatedAt) {
+				return bucket[i].ID < bucket[j].ID
+			}
 			return bucket[i].CreatedAt.Before(bucket[j].CreatedAt)
 		})
 		for i := 1; i < len(bucket); i++ {

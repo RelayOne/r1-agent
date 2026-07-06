@@ -7,6 +7,7 @@
 package ledger
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -234,11 +235,45 @@ func newSalt() (string, error) {
 // the content via dictionary attack, and the commitment binds the chain
 // tier to the content tier so a swapped content blob is immediately
 // detectable.
+//
+// The commitment is computed over the CANONICAL (whitespace-compacted) form
+// of the content, not the raw bytes. This is what makes verification on read
+// (Store.ReadNode) possible: the content tier is persisted via
+// json.MarshalIndent, which reformats the stored JSON, so the bytes read back
+// are NOT byte-identical to the bytes originally supplied. Compacting both at
+// commit time and at verify time cancels that reformatting out, so an
+// untampered node always verifies while any change to the content VALUE (the
+// only kind of tamper that matters) still flips the commitment. Real callers
+// pass content produced by json.Marshal (already compact), so compaction is a
+// no-op for them and the on-disk commitment/IDs are unchanged by this.
 func contentCommitment(salt string, content json.RawMessage) string {
 	h := sha256.New()
 	h.Write([]byte(salt))
-	h.Write(content)
+	h.Write(canonicalContent(content))
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// ComputeContentCommitment returns the content commitment for a node's
+// (salt, content) pair — sha256(salt || canonical(content)), hex-encoded —
+// the exact value ReadNode's fail-closed content verification checks against.
+// Exported so callers that construct Node values directly instead of through
+// AddNode (the migration import path, tools, tests) can stamp a commitment
+// that will verify on read. AddNode and Batch call the unexported form.
+func ComputeContentCommitment(salt string, content json.RawMessage) string {
+	return contentCommitment(salt, content)
+}
+
+// canonicalContent returns the whitespace-compacted form of content so the
+// commitment is stable across the JSON reformatting the content tier
+// undergoes on write. If content is not valid JSON (json.Compact fails), the
+// raw bytes are returned unchanged so a non-JSON payload still commits
+// deterministically to itself.
+func canonicalContent(content json.RawMessage) []byte {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, content); err != nil {
+		return content
+	}
+	return buf.Bytes()
 }
 
 // canonicalHeaderBytes returns the canonical JSON of the structural header
@@ -384,7 +419,17 @@ func (l *Ledger) latestInMissionUnlocked(missionID string) *Node {
 		if n.MissionID != missionID {
 			continue
 		}
-		if latest == nil || n.CreatedAt.After(latest.CreatedAt) {
+		// Total order (CreatedAt, then ID): pick the node that is greatest
+		// in the SAME order VerifyChain sorts by, so the parent chosen for a
+		// new node is exactly the predecessor verification will expect. On
+		// equal CreatedAt the ID tiebreak is decisive and deterministic —
+		// without it, linkage fell back to index-query order while verify
+		// fell back to filesystem order, so the two could disagree (STOKE-002
+		// ordering ambiguity: a valid chain could be rejected or a reordered
+		// one accepted).
+		if latest == nil ||
+			n.CreatedAt.After(latest.CreatedAt) ||
+			(n.CreatedAt.Equal(latest.CreatedAt) && n.ID > latest.ID) {
 			latest = n
 		}
 	}
