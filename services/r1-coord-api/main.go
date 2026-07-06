@@ -9,7 +9,7 @@
 //
 // Deployment:
 //
-//	gcloud run deploy r1-coord-api-prod --image=us-central1-docker.pkg.dev/relayone-488319/r1/r1-coord-api:<sha> ...
+//	gcloud run deploy r1-coord-api-prod --image=us-central1-docker.pkg.dev/resolute-parity-484218-g1/r1/r1-coord-api:<sha> ...
 //
 // Spec: Goodventures GCP standing rules — Cloud Run service, min instances 1,
 // Instance-based billing, region us-central1.

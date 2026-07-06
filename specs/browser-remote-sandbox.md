@@ -202,7 +202,7 @@ Each item is self-contained. File paths absolute from repo root. Tests live in a
     | browserless (cloud) | 2s | 8s |
     | browserless (self-host, same region) | 1s | 4s |
     | inhouse (same region) | 1s | 4s |
-    The numbers come from Browserless's documented 1-2s cold-start + 50-200ms network call latency per the May 2026 web search. The bench is opt-in (build-tag-gated); CI runs it nightly. Test failure = release blocker only when the p99 regresses by >25% vs the most recent green run (use `gs://relayone-488319-r1-bench-reports/` per README §"Nightly benchmark cron").
+    The numbers come from Browserless's documented 1-2s cold-start + 50-200ms network call latency per the May 2026 web search. The bench is opt-in (build-tag-gated); CI runs it nightly. Test failure = release blocker only when the p99 regresses by >25% vs the most recent green run (use `gs://resolute-parity-484218-g1-r1-bench-reports/` per README §"Nightly benchmark cron").
 
 19. [x] **T8: Fallback wrapper.** Create `internal/browser/fallback.go` with a `FallbackProvider` that wraps a primary + optional secondary. Config: `browser.fallback: local | none` (default `none` for prod). On primary `Open` returning a transient error (WS dial timeout, 5xx, `Target.createBrowserContext` failure with retryable code), the wrapper emits `browser.fallback_used` to coderadar + bus and retries against the secondary. Permanent errors (ErrNoToken, network-policy-denied) DO NOT fall back. Test: mock primary that errors twice then succeeds; mock secondary always succeeds; assert fallback fires on first two calls then primary recovers.
 

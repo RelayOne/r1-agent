@@ -4,7 +4,7 @@
 # Artifacts uploaded to GCS instead of GitHub Releases.
 
 substitutions:
-  _GCS_BUCKET: relayone-488319-r1-releases
+  _GCS_BUCKET: resolute-parity-484218-g1-r1-releases
 
 steps:
   # Toolchains AND goreleaser are installed inside this one step:
@@ -56,7 +56,7 @@ steps:
       - |
         TAG="$TAG_NAME"
         REGION=us-central1
-        PROJECT=relayone-488319
+        PROJECT=resolute-parity-484218-g1
         REGISTRY="${REGION}-docker.pkg.dev/${PROJECT}/containers"
         docker build \
           --build-arg VERSION="${TAG}" \

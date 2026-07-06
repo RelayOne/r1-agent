@@ -4,11 +4,11 @@
 #
 # Spec: release-rehearsal-ci.md (T2). Reads
 # services/cloudbuild-e2e-trigger.yaml and runs `gcloud builds triggers
-# import` against the relayone-488319 project. Re-running the script
+# import` against the resolute-parity-484218-g1 project. Re-running the script
 # updates the existing triggers in-place — does NOT create duplicates.
 #
 # Required IAM:
-#   roles/cloudbuild.builds.editor on relayone-488319
+#   roles/cloudbuild.builds.editor on resolute-parity-484218-g1
 #
 # Usage:
 #   bash scripts/setup-cloudbuild-e2e-trigger.sh
@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-PROJECT="relayone-488319"
+PROJECT="resolute-parity-484218-g1"
 TRIGGER_DESC="$(dirname "$0")/../services/cloudbuild-e2e-trigger.yaml"
 
 if ! command -v gcloud >/dev/null 2>&1; then

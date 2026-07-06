@@ -130,7 +130,7 @@ gcloud beta run domain-mappings create \
   --service=r1-server \
   --domain=admin.r1.run \
   --region=us-central1 \
-  --project=relayone-488319
+  --project=resolute-parity-484218-g1
 ```
 
 Cloudflare DNS (proxy OFF — Cloud Run terminates TLS):

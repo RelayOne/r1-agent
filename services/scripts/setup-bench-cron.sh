@@ -3,7 +3,7 @@
 # automation that re-homes the deleted bench-nightly.yml GHA workflow.
 # Resolves issue #99.
 #
-# Live GCP reality (verified 2026-05-15 in relayone-488319/us-central1):
+# Live GCP reality (verified 2026-05-15 in resolute-parity-484218-g1/us-central1):
 # this script manages the only benchmark trigger/job currently provisioned:
 #   - Cloud Build trigger: r1-bench-nightly
 #   - Cloud Scheduler job: r1-bench-nightly-cron
@@ -19,15 +19,15 @@
 # Idempotent — safe to re-run.
 set -euo pipefail
 
-PROJECT="${PROJECT:-relayone-488319}"
+PROJECT="${PROJECT:-resolute-parity-484218-g1}"
 REGION="${REGION:-us-central1}"
-CONNECTION="${CONNECTION:-relayone-github-conn}"
+CONNECTION="${CONNECTION:-resolute-parity-github-conn}"
 REPO="${REPO:-r1-agent-repo}"
 REPO_RESOURCE="projects/${PROJECT}/locations/${REGION}/connections/${CONNECTION}/repositories/${REPO}"
 SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-projects/${PROJECT}/serviceAccounts/claude-eric-agent@${PROJECT}.iam.gserviceaccount.com}"
 TRIGGER_NAME="r1-bench-nightly"
 SCHEDULER_JOB="r1-bench-nightly-cron"
-BUCKET="gs://relayone-488319-r1-bench-reports"
+BUCKET="gs://resolute-parity-484218-g1-r1-bench-reports"
 
 echo "==> 1. ensure bench reports bucket: $BUCKET"
 if ! gcloud storage buckets describe "$BUCKET" --project="$PROJECT" >/dev/null 2>&1; then

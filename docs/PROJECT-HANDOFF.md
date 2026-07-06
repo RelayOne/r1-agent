@@ -195,14 +195,14 @@ services/        Cloud Build configs, deploy yaml, cron setup
 - **Local `main` drifts behind `origin/main`** — always `git fetch origin` and base work on `origin/main`.
 - **No rebase** — repo convention (and an agent hook) preserve **per-task commit history**; integrate via cherry-pick or merge, not rebase.
 - **Commit style:** `feat(...)`, `fix(...)`, `test(...)`, `docs(...)`; FIXED claims carry a commit hash. Co-authored-by trailers are expected from the agent flow.
-- **CI:** GitHub Actions (`go vet`, `lint-chdir`) + **GCP Cloud Build `r1-agent-pr`** (project `relayone-488319`) which runs web-build, vendor-check, test, **race**, antitrunc-verify. The `race` step is the strictest (catches timing flakes).
+- **CI:** GitHub Actions (`go vet`, `lint-chdir`) + **GCP Cloud Build `r1-agent-pr`** (project `resolute-parity-484218-g1`) which runs web-build, vendor-check, test, **race**, antitrunc-verify. The `race` step is the strictest (catches timing flakes).
 - **The agent workflow** (if you use it): `/scope` (write a spec) → `/build` (execute the spec, one subagent + one commit per checklist item, with cross-model review) → merge. Specs live in `specs/`, reviews in `audit/`.
 
 ---
 
 ## 8. External dependencies & ecosystem (so the names aren't a mystery)
 - **Anthropic API + `claude` CLI** and **OpenAI/`codex` CLI** (and optionally `gemini`) — the actual models/engines. Real runs need at least one authenticated.
-- **GCP project `relayone-488319`** — Cloud Build CI + deploys. `gcloud` access needed to inspect builds.
+- **GCP project `resolute-parity-484218-g1`** — Cloud Build CI + deploys. `gcloud` access needed to inspect builds.
 - **go-sqlite3 (CGO), golang.org/x/time/rate, Bubble Tea, yaml.v3** — key libraries.
 - **RelayOne ecosystem** (parent org): sister products and external orchestrators referenced in code/history — **CloudSwarm / Multica / OpenACP** (consume r1's stream-json), **CodeRadar, RelayGate, BetBuddies**, the hosted **`r1.run` / `admin.r1.run`**. Their details live outside this repo — **ask the original author**; treat them as integration endpoints, not things you own.
 

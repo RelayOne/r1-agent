@@ -282,7 +282,7 @@ preflight/                         Pre-flight workspace assertions
 --- HOSTED SAAS (services/) ---
 services/r1-coord-api/             Go service: /healthz, /v1/version, /v1/license/verify, /v1/telemetry/opt-in. Cloud Run.
 services/r1-docs/                  Go service: embeds docs/*.md, renders to HTML. Cloud Run.
-services/r1-downloads-cdn/         Go service: streams gs://relayone-488319-r1-releases/{env}/<asset>. Cloud Run.
+services/r1-downloads-cdn/         Go service: streams gs://resolute-parity-484218-g1-r1-releases/{env}/<asset>. Cloud Run.
 services/cloudbuild-deploy.yaml    Auto-deploy pipeline (4 images, 4 deploys, smoke-check /livez).
 services/deploy.sh                 ./services/deploy.sh {dev|staging|prod|all} — manual deploy.
 services/scripts/setup-cloudbuild-triggers.sh   Operator script: 3 Cloud Build triggers (per env).
@@ -430,10 +430,10 @@ Pipeline: `go build -mod=vendor` → `npm install + npx playwright install --wit
 
 Manual escape hatch: `.github/workflows/e2e-rehearsal-manual.yml` lets an operator dispatch from the Actions UI without local `gcloud`. The runner authenticates to GCP via `secrets.GCP_SA_JSON` and calls `gcloud builds triggers run r1-agent-e2e-rehearsal-main --branch=$BRANCH`. Workflow summary links to the Cloud Build console for live logs.
 
-One-time setup: `scripts/setup-cloudbuild-e2e-trigger.sh` is idempotent (re-running updates triggers in place). Requires `roles/cloudbuild.builds.editor` on `relayone-488319`. Both triggers run under the BYOSA service account `cloud-build-byosa@relayone-488319.iam.gserviceaccount.com`.
+One-time setup: `scripts/setup-cloudbuild-e2e-trigger.sh` is idempotent (re-running updates triggers in place). Requires `roles/cloudbuild.builds.editor` on `resolute-parity-484218-g1`. Both triggers run under the BYOSA service account `cloud-build-byosa@resolute-parity-484218-g1.iam.gserviceaccount.com`.
 
 ### Hosted SaaS — 12 public Cloud Run services
-- 4 services × 3 envs (dev / staging / prod) on `relayone-488319` GCP project, region `us-central1`: `r1-coord-api`, `r1-docs`, `r1-downloads-cdn`, `r1-admin`.
+- 4 services × 3 envs (dev / staging / prod) on `resolute-parity-484218-g1` GCP project, region `us-central1`: `r1-coord-api`, `r1-docs`, `r1-downloads-cdn`, `r1-admin`.
 - All services: distroless static images, min-instances=1, instance billing (no CPU throttling), `--allow-unauthenticated`, port 8080.
 - Cloud Run org policy intercepts `/healthz`; r1 services use `/livez` + `/readyz` + `/v1/version` + `/`.
 - Auto-deploy on push to `main` / `staging` / `dev` via `services/cloudbuild-deploy.yaml`.
@@ -550,12 +550,12 @@ type Finding struct {
 
 ## Infrastructure
 
-### GCP project: `relayone-488319`
+### GCP project: `resolute-parity-484218-g1`
 - **Cloud Run** public services (us-central1): `r1-coord-api-{prod,staging,dev}`, `r1-docs-{prod,staging,dev}`, `r1-downloads-cdn-{prod,staging,dev}`, `r1-admin-{prod,staging,dev}`. Min-instances=1, instance billing, distroless static.
 - **Cloud SQL Postgres 16**: `r1-prod-pg` (db-g1-small, $10/mo), `r1-staging-pg` + `r1-dev-pg` (db-f1-micro, $7/mo each). All us-central1-c, ENTERPRISE edition.
-- **Artifact Registry**: `us-central1-docker.pkg.dev/relayone-488319/r1` (4 public-service images: r1-coord-api, r1-docs, r1-downloads-cdn, r1-admin).
+- **Artifact Registry**: `us-central1-docker.pkg.dev/resolute-parity-484218-g1/r1` (4 public-service images: r1-coord-api, r1-docs, r1-downloads-cdn, r1-admin).
 - **Secret Manager**: core visible env set during the 2026-05-15 audit was `r1-{prod,staging,dev}-shared-{DATABASE_URL,ANTHROPIC_API_KEY,AUTH_JWT_SECRET}`. Treat broader GTM/observability secrets as operator-verified state, not assumed from docs.
-- **GCS**: `gs://relayone-488319-r1-releases/{prod,staging,dev}/` (binary release channels; r1-downloads-cdn streams from here).
+- **GCS**: `gs://resolute-parity-484218-g1-r1-releases/{prod,staging,dev}/` (binary release channels; r1-downloads-cdn streams from here).
 - **Cloud Build**: `r1-agent-pr` (PR gate) + `r1-agent-ci` (push to main). After PR #128 merges, `services/scripts/setup-cloudbuild-triggers.sh` adds 3 deploy triggers.
 - **Domain mappings** (live): 12 subdomains under `r1.run` — `platform|api|downloads|admin` across `prod|staging|dev`. Each maps to its Cloud Run service via CNAME → `ghs.googlehosted.com.`.
 

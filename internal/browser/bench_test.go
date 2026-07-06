@@ -6,7 +6,7 @@
 // doesn't require a live provider. The nightly bench cron (per
 // services/cloudbuild-bench-nightly.yaml) invokes this with
 // `go test -tags=bench ./internal/browser/...` and uploads the
-// p50/p99 numbers to gs://relayone-488319-r1-bench-reports/<date>/.
+// p50/p99 numbers to gs://resolute-parity-484218-g1-r1-bench-reports/<date>/.
 //
 // Thresholds enforce a hard p50 / p99 budget per provider; release
 // blocker only when p99 regresses >25% versus the most recent green
