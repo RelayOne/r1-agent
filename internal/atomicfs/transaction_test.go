@@ -200,6 +200,62 @@ func TestMultiFileAtomicCommit(t *testing.T) {
 	}
 }
 
+// TestCommitPreservesMode covers the gap where Commit renamed a 0600 temp
+// over an existing file, stripping the original's mode (e.g. its executable
+// bit). The committed file must keep the target's pre-existing mode.
+func TestCommitPreservesMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "script.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho old\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Confirm the fixture really is 0755 (umask can't strip an explicit set
+	// on an already-created file, but be defensive).
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	tx := NewTransaction(dir)
+	if err := tx.Write("script.sh", []byte("#!/bin/sh\necho new\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit failed: %v", err)
+	}
+
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o755 {
+		t.Fatalf("mode not preserved: got %o, want 0755 (temp mode leaked)", fi.Mode().Perm())
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "#!/bin/sh\necho new\n" {
+		t.Fatalf("content not updated: %q", string(data))
+	}
+}
+
+// TestCommitNewFileDefaultMode confirms a genuinely new file gets the 0644
+// fallback rather than the 0600 temp mode.
+func TestCommitNewFileDefaultMode(t *testing.T) {
+	dir := t.TempDir()
+	tx := NewTransaction(dir)
+	if err := tx.Create("fresh.txt", []byte("hi")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit failed: %v", err)
+	}
+	fi, err := os.Stat(filepath.Join(dir, "fresh.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o644 {
+		t.Fatalf("new file mode = %o, want 0644", fi.Mode().Perm())
+	}
+}
+
 // TestCommitRollbackRemovesCreatedFiles covers audit A014: when a later
 // rename in the apply phase fails, files already renamed into place that
 // had NO original must be removed on rollback — otherwise "all changes
