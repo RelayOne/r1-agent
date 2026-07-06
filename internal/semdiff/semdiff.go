@@ -79,6 +79,7 @@ type FileChange struct {
 type symbol struct {
 	Name      string
 	Type      string // func, method, type, var, const, interface
+	Recv      string // receiver type for methods (e.g. "*Foo"), empty otherwise
 	Signature string // full declaration line
 	Body      string // full body (for similarity matching)
 	Line      int
@@ -86,6 +87,21 @@ type symbol struct {
 	// AST-level fields (Go files only)
 	ASTSig  string // typed signature from AST
 	ASTBody string // normalized AST body for structural comparison
+}
+
+// symbolKey returns a qualified identity for a symbol so that same-named
+// symbols that legitimately coexist (a method Foo on *A vs a method Foo on
+// *B, or a package-level func Foo alongside a method Foo) are tracked
+// independently instead of colliding on the bare name. Keying by bare name
+// silently drops changes to all-but-one same-named symbol.
+func symbolKey(s *symbol) string {
+	if s.Type == "method" {
+		// Collapse pointer/value receivers to the same identity: a type
+		// cannot declare a method on both *T and T with the same name, so
+		// this is safe and keeps rename/signature tracking stable.
+		return "method " + strings.TrimPrefix(s.Recv, "*") + "." + s.Name
+	}
+	return s.Type + " " + s.Name
 }
 
 // Regex patterns for non-Go fallback
@@ -114,18 +130,21 @@ func Analyze(oldContent, newContent, filePath string) *Analysis {
 
 	analysis := &Analysis{}
 
+	// Key by qualified identity (kind + receiver + name), not bare name, so
+	// overloaded/same-named symbols on different receivers are all tracked.
 	oldMap := make(map[string]*symbol)
 	newMap := make(map[string]*symbol)
 	for i := range oldSyms {
-		oldMap[oldSyms[i].Name] = &oldSyms[i]
+		oldMap[symbolKey(&oldSyms[i])] = &oldSyms[i]
 	}
 	for i := range newSyms {
-		newMap[newSyms[i].Name] = &newSyms[i]
+		newMap[symbolKey(&newSyms[i])] = &newSyms[i]
 	}
 
 	// Detect removed symbols
-	for name, old := range oldMap {
-		if _, exists := newMap[name]; !exists {
+	for key, old := range oldMap {
+		name := old.Name
+		if _, exists := newMap[key]; !exists {
 			// Check if renamed (similar body in new symbols)
 			renamed := findSimilar(old, newSyms, oldMap, isGo)
 			if renamed != "" {
@@ -152,8 +171,9 @@ func Analyze(oldContent, newContent, filePath string) *Analysis {
 	}
 
 	// Detect added and modified symbols
-	for name, new := range newMap {
-		old, existed := oldMap[name]
+	for key, new := range newMap {
+		name := new.Name
+		old, existed := oldMap[key]
 		if !existed {
 			// Skip if it was detected as a rename target
 			if isRenameTarget(name, analysis.Changes) {
@@ -336,6 +356,7 @@ func extractGoAST(source, filePath string) []symbol {
 
 			if d.Recv != nil && len(d.Recv.List) > 0 {
 				sym.Type = "method"
+				sym.Recv = exprString(d.Recv.List[0].Type)
 			}
 
 			// AST-level typed signature
@@ -561,7 +582,7 @@ func extractSymbolsRegex(source string) []symbol {
 
 func matchSymbol(line string, lineNum int) *symbol {
 	if m := methodRe.FindStringSubmatch(line); m != nil {
-		return &symbol{Name: m[2], Type: "method", Signature: line, Line: lineNum, Exported: isUpper(m[2])}
+		return &symbol{Name: m[2], Type: "method", Recv: m[1], Signature: line, Line: lineNum, Exported: isUpper(m[2])}
 	}
 	if m := funcRe.FindStringSubmatch(line); m != nil {
 		return &symbol{Name: m[1], Type: "func", Signature: line, Line: lineNum, Exported: isUpper(m[1])}
@@ -591,8 +612,9 @@ func findSimilar(old *symbol, newSyms []symbol, oldMap map[string]*symbol, useAS
 	bestScore := 0.0
 	bestName := ""
 
-	for _, ns := range newSyms {
-		if _, exists := oldMap[ns.Name]; exists {
+	for i := range newSyms {
+		ns := &newSyms[i]
+		if _, exists := oldMap[symbolKey(ns)]; exists {
 			continue
 		}
 		if ns.Type != old.Type {

@@ -5,6 +5,67 @@ import (
 	"testing"
 )
 
+// TestComputeOpsSizeCapEngages proves the LCS matrix is not allocated for
+// oversized inputs: above maxLCSCells the diff degrades to a full replace
+// (every old line removed, every new line added, no OpContext) instead of
+// allocating an O(N*M) matrix that would OOM the process.
+func TestComputeOpsSizeCapEngages(t *testing.T) {
+	// Choose n so that n*n exceeds the cap. Both sides share every line, so
+	// a real LCS would emit all-context and zero add/remove; the cap forces
+	// a full replace instead.
+	n := 2100 // 2100*2100 = 4,410,000 > maxLCSCells (4,000,000)
+	if int64(n)*int64(n) <= maxLCSCells {
+		t.Fatalf("test setup: %d*%d must exceed maxLCSCells (%d)", n, n, maxLCSCells)
+	}
+	lines := make([]string, n)
+	for i := range lines {
+		lines[i] = "identical line"
+	}
+	src := strings.Join(lines, "\n")
+
+	ops := computeOps(lines, lines)
+
+	// Full replace: exactly n removes followed by n adds, no context ops.
+	removes, adds, ctx := 0, 0, 0
+	for _, op := range ops {
+		switch op.op {
+		case OpRemove:
+			removes++
+		case OpAdd:
+			adds++
+		case OpContext:
+			ctx++
+		}
+	}
+	if ctx != 0 {
+		t.Errorf("cap should degrade to full replace with no context ops, got %d context ops", ctx)
+	}
+	if removes != n || adds != n {
+		t.Errorf("expected %d removes and %d adds (full replace), got %d/%d", n, n, removes, adds)
+	}
+
+	// The public Diff path must also stay well-behaved (no panic, non-empty).
+	d := Diff(src, src)
+	if d.Added != n || d.Removed != n {
+		t.Errorf("Diff over-cap: expected +%d -%d, got +%d -%d", n, n, d.Added, d.Removed)
+	}
+}
+
+// TestComputeOpsUnderCapKeepsContext proves the cap does NOT change behavior
+// for normal-sized inputs: identical content still yields all-context ops.
+func TestComputeOpsUnderCapKeepsContext(t *testing.T) {
+	lines := []string{"a", "b", "c", "d"}
+	ops := computeOps(lines, lines)
+	for _, op := range ops {
+		if op.op != OpContext {
+			t.Fatalf("under-cap identical input should be all context, got %s %q", op.op, op.text)
+		}
+	}
+	if len(ops) != len(lines) {
+		t.Errorf("expected %d context ops, got %d", len(lines), len(ops))
+	}
+}
+
 func TestDiffIdentical(t *testing.T) {
 	d := Diff("hello\nworld", "hello\nworld")
 	if len(d.Hunks) != 0 {

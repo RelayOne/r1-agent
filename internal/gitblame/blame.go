@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,7 +38,11 @@ type FileBlame struct {
 
 // Blame runs git blame on a file and returns parsed results.
 func Blame(repoDir, filePath string) (*FileBlame, error) {
-	cmd := exec.Command("git", "blame", "--porcelain", filePath) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
+	// The "--" separator ends option parsing so a path that begins with "-"
+	// or collides with a ref/rev name is always treated as a pathspec, never
+	// as a flag or revision. Without it, git blame breaks (or, worse, blames
+	// a different object) on such paths.
+	cmd := exec.Command("git", "blame", "--porcelain", "--", filePath) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	cmd.Dir = repoDir
 	out, err := cmd.Output()
 	if err != nil {
@@ -75,11 +80,18 @@ func ParsePorcelain(filePath, output string) (*FileBlame, error) {
 		} else if strings.HasPrefix(line, "author ") {
 			current.Author = strings.TrimPrefix(line, "author ")
 		} else if strings.HasPrefix(line, "author-time ") {
-			ts := strings.TrimPrefix(line, "author-time ")
-			var unix int64
-			fmt.Sscanf(ts, "%d", &unix)
-			current.Date = time.Unix(unix, 0)
+			ts := strings.TrimSpace(strings.TrimPrefix(line, "author-time "))
+			if unix, perr := strconv.ParseInt(ts, 10, 64); perr == nil {
+				current.Date = time.Unix(unix, 0)
+			}
 		} else if strings.HasPrefix(line, "\t") {
+			// The content line terminates a blame group. Only emit it when a
+			// header established the commit for this group; a stray tab-line
+			// before any header is malformed porcelain and is skipped rather
+			// than emitted with an empty commit/author.
+			if current.Commit == "" {
+				continue
+			}
 			current.Content = line[1:]
 			// Cache commit metadata
 			cache[current.Commit] = commitInfo{Author: current.Author, Date: current.Date}
@@ -231,4 +243,10 @@ func (fb *FileBlame) ImpactSummary(start, end int) string {
 		len(lines), len(authors), strings.Join(authors, ", "), freshness)
 }
 
-var headerRegex = regexp.MustCompile(`^([0-9a-f]{40})\s+\d+\s+\d+`)
+// headerRegex matches a git blame porcelain group header:
+//
+//	<sha> <orig-lineno> <final-lineno> [<num-lines>]
+//
+// The hash is 40 hex chars for SHA-1 repos and 64 for SHA-256 repos, so the
+// length is accepted as a range rather than hard-coded at 40.
+var headerRegex = regexp.MustCompile(`^([0-9a-f]{40,64})\s+\d+\s+\d+`)
