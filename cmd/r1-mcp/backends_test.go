@@ -706,41 +706,101 @@ func TestSeedBundledSkillPacks_RegistersSkillExecutionAuditLog(t *testing.T) {
 	}
 }
 
-func TestSeedPackRegistries_LoadsUserCanonicalPacks(t *testing.T) {
+func seedUserPackBackends(t *testing.T) (*Backends, string) {
+	t.Helper()
 	repo := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-
 	writeDeterministicPackFixture(
 		t,
 		filepath.Join(home, ".r1", "skills", "packs", "user-pack"),
 		"user-pack",
-		skillmfr.Manifest{
-			Name:        "user.echo",
-			Version:     "1.0.0",
-			Description: "user canonical skill",
-		},
+		skillmfr.Manifest{Name: "user.echo", Version: "1.0.0", Description: "user canonical skill"},
 	)
-
 	backends, err := NewBackends(filepath.Join(t.TempDir(), "ledger"))
 	if err != nil {
 		t.Fatalf("new backends: %v", err)
 	}
 	t.Cleanup(func() { _ = backends.Close() })
+	return backends, repo
+}
 
+// Supply-chain hardening: an UNSIGNED pack from the untrusted user-home
+// registry is fail-closed by default — skipped, not registered.
+func TestSeedPackRegistries_UnsignedUserPackSkippedByDefault(t *testing.T) {
+	backends, repo := seedUserPackBackends(t)
+	registered, skipped, err := backends.SeedPackRegistries(repo)
+	if err != nil {
+		t.Fatalf("SeedPackRegistries: %v", err)
+	}
+	if registered != 0 || skipped != 1 {
+		t.Fatalf("registered=%d skipped=%d, want 0/1 (unsigned external pack rejected)", registered, skipped)
+	}
+	if _, ok := backends.ManifestRegistry.Get("user.echo"); ok {
+		t.Fatal("unsigned external user.echo must NOT be registered")
+	}
+}
+
+// The explicit opt-in restores the permissive behavior for unsigned packs.
+func TestSeedPackRegistries_UnsignedUserPackAllowedByOptIn(t *testing.T) {
+	backends, repo := seedUserPackBackends(t)
+	t.Setenv(skillmfr.EnvAllowUnsignedPacks, "1")
 	registered, skipped, err := backends.SeedPackRegistries(repo)
 	if err != nil {
 		t.Fatalf("SeedPackRegistries: %v", err)
 	}
 	if registered != 1 || skipped != 0 {
-		t.Fatalf("registered=%d skipped=%d, want 1/0", registered, skipped)
+		t.Fatalf("registered=%d skipped=%d, want 1/0 with opt-in", registered, skipped)
 	}
-	manifest, ok := backends.ManifestRegistry.Get("user.echo")
-	if !ok {
-		t.Fatal("expected user.echo to be registered")
+	if _, ok := backends.ManifestRegistry.Get("user.echo"); !ok {
+		t.Fatal("expected user.echo to register under R1_ALLOW_UNSIGNED_SKILL_PACKS")
 	}
-	if manifest.Version != "1.0.0" {
-		t.Fatalf("manifest version = %q, want 1.0.0", manifest.Version)
+}
+
+// A user-home pack SIGNED BY A TRUSTED KEY is accepted; the same pack signed
+// by an untrusted key is skipped.
+func TestSeedPackRegistries_UserPackTrustedKeyGate(t *testing.T) {
+	repo := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	packDir := filepath.Join(home, ".r1", "skills", "packs", "signed-user-pack")
+	writeDeterministicPackFixture(t, packDir, "signed-user-pack",
+		skillmfr.Manifest{Name: "user.signed", Version: "1.0.0", Description: "signed user skill"})
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := skillmfr.SignPack(packDir, "publisher-key", priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := skillmfr.WritePackSignature(packDir, sig); err != nil {
+		t.Fatal(err)
+	}
+
+	// Untrusted key set -> skipped.
+	t.Setenv(skillmfr.EnvTrustedPackKeys, "some-other-key")
+	b1, err := NewBackends(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b1.Close() })
+	if reg, skip, err := b1.SeedPackRegistries(repo); err != nil || reg != 0 || skip != 1 {
+		t.Fatalf("untrusted key: reg=%d skip=%d err=%v, want 0/1/nil", reg, skip, err)
+	}
+
+	// Trust the publisher key -> registered.
+	t.Setenv(skillmfr.EnvTrustedPackKeys, "publisher-key")
+	b2, err := NewBackends(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b2.Close() })
+	if reg, skip, err := b2.SeedPackRegistries(repo); err != nil || reg != 1 || skip != 0 {
+		t.Fatalf("trusted key: reg=%d skip=%d err=%v, want 1/0/nil", reg, skip, err)
+	}
+	if _, ok := b2.ManifestRegistry.Get("user.signed"); !ok {
+		t.Fatal("expected trusted-key-signed user.signed to register")
 	}
 }
 

@@ -16,6 +16,8 @@
 package migration
 
 import (
+	"encoding/json"
+
 	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/ledger"
 )
@@ -146,11 +148,18 @@ func (s *LedgerBundleSource) Content(nodeID string) ([]byte, error) {
 	// uses. We hand-roll the encoding here rather than re-exporting
 	// contentRecord because that struct is unexported by design
 	// (encapsulation of the on-disk format).
+	// Content MUST be json.RawMessage, not []byte: encoding/json base64-
+	// encodes a []byte into a JSON string, but the import side decodes the
+	// "content" field as raw JSON (ledger's contentRecord uses
+	// json.RawMessage). A []byte here therefore round-trips the payload as a
+	// base64 STRING — silent content corruption, and a content-commitment
+	// mismatch on the destination's fail-closed ReadNode. RawMessage emits
+	// the payload verbatim, preserving both the bytes and the commitment.
 	type contentEnvelope struct {
-		Salt    string `json:"salt"`
-		Content []byte `json:"content"`
+		Salt    string          `json:"salt"`
+		Content json.RawMessage `json:"content"`
 	}
-	out, mErr := jsonMarshal(contentEnvelope{Salt: n.Salt, Content: []byte(n.Content)})
+	out, mErr := jsonMarshal(contentEnvelope{Salt: n.Salt, Content: n.Content})
 	if mErr != nil {
 		return nil, mErr
 	}

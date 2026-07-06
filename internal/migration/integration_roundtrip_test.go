@@ -53,6 +53,11 @@ func TestIntegration_RoundTrip1000Turns(t *testing.T) {
 	// Build a deterministic chain of 1000 nodes.
 	now := time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < numTurns; i++ {
+		// Build VALID nodes: the salt+content must produce the stamped
+		// ContentCommitment, otherwise ReadNode (fail-closed content
+		// verification) rejects them and the bundle exports nothing.
+		salt := fmt.Sprintf("%032x", i)
+		content := json.RawMessage(fmt.Sprintf(`{"turn":%d}`, i))
 		n := ledger.Node{
 			ID:                fmt.Sprintf("node-%04d", i),
 			Type:              "test",
@@ -60,8 +65,9 @@ func TestIntegration_RoundTrip1000Turns(t *testing.T) {
 			CreatedAt:         now.Add(time.Duration(i) * time.Second),
 			CreatedBy:         "integration",
 			MissionID:         sessionID,
-			Content:           json.RawMessage(fmt.Sprintf(`{"turn":%d}`, i)),
-			ContentCommitment: fmt.Sprintf("commit-%04d", i),
+			Salt:              salt,
+			Content:           content,
+			ContentCommitment: ledger.ComputeContentCommitment(salt, content),
 		}
 		if err := srcStore.WriteNode(n); err != nil {
 			t.Fatalf("write node %d: %v", i, err)

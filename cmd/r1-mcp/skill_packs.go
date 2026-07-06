@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +16,19 @@ import (
 // manifest registry. Relative IR/proof refs are rewritten to absolute paths so
 // deterministic invocation keeps working after registration.
 func (b *Backends) SeedBundledSkillPacks(packRoot string) (int, int, error) {
-	return b.SeedSkillPackRoots([]string{packRoot})
+	// Checked-in / caller-chosen roots are trusted by provenance.
+	return b.seedPackRoots([]packSeedRoot{{path: packRoot, trusted: true}})
+}
+
+// packSeedRoot pairs a pack-registry root with whether it is trusted by
+// provenance. Repo-bundled roots are trusted (they ship in the checkout you
+// are running); user-home / external roots are NOT — an attacker who can drop
+// a directory there could otherwise register arbitrary skills, so those must
+// carry a valid signature from a trusted key (see skillmfr.VerifyPackTrusted)
+// or be explicitly opted in via R1_ALLOW_UNSIGNED_SKILL_PACKS.
+type packSeedRoot struct {
+	path    string
+	trusted bool
 }
 
 // SeedPackRegistries loads skill packs from the repo + user pack registries in
@@ -26,13 +40,24 @@ func (b *Backends) SeedBundledSkillPacks(packRoot string) (int, int, error) {
 //
 // First registration wins, so canonical repo packs shadow legacy/user copies.
 func (b *Backends) SeedPackRegistries(repoRoot string) (int, int, error) {
-	return b.SeedSkillPackRoots(packRegistryRoots(repoRoot))
+	return b.seedPackRoots(packRegistrySeedRoots(repoRoot))
 }
 
 // SeedSkillPackRoots loads skill packs from the given roots into the manifest
 // registry. Relative IR/proof refs are rewritten to absolute paths so
 // deterministic invocation keeps working after registration.
 func (b *Backends) SeedSkillPackRoots(packRoots []string) (int, int, error) {
+	// Back-compat surface: an explicit root list is treated as trusted
+	// provenance (the caller named the paths). External-registry hardening is
+	// applied via SeedPackRegistries, which marks user-home roots untrusted.
+	roots := make([]packSeedRoot, 0, len(packRoots))
+	for _, p := range packRoots {
+		roots = append(roots, packSeedRoot{path: p, trusted: true})
+	}
+	return b.seedPackRoots(roots)
+}
+
+func (b *Backends) seedPackRoots(packRoots []packSeedRoot) (int, int, error) {
 	if b == nil || b.ManifestRegistry == nil {
 		return 0, 0, fmt.Errorf("r1-mcp: manifest registry not initialized")
 	}
@@ -40,9 +65,11 @@ func (b *Backends) SeedSkillPackRoots(packRoots []string) (int, int, error) {
 		return 0, 0, nil
 	}
 
+	policy := skillmfr.LoadPackTrustPolicyFromEnv()
 	registered := 0
 	skipped := 0
-	for _, packRoot := range packRoots {
+	for _, root := range packRoots {
+		packRoot := root.path
 		if strings.TrimSpace(packRoot) == "" {
 			continue
 		}
@@ -58,8 +85,26 @@ func (b *Backends) SeedSkillPackRoots(packRoots []string) (int, int, error) {
 				continue
 			}
 			packPath := filepath.Join(packRoot, entry.Name())
-			if _, err := skillmfr.VerifyPackSignatureIfPresent(packPath); err != nil {
-				return registered, skipped, fmt.Errorf("verify bundled pack %s: %w", packPath, err)
+			if root.trusted {
+				// Provenance-trusted: unsigned is fine, but a present
+				// signature must still be cryptographically valid.
+				if _, err := skillmfr.VerifyPackSignatureIfPresent(packPath); err != nil {
+					return registered, skipped, fmt.Errorf("verify bundled pack %s: %w", packPath, err)
+				}
+			} else {
+				// External/untrusted root: require a valid signature from a
+				// trusted key (fail-closed). Unsigned or untrusted-key packs
+				// are SKIPPED (not activated) rather than crashing seeding; a
+				// present-but-broken signature is a hard error.
+				if _, err := skillmfr.VerifyPackTrusted(packPath, policy); err != nil {
+					if errors.Is(err, skillmfr.ErrPackUnsigned) || errors.Is(err, skillmfr.ErrPackUntrusted) {
+						skipped += skippedManifestCount(packPath)
+						log.Printf("r1-mcp: skipping untrusted external skill pack %s: %v (set %s or %s to allow)",
+							packPath, err, skillmfr.EnvTrustedPackKeys, skillmfr.EnvAllowUnsignedPacks)
+						continue
+					}
+					return registered, skipped, fmt.Errorf("verify external pack %s: %w", packPath, err)
+				}
 			}
 			pack, err := skillmfr.LoadPack(packPath)
 			if err != nil {
@@ -87,6 +132,30 @@ func (b *Backends) SeedSkillPackRoots(packRoots []string) (int, int, error) {
 		}
 	}
 	return registered, skipped, nil
+}
+
+// packRegistrySeedRoots returns the pack-registry roots with per-root trust:
+// repo-bundled roots (under repoRoot) are provenance-trusted; user-home roots
+// are not and must be signed by a trusted key.
+func packRegistrySeedRoots(repoRoot string) []packSeedRoot {
+	roots := packRegistryRoots(repoRoot)
+	repoAbs, _ := filepath.Abs(repoRoot)
+	out := make([]packSeedRoot, 0, len(roots))
+	for _, r := range roots {
+		trusted := repoAbs != "" && strings.HasPrefix(r, repoAbs+string(os.PathSeparator))
+		out = append(out, packSeedRoot{path: r, trusted: trusted})
+	}
+	return out
+}
+
+// skippedManifestCount best-effort counts the manifests an untrusted pack
+// WOULD have registered, so the skipped tally stays manifest-granular. Falls
+// back to 1 (dir-level) when the pack cannot be loaded.
+func skippedManifestCount(packPath string) int {
+	if pack, err := skillmfr.LoadPack(packPath); err == nil && len(pack.Manifests) > 0 {
+		return len(pack.Manifests)
+	}
+	return 1
 }
 
 func packRegistryRoots(repoRoot string) []string {

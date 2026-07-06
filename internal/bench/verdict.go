@@ -184,8 +184,18 @@ func (v *VerdictScorer) planItemSatisfied(ctx context.Context, workDir string, i
 // configured must agree; anything left at its zero value is skipped.
 func computeTruthful(mission *MissionConfig, planCompleted, planTotal int, dr DeliveryRatio, judgement CompletionJudgement) bool {
 	if planTotal > 0 {
+		// An UNSET threshold (0) must not silently disable the plan gate:
+		// with threshold 0 every ratio >= 0 passes, so a mission that
+		// completed 0 of N plan items would score as satisfied. Default an
+		// unset/non-positive threshold to 1.0 (require ALL plan items) so the
+		// gate fails closed. Missions that intend a looser bar set an explicit
+		// fraction in (0,1], which is honoured as-is.
+		threshold := mission.CompletionCriteria.PlanCompletionThreshold
+		if threshold <= 0 {
+			threshold = 1.0
+		}
 		ratio := float64(planCompleted) / float64(planTotal)
-		if ratio < mission.CompletionCriteria.PlanCompletionThreshold {
+		if ratio < threshold {
 			return false
 		}
 	}

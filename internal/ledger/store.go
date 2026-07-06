@@ -277,6 +277,28 @@ func (s *Store) ReadNode(id NodeID) (Node, error) {
 		// operators can investigate.
 		return Node{}, fmt.Errorf("unmarshal content %s: %w", id, err)
 	}
+
+	// Anti-deception foundation: verify the content tier against the
+	// commitment stamped into the chain tier. Without this, a modified
+	// content/<id>.json (a swapped or edited payload) reads back silently —
+	// the whole point of stamping ContentCommitment into the chain is to make
+	// that undetectable tamper detectable. Fail CLOSED on any mismatch.
+	//
+	// The commitment is computed over the canonical (compacted) content, which
+	// cancels out the JSON reformatting the content tier undergoes on write
+	// (see contentCommitment). A ContentCommitment of "" means the chain tier
+	// predates the commitment scheme (legacy migrated node); there is nothing
+	// to verify against, so it is accepted rather than rejected.
+	if cr.ContentCommitment != "" {
+		got := contentCommitment(ctr.Salt, ctr.Content)
+		if got != cr.ContentCommitment {
+			return Node{}, fmt.Errorf(
+				"ledger: content tamper detected for node %s: commitment mismatch (chain=%s content=%s)",
+				id, cr.ContentCommitment, got,
+			)
+		}
+	}
+
 	n.Salt = ctr.Salt
 	n.Content = ctr.Content
 	return n, nil
