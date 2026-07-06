@@ -3,6 +3,7 @@ package handoff
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/RelayOne/r1/internal/mission"
 )
@@ -279,10 +280,65 @@ func TestTruncate(t *testing.T) {
 	}
 	long := strings.Repeat("a", 200)
 	truncated := truncate(long, 50)
-	if len(truncated) != 50 {
-		t.Errorf("truncated length = %d, want 50", len(truncated))
+	if utf8.RuneCountInString(truncated) != 50 {
+		t.Errorf("truncated rune count = %d, want 50", utf8.RuneCountInString(truncated))
 	}
 	if !strings.HasSuffix(truncated, "...") {
 		t.Error("truncated string should end with ...")
+	}
+}
+
+// TestTruncateMultibyte proves truncate is rune-aware and bounds-safe: it must
+// never panic on tiny limits and must never emit invalid (split) UTF-8.
+func TestTruncateMultibyte(t *testing.T) {
+	// 40 CJK runes = 120 bytes. A byte-slice at rune count 10 would land
+	// mid-rune and corrupt the output.
+	long := strings.Repeat("日本語漢字", 8) // 40 runes
+	cases := []int{0, 1, 2, 3, 4, 5, 10, 39, 40, 41, 1000}
+	for _, n := range cases {
+		got := truncate(long, n)
+		if !utf8.ValidString(got) {
+			t.Errorf("truncate(cjk, %d) produced invalid UTF-8: %q", n, got)
+		}
+		if utf8.RuneCountInString(got) > n && n > 0 {
+			// allow the "..." suffix to fit within n (maxLen-3 runes + 3)
+			t.Errorf("truncate(cjk, %d) has %d runes, exceeds limit", n, utf8.RuneCountInString(got))
+		}
+	}
+	// Also cover mixed em-dash / emoji content.
+	mixed := "café — naïve — 🚀 rocket — über"
+	for n := 0; n <= utf8.RuneCountInString(mixed)+2; n++ {
+		if !utf8.ValidString(truncate(mixed, n)) {
+			t.Errorf("truncate(mixed, %d) produced invalid UTF-8", n)
+		}
+	}
+}
+
+// TestBuildContextTinyBudgetMultibyte proves BuildContext no longer panics on a
+// sub-marker budget and never returns invalid UTF-8 when the handoff text is
+// multibyte. Before the fix, result[:charBudget-20] panicked (negative index)
+// and/or split a multibyte rune.
+func TestBuildContextTinyBudgetMultibyte(t *testing.T) {
+	c, store := newTestChain(t)
+	setupMission(t, store)
+
+	// Multibyte-heavy summary so any byte-boundary slice would corrupt UTF-8.
+	c.Handoff(Record{
+		MissionID: "m-1",
+		FromAgent: "エージェント一号",
+		ToAgent:   "エージェント二号",
+		Summary:   strings.Repeat("実装した機能について詳しく説明する — 進捗と決定事項 🚀 ", 20),
+	})
+
+	// Budgets that drive charBudget below the truncation marker length,
+	// including values that made the old code slice with a negative index.
+	for _, budget := range []int{-5, 0, 1, 2, 3, 4, 5, 10, 50, 200} {
+		ctx, err := c.BuildContext("m-1", budget)
+		if err != nil {
+			t.Fatalf("BuildContext(%d): %v", budget, err)
+		}
+		if !utf8.ValidString(ctx) {
+			t.Errorf("BuildContext(%d) returned invalid UTF-8", budget)
+		}
 	}
 }
