@@ -92,11 +92,37 @@ func (l *AntiTruncLobe) Run(ctx context.Context, in cortex.LobeInput) error {
 		GitLog:   l.gitLog,
 	}
 	findings := d.Run(ctx)
+
+	// Dedupe against already-open findings. The anti-truncation Lobe
+	// re-runs every cortex Round against the same conversation / plan /
+	// spec / commit state, so a finding that is still open would be
+	// re-published as a fresh SevCritical Note on every Round. Because
+	// each Note gets a unique monotonic ID and nothing resolves them, the
+	// workspace's UnresolvedCritical set (and the PreEndTurnGate that
+	// reads it) would fill with escalating duplicates the loop can never
+	// clear. Key each finding by its rendered (Title, Body) pair — the
+	// same pair a prior Round would have produced — and skip any finding
+	// that already has an unresolved critical Note from this Lobe. The
+	// map is also consulted within this Round so a Detector that returns
+	// the same finding twice publishes it only once.
+	seen := make(map[string]bool)
+	for _, n := range l.ws.UnresolvedCritical() {
+		if n.LobeID == l.ID() {
+			seen[n.Title+"\x00"+n.Body] = true
+		}
+	}
+
 	for _, f := range findings {
+		title := formatNoteTitle(f)
+		key := title + "\x00" + f.Detail
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		_ = l.ws.Publish(cortex.Note{
 			LobeID:    l.ID(),
 			Severity:  cortex.SevCritical,
-			Title:     formatNoteTitle(f),
+			Title:     title,
 			Body:      f.Detail,
 			Tags:      []string{"antitrunc", f.Source},
 			EmittedAt: time.Now(),
