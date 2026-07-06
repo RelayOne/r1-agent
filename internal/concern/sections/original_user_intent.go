@@ -8,7 +8,7 @@ import (
 )
 
 // OriginalUserIntent queries the mission node for the user's verbatim goal text.
-func OriginalUserIntent(ctx context.Context, scope Scope, l *ledger.Ledger) (string, error) {
+func OriginalUserIntent(ctx context.Context, scope Scope, l *ledger.Ledger, _ int) (string, error) {
 	nodes, err := l.Query(ctx, ledger.QueryFilter{
 		Type:      "mission",
 		MissionID: scope.MissionID,
