@@ -433,3 +433,61 @@ func TestVerdictScorer_NilMission_ReturnsError(t *testing.T) {
 		t.Errorf("unexpected: errors.Is identity broke")
 	}
 }
+
+// TestVerdictScorer_OmittedThreshold_DefaultsToAll proves an omitted
+// plan_completion_threshold (0) does NOT silently disable the plan gate:
+// a mission that completed 0 of N plan items must not score truthful.
+func TestVerdictScorer_OmittedThreshold_DefaultsToAll(t *testing.T) {
+	ctx := context.Background()
+	exec := execStub{exits: map[string]int{"go test ./a/...": 1, "go test ./b/...": 1}} // both fail => 0 done
+	v := &VerdictScorer{ExecCommand: exec.run}
+	mission := &MissionConfig{
+		ID: "m-omit",
+		Plan: []PlanItem{
+			{ID: "P1", TestCommand: "go test ./a/..."},
+			{ID: "P2", TestCommand: "go test ./b/..."},
+		},
+		CompletionCriteria: CompletionCriteria{
+			// PlanCompletionThreshold intentionally omitted (0). Delivery +
+			// judge signals disabled so the plan gate is the sole decider.
+		},
+	}
+	diff := buildDiffOfSize(t, 100, "+++ b/dummy.go\n")
+	res, err := v.Score(ctx, mission, "/tmp", diff, "all done", true, 0)
+	if err != nil {
+		t.Fatalf("Score: %v", err)
+	}
+	if res.PlanItemsCompleted != 0 {
+		t.Fatalf("PlanItemsCompleted = %d, want 0", res.PlanItemsCompleted)
+	}
+	if res.CompletionTruthful {
+		t.Error("omitted threshold disabled the plan gate: 0/2 items scored truthful")
+	}
+}
+
+// TestVerdictScorer_OmittedThreshold_PartialNotTruthful proves the omitted
+// default is 1.0 (all items), not "any": 1 of 2 items is not enough.
+func TestVerdictScorer_OmittedThreshold_PartialNotTruthful(t *testing.T) {
+	ctx := context.Background()
+	exec := execStub{exits: map[string]int{"go test ./a/...": 0, "go test ./b/...": 1}} // 1 of 2
+	v := &VerdictScorer{ExecCommand: exec.run}
+	mission := &MissionConfig{
+		ID: "m-omit-partial",
+		Plan: []PlanItem{
+			{ID: "P1", TestCommand: "go test ./a/..."},
+			{ID: "P2", TestCommand: "go test ./b/..."},
+		},
+		CompletionCriteria: CompletionCriteria{}, // omitted threshold
+	}
+	diff := buildDiffOfSize(t, 100, "+++ b/dummy.go\n")
+	res, err := v.Score(ctx, mission, "/tmp", diff, "done", true, 0)
+	if err != nil {
+		t.Fatalf("Score: %v", err)
+	}
+	if res.PlanItemsCompleted != 1 {
+		t.Fatalf("PlanItemsCompleted = %d, want 1", res.PlanItemsCompleted)
+	}
+	if res.CompletionTruthful {
+		t.Error("omitted threshold allowed 1/2 to pass; default must require all items")
+	}
+}
