@@ -9,9 +9,9 @@
 # Does not manage the separate r1-agent CI / PR triggers.
 set -euo pipefail
 
-PROJECT="${PROJECT:-relayone-488319}"
+PROJECT="${PROJECT:-resolute-parity-484218-g1}"
 REGION="${REGION:-us-central1}"
-CONNECTION="${CONNECTION:-relayone-github-conn}"
+CONNECTION="${CONNECTION:-resolute-parity-github-conn}"
 REPO="${REPO:-r1-agent-repo}"
 REPO_RESOURCE="projects/${PROJECT}/locations/${REGION}/connections/${CONNECTION}/repositories/${REPO}"
 SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-projects/${PROJECT}/serviceAccounts/claude-eric-agent@${PROJECT}.iam.gserviceaccount.com}"

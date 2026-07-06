@@ -1,7 +1,7 @@
 // Package main implements the r1 binary download CDN.
 //
 // It exposes signed-URL-style read access to release artifacts in
-// gs://relayone-488319-r1-releases/{prod,staging,dev}/<asset>. Cloud
+// gs://resolute-parity-484218-g1-r1-releases/{prod,staging,dev}/<asset>. Cloud
 // Run runs as a service account with `roles/storage.objectViewer` on
 // that bucket; the handler streams the requested object back to the
 // caller without re-buffering when possible.
@@ -21,7 +21,7 @@
 //
 // Env:
 //
-//	R1_BUCKET   default "relayone-488319-r1-releases"
+//	R1_BUCKET   default "resolute-parity-484218-g1-r1-releases"
 //	R1_ENV      "prod" | "staging" | "dev"
 //	R1_VERSION  short SHA
 package main
@@ -48,7 +48,7 @@ var (
 	startedAt  = time.Now()
 	envName    = getenv("R1_ENV", "dev")
 	versionStr = getenv("R1_VERSION", "dev")
-	bucketName = getenv("R1_BUCKET", "relayone-488319-r1-releases")
+	bucketName = getenv("R1_BUCKET", "resolute-parity-484218-g1-r1-releases")
 	allowed    = map[string]bool{"prod": true, "staging": true, "dev": true}
 )
 
@@ -196,7 +196,7 @@ func (s *server) handleObject(w http.ResponseWriter, r *http.Request) {
 	// r1/latest/. R1_PUBLIC_BASE pins this service's channel to its
 	// deployed version when R1_VERSION is set.
 	if attrs.Size > 30<<20 {
-		base := getenv("R1_PUBLIC_BASE", "https://storage.googleapis.com/relayone-488319-public/r1")
+		base := getenv("R1_PUBLIC_BASE", "https://storage.googleapis.com/resolute-parity-484218-g1-public/r1")
 		release := getenv("R1_VERSION", "latest")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Cache-Control", "public, max-age=300")

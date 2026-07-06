@@ -13,13 +13,13 @@
 
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:-relayone-488319}"
+PROJECT_ID="${PROJECT_ID:-resolute-parity-484218-g1}"
 REGION="${REGION:-us-central1}"
-CONNECTION="${CONNECTION:-relayone-github-conn}"
+CONNECTION="${CONNECTION:-resolute-parity-github-conn}"
 REPO="${REPO:-r1-agent-repo}"
 REPO_RESOURCE="projects/${PROJECT_ID}/locations/${REGION}/connections/${CONNECTION}/repositories/${REPO}"
 SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-projects/${PROJECT_ID}/serviceAccounts/claude-eric-agent@${PROJECT_ID}.iam.gserviceaccount.com}"
-BUCKET="${BUCKET:-gs://relayone-488319-r1-bench-reports}"
+BUCKET="${BUCKET:-gs://resolute-parity-484218-g1-r1-bench-reports}"
 
 MONTHLY_TRIGGER="bench-truthful-completion-monthly"
 MONTHLY_JOB="bench-truthful-completion-monthly"

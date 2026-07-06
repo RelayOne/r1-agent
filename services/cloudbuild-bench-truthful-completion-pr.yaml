@@ -3,7 +3,7 @@
 # Intended PR TruthfulCompletion regression check. Runs the 5 seed
 # missions against the checked-in agent matrix. The operator setup path
 # is `scripts/setup-bench-truthful-completion-cron.sh`, which provisions
-# the `bench-truthful-completion-pr` trigger in relayone-488319/us-central1.
+# the `bench-truthful-completion-pr` trigger in resolute-parity-484218-g1/us-central1.
 # This build does NOT yet post the PR delta comment promised in the full
 # spec; it currently performs the mini-run only.
 #

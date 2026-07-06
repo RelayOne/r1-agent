@@ -14,8 +14,8 @@
 
 set -euo pipefail
 
-PROJECT="${PROJECT:-relayone-488319}"
-CONNECTION="${CONNECTION:-relayone-github-conn}"
+PROJECT="${PROJECT:-resolute-parity-484218-g1}"
+CONNECTION="${CONNECTION:-resolute-parity-github-conn}"
 REPO_OWNER="${REPO_OWNER:-RelayOne}"
 REPO_NAME="${REPO_NAME:-r1-agent}"
 SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-projects/${PROJECT}/serviceAccounts/claude-eric-agent@${PROJECT}.iam.gserviceaccount.com}"

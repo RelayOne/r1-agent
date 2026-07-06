@@ -34,7 +34,7 @@ triggers:
       push:
         branch: ^main$
     filename: services/cloudbuild-e2e.yaml
-    serviceAccount: projects/relayone-488319/serviceAccounts/cloud-build-byosa@relayone-488319.iam.gserviceaccount.com
+    serviceAccount: projects/resolute-parity-484218-g1/serviceAccounts/cloud-build-byosa@resolute-parity-484218-g1.iam.gserviceaccount.com
     includedFiles:
       - 'cmd/r1-server/**'
       - 'internal/server/**'
@@ -52,4 +52,4 @@ triggers:
       push:
         tag: ^v.*$
     filename: services/cloudbuild-e2e.yaml
-    serviceAccount: projects/relayone-488319/serviceAccounts/cloud-build-byosa@relayone-488319.iam.gserviceaccount.com
+    serviceAccount: projects/resolute-parity-484218-g1/serviceAccounts/cloud-build-byosa@resolute-parity-484218-g1.iam.gserviceaccount.com

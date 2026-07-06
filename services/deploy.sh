@@ -15,9 +15,9 @@
 #   - current shared secret reality for r1 is:
 #       present:   DATABASE_URL, AUTH_JWT_SECRET, ANTHROPIC_API_KEY
 #       missing:   r1-<env>-shared-CODERADAR_DSN
-#       fallback:  relayone-coderadar-dsn
+#       fallback:  resolute-parity-coderadar-dsn
 #     so direct deploys prefer the env-specific CodeRadar secret and
-#     fall back to relayone-coderadar-dsn when that is the only real DSN.
+#     fall back to resolute-parity-coderadar-dsn when that is the only real DSN.
 #
 # Each service gets its own Cloud Run service per env:
 #   r1-coord-api-{prod,staging,dev}
@@ -25,7 +25,7 @@
 #   r1-downloads-cdn-{prod,staging,dev}
 set -euo pipefail
 
-PROJECT="relayone-488319"
+PROJECT="resolute-parity-484218-g1"
 REGION="us-central1"
 REGISTRY="us-central1-docker.pkg.dev/$PROJECT/r1"
 
@@ -58,8 +58,8 @@ resolve_coderadar_secret() {
     echo "r1-$env-shared-CODERADAR_DSN"
     return
   fi
-  if have_secret "relayone-coderadar-dsn"; then
-    echo "relayone-coderadar-dsn"
+  if have_secret "resolute-parity-coderadar-dsn"; then
+    echo "resolute-parity-coderadar-dsn"
     return
   fi
 }
@@ -118,7 +118,7 @@ deploy_one() {
   # Service-specific env / secret bindings.
   case "$svc" in
     r1-downloads-cdn)
-      args+=(--set-env-vars="R1_BUCKET=relayone-488319-r1-releases")
+      args+=(--set-env-vars="R1_BUCKET=resolute-parity-484218-g1-r1-releases")
       ;;
     r1-coord-api)
       # Coord API needs the shared JWT secret to mint/verify tokens.
@@ -157,7 +157,7 @@ ensure_bucket_iam() {
   # r1-downloads-cdn needs storage.objectViewer on the releases bucket.
   local svc_account
   svc_account="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')-compute@developer.gserviceaccount.com"
-  gcloud storage buckets add-iam-policy-binding gs://relayone-488319-r1-releases \
+  gcloud storage buckets add-iam-policy-binding gs://resolute-parity-484218-g1-r1-releases \
     --member="serviceAccount:$svc_account" \
     --role="roles/storage.objectViewer" \
     --project="$PROJECT" \

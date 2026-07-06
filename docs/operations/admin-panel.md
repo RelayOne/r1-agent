@@ -73,7 +73,7 @@ gcloud beta run domain-mappings create \
   --service=r1-admin-prod \
   --domain=admin.r1.run \
   --region=us-central1 \
-  --project=relayone-488319
+  --project=resolute-parity-484218-g1
 ```
 
 The mapping is idempotent — re-running is safe. Verify with:
@@ -81,7 +81,7 @@ The mapping is idempotent — re-running is safe. Verify with:
 ```bash
 gcloud beta run domain-mappings describe admin.r1.run \
   --region=us-central1 \
-  --project=relayone-488319
+  --project=resolute-parity-484218-g1
 ```
 
 ## Cloudflare DNS

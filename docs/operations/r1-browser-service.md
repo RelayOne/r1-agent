@@ -47,7 +47,7 @@ Copy-pasteable `gcloud` commands (run once per env):
 ```bash
 # Per-env: dev / staging / prod
 ENV=staging
-PROJECT_ID=relayone-488319
+PROJECT_ID=resolute-parity-484218-g1
 
 gcloud iam service-accounts create r1-browser-runtime \
   --project=$PROJECT_ID \
