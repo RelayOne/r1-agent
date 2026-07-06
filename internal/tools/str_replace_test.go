@@ -105,6 +105,72 @@ func TestStrReplaceEmptyOld(t *testing.T) {
 	}
 }
 
+// TestStrReplaceWhitespaceAmbiguous covers the gap where the whitespace tier
+// anchored on the FIRST strings.Index match with no uniqueness check, silently
+// editing the wrong occurrence. An oldStr that whitespace-normalizes to two
+// distinct locations must error (like the exact tier), not edit.
+func TestStrReplaceWhitespaceAmbiguous(t *testing.T) {
+	// Two blocks that are identical after whitespace normalization but differ
+	// in raw spacing (extra spaces at the same token boundaries), so the exact
+	// tier finds neither and defers to whitespace.
+	content := "x  =  foo(a,  b)\ny = 1\nx = foo(a,   b)\n"
+	old := "x = foo(a, b)"
+	_, err := StrReplace(content, old, "REPLACED", false)
+	if err == nil {
+		t.Fatal("expected ambiguity error for whitespace-normalized double match")
+	}
+	if !strings.Contains(err.Error(), "2 locations") {
+		t.Errorf("error=%q, should report the location count", err.Error())
+	}
+}
+
+// TestStrReplaceWhitespaceAmbiguousReplaceAll shows replace_all=true resolves
+// the ambiguity by editing every matching block.
+func TestStrReplaceWhitespaceAmbiguousReplaceAll(t *testing.T) {
+	content := "x  =  foo(a,  b)\ny = 1\nx = foo(a,   b)\n"
+	old := "x = foo(a, b)"
+	r, err := StrReplace(content, old, "REPLACED", true)
+	if err != nil {
+		t.Fatalf("replace_all should succeed: %v", err)
+	}
+	if r.Replacements != 2 {
+		t.Errorf("replacements=%d, want 2", r.Replacements)
+	}
+	if strings.Contains(r.NewContent, "foo(") {
+		t.Errorf("both blocks should be replaced: %q", r.NewContent)
+	}
+}
+
+// TestStrReplaceWhitespaceUnique confirms a single whitespace-normalized match
+// still edits correctly (no false ambiguity).
+func TestStrReplaceWhitespaceUnique(t *testing.T) {
+	content := "func   hello()   {\n   return\n}\n"
+	old := "func hello() {\n   return\n}"
+	r, err := StrReplace(content, old, "func hello() {\n   return 42\n}", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Method != "whitespace" && r.Method != "fuzzy" {
+		t.Errorf("method=%s, want whitespace or fuzzy", r.Method)
+	}
+}
+
+// TestStrReplaceEllipsisAmbiguous covers the same gap for the ellipsis tier:
+// when the `first` anchor occurs at multiple locations (each with a following
+// `last`), the edit target is ambiguous and must error.
+func TestStrReplaceEllipsisAmbiguous(t *testing.T) {
+	// "start" ... "end" — two disjoint start/end regions.
+	content := "start\nA\nend\nmiddle\nstart\nB\nend\n"
+	old := "start...end"
+	_, err := StrReplace(content, old, "REPLACED", false)
+	if err == nil {
+		t.Fatal("expected ambiguity error for ellipsis with two anchor regions")
+	}
+	if !strings.Contains(err.Error(), "2 locations") {
+		t.Errorf("error=%q, should report the anchor count", err.Error())
+	}
+}
+
 // TestStrReplaceUnicodeTier covers SOTA gap #10: LLMs and copy-paste from
 // rendered docs emit smart quotes / em-dashes / non-breaking spaces (or an
 // NFD form) where the file has ASCII/NFC. The exact tier fails on

@@ -158,6 +158,16 @@ func Parse(diff string) (*Patch, error) {
 					currentHunk.Lines = append(currentHunk.Lines, Line{Op: OpDelete, Text: line[1:]})
 				case ' ':
 					currentHunk.Lines = append(currentHunk.Lines, Line{Op: OpContext, Text: line[1:]})
+				case '\\':
+					// Git emits a "\ No newline at end of file" trailer
+					// (leading backslash) after a hunk line when the source
+					// lacks a final newline. It is metadata, not content:
+					// storing it as an OpContext line either breaks context
+					// matching for a modify hunk (the marker text never
+					// appears in the file) or writes the literal marker into
+					// a created file. Drop it. We do not model the
+					// missing-newline flag — Parse trims a single trailing
+					// "\n" and the writers re-add one, matching git's default.
 				default:
 					currentHunk.Lines = append(currentHunk.Lines, Line{Op: OpContext, Text: line})
 				}
@@ -262,7 +272,14 @@ func applyPatch(patch *Patch, root string, reverse, dryRun bool) *ApplyResult {
 
 		if !dryRun {
 			output := strings.Join(newLines, "\n")
-			if err := os.WriteFile(fullPath, []byte(output), 0644); err != nil { // #nosec G306 -- patch target (existing source file); 0644 preserves source perms.
+			// Preserve the target's existing mode across the rewrite and
+			// write via temp+rename so a crash mid-write can never leave a
+			// truncated source file (audit: non-atomic os.WriteFile).
+			perm := os.FileMode(0644)
+			if fi, statErr := os.Stat(fullPath); statErr == nil {
+				perm = fi.Mode().Perm()
+			}
+			if err := atomicWriteFile(fullPath, []byte(output), perm); err != nil {
 				result.Failed = append(result.Failed, path)
 				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", path, err))
 				continue
@@ -275,6 +292,17 @@ func applyPatch(patch *Patch, root string, reverse, dryRun bool) *ApplyResult {
 }
 
 func applyNewFile(fp FilePatch, fullPath string, dryRun bool) error {
+	// A create hunk (/dev/null -> file) must not clobber an existing file:
+	// doing so silently destroys whatever is there and violates the create
+	// contract. Fail closed if the target already exists (audit: IsNew hunk
+	// unconditionally overwrites). Stat errors other than "not found" are
+	// surfaced rather than assumed absent.
+	if _, err := os.Stat(fullPath); err == nil {
+		return fmt.Errorf("refusing to create %s: file already exists", fp.NewPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
 	if dryRun {
 		return nil
 	}
@@ -292,7 +320,38 @@ func applyNewFile(fp FilePatch, fullPath string, dryRun bool) error {
 			}
 		}
 	}
-	return os.WriteFile(fullPath, []byte(strings.Join(lines, "\n")), 0644) // #nosec G306 -- patch target (existing source file); 0644 preserves source perms.
+	return atomicWriteFile(fullPath, []byte(strings.Join(lines, "\n")), 0644)
+}
+
+// atomicWriteFile writes data to path via a temp file in the same directory
+// followed by an atomic rename, so a crash or error mid-write can never leave
+// a truncated/partial file where the target used to be. perm is applied to
+// the final file before the rename. The temp is removed on any failure.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".patchapply-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, perm); err != nil { // #nosec G302 -- perm mirrors the target's existing/default source mode.
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 func applyHunks(lines []string, hunks []Hunk) ([]string, error) {
