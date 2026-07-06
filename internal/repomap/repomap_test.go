@@ -1,6 +1,7 @@
 package repomap
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,6 +126,48 @@ func TestRenderBudget(t *testing.T) {
 
 	if len(small) >= len(full) {
 		t.Error("budget-limited output should be shorter")
+	}
+}
+
+// TestRenderBudgetMoreFilesCount proves the budget-truncation footer reports
+// the real number of dropped files. The old code used len(sorted)-len(groups),
+// which is structurally always 0 ("... (0 more files)").
+func TestRenderBudgetMoreFilesCount(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a", "b", "c"} {
+		d := filepath.Join(dir, name)
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+		src := fmt.Sprintf("package %s\n\nfunc Fn%s() {}\n", name, strings.ToUpper(name))
+		if err := os.WriteFile(filepath.Join(d, name+".go"), []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rm, err := Build(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rm.Files) != 3 {
+		t.Fatalf("expected 3 files, got %d", len(rm.Files))
+	}
+
+	// Header (5 tokens) + one 1-symbol section (5 tokens) fits in 12; the
+	// remaining file sections are truncated.
+	out := rm.Render(12)
+	if !strings.Contains(out, "more files)") {
+		t.Fatalf("expected a truncation footer, got:\n%s", out)
+	}
+	if strings.Contains(out, "0 more files") {
+		t.Fatalf("truncation footer wrongly reports 0 more files (the off-by bug):\n%s", out)
+	}
+	rendered := strings.Count(out, "## ")
+	wantMore := 3 - rendered
+	if wantMore <= 0 {
+		t.Fatalf("test setup rendered all files; nothing was truncated:\n%s", out)
+	}
+	if !strings.Contains(out, fmt.Sprintf("%d more files", wantMore)) {
+		t.Fatalf("expected footer to report %d more files, got:\n%s", wantMore, out)
 	}
 }
 
