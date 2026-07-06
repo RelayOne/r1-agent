@@ -1289,15 +1289,22 @@ func TestManyPastDueDelayedRestore(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	const n = 8
+	// Use a delay comfortably longer than the publish loop + Close so NONE
+	// of the timers fire before Close: with a 1ms delay, early events fired
+	// mid-loop (marking themselves consumed), so restore saw fewer than n
+	// pending — a race that surfaced as a flake under go1.25 but not 1.26.
+	const delay = 100 * time.Millisecond
 	for i := 0; i < n; i++ {
-		// 1ms delay: past due by the time the bus reopens below.
-		if _, err := b.PublishDelayed(makeEvent(EvtWorkerSpawned, "w1"), time.Millisecond); err != nil {
+		if _, err := b.PublishDelayed(makeEvent(EvtWorkerSpawned, "w1"), delay); err != nil {
 			t.Fatalf("PublishDelayed %d: %v", i, err)
 		}
 	}
-	// Close before the timers fire so restore sees them all pending.
+	// Close before any timer fires: all n are still pending in the WAL.
 	// (Close stops timers; the WAL still holds the schedule records.)
 	b.Close()
+	// Now let the scheduled time pass so every entry is past due when the
+	// bus reopens and restores them.
+	time.Sleep(delay + 50*time.Millisecond)
 
 	b2, err := New(dir)
 	if err != nil {

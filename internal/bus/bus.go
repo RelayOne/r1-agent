@@ -855,6 +855,11 @@ func (b *Bus) CancelDelayed(cancelID string) error {
 	return nil
 }
 
+// restorePastDueGrace is how long after a restart the bus waits before
+// firing a restored past-due delayed event, giving the restarting process
+// time to re-register its subscribers so the event is not dropped.
+const restorePastDueGrace = 50 * time.Millisecond
+
 // restoreDelayed restores pending delayed events from the WAL after a restart.
 func (b *Bus) restoreDelayed() error {
 	entries, err := b.wal.ReadDelayed()
@@ -876,8 +881,15 @@ func (b *Bus) restoreDelayed() error {
 		}
 		remaining := time.Until(entry.FireAt)
 		if remaining <= 0 {
-			// Fire immediately if past due.
-			remaining = time.Millisecond
+			// Past due: fire after a small grace window rather than
+			// (near-)immediately. A process that restarts and restores
+			// past-due events typically registers its subscribers right
+			// after New() returns; firing in ~1ms raced that
+			// registration and dropped the restored event to zero
+			// subscribers (observable as a lost delayed event, and as a
+			// flaky restore test under a slow/low-CPU container). The
+			// grace lets startup subscribers wire up first.
+			remaining = restorePastDueGrace
 		}
 
 		e := entry // capture
