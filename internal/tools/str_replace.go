@@ -51,7 +51,9 @@ func StrReplace(content, oldStr, newStr string, replaceAll bool) (*ReplaceResult
 	}
 
 	// Method 2: whitespace-normalized match
-	if r := whitespaceNormalizedReplace(content, oldStr, newStr); r != nil {
+	if r, err := whitespaceNormalizedReplace(content, oldStr, newStr, replaceAll); err != nil {
+		return nil, err
+	} else if r != nil {
 		return r, nil
 	}
 
@@ -68,7 +70,9 @@ func StrReplace(content, oldStr, newStr string, replaceAll bool) (*ReplaceResult
 
 	// Method 3: ellipsis expansion
 	if strings.Contains(oldStr, "...") {
-		if r := ellipsisReplace(content, oldStr, newStr); r != nil {
+		if r, err := ellipsisReplace(content, oldStr, newStr, replaceAll); err != nil {
+			return nil, err
+		} else if r != nil {
 			return r, nil
 		}
 	}
@@ -81,40 +85,70 @@ func StrReplace(content, oldStr, newStr string, replaceAll bool) (*ReplaceResult
 	return nil, fmt.Errorf("old_string not found in content (tried exact, whitespace-normalized, ellipsis, fuzzy)")
 }
 
-func whitespaceNormalizedReplace(content, oldStr, newStr string) *ReplaceResult {
+// whitespaceNormalizedReplace matches oldStr against content after collapsing
+// runs of whitespace. Unlike the naive first-Index approach it previously
+// used, it scans every line window and counts how many locations the block
+// matches: an ambiguous match (>1 location) with replaceAll=false is an error
+// — never a silent edit of the first occurrence — mirroring the exact tier.
+// Returns (nil, nil) when nothing matches so the cascade continues.
+func whitespaceNormalizedReplace(content, oldStr, newStr string, replaceAll bool) (*ReplaceResult, error) {
+	// Collapse runs of ASCII whitespace only. Non-ASCII whitespace (e.g. a
+	// non-breaking space) is intentionally left intact so such confusables
+	// defer to the dedicated unicode-fold tier rather than being silently
+	// absorbed here — preserving the original tier ordering.
 	normalize := func(s string) string {
-		return strings.Join(strings.Fields(s), " ")
+		return strings.Join(strings.FieldsFunc(s, func(r rune) bool {
+			switch r {
+			case ' ', '\t', '\n', '\r', '\f', '\v':
+				return true
+			}
+			return false
+		}), " ")
 	}
-	normContent := normalize(content)
 	normOld := normalize(oldStr)
-	if !strings.Contains(normContent, normOld) {
-		return nil
+	if normOld == "" {
+		return nil, nil
 	}
-	// Find the original location by looking for the first non-empty line of oldStr
-	oldFirstLine := firstNonEmptyLine(oldStr)
-	if oldFirstLine == "" {
-		return nil
-	}
-	idx := strings.Index(content, oldFirstLine)
-	if idx < 0 {
-		return nil
-	}
-	// Extract the matching block from content based on line count of oldStr
 	oldLines := len(strings.Split(oldStr, "\n"))
-	contentLines := strings.Split(content[idx:], "\n")
-	if len(contentLines) < oldLines {
-		return nil
+	contentLines := strings.Split(content, "\n")
+
+	var blocks []string
+	for i := 0; i+oldLines <= len(contentLines); i++ {
+		block := strings.Join(contentLines[i:i+oldLines], "\n")
+		if normalize(block) == normOld {
+			blocks = append(blocks, block)
+		}
 	}
-	matched := strings.Join(contentLines[:oldLines], "\n")
-	if normalize(matched) != normOld {
-		return nil
+	if len(blocks) == 0 {
+		return nil, nil
+	}
+	if len(blocks) > 1 && !replaceAll {
+		return nil, fmt.Errorf("old_string (whitespace-normalized) matches %d locations; provide more context to make it unique, or set replace_all=true", len(blocks))
+	}
+	if replaceAll {
+		out := content
+		n := 0
+		for _, b := range blocks {
+			// Each matched block may have distinct original whitespace, so
+			// replace them individually (one occurrence at a time).
+			if strings.Contains(out, b) {
+				out = strings.Replace(out, b, newStr, 1)
+				n++
+			}
+		}
+		return &ReplaceResult{
+			NewContent:   out,
+			Replacements: n,
+			Method:       "whitespace",
+			Confidence:   0.85,
+		}, nil
 	}
 	return &ReplaceResult{
-		NewContent:   strings.Replace(content, matched, newStr, 1),
+		NewContent:   strings.Replace(content, blocks[0], newStr, 1),
 		Replacements: 1,
 		Method:       "whitespace",
 		Confidence:   0.85,
-	}
+	}, nil
 }
 
 // foldUnicode returns an NFC-normalized copy of s with the punctuation
@@ -180,32 +214,55 @@ func unicodeNormalizedReplace(content, oldStr, newStr string) *ReplaceResult {
 	}
 }
 
-func ellipsisReplace(content, oldStr, newStr string) *ReplaceResult {
+func ellipsisReplace(content, oldStr, newStr string, replaceAll bool) (*ReplaceResult, error) {
 	segments := strings.Split(oldStr, "...")
 	if len(segments) < 2 {
-		return nil
+		return nil, nil
 	}
 	first := strings.TrimSpace(segments[0])
 	last := strings.TrimSpace(segments[len(segments)-1])
 	if first == "" || last == "" {
-		return nil
+		return nil, nil
 	}
 	startIdx := strings.Index(content, first)
 	if startIdx < 0 {
-		return nil
+		return nil, nil
 	}
 	endStart := startIdx + len(first)
 	endIdx := strings.Index(content[endStart:], last)
 	if endIdx < 0 {
-		return nil
+		return nil, nil
 	}
 	matched := content[startIdx : endStart+endIdx+len(last)]
+
+	// Ambiguity guard: if the `first` anchor occurs at more than one location
+	// that also has a following `last`, we cannot know which region the caller
+	// meant. Refuse rather than silently editing the first (parity with the
+	// exact/whitespace tiers).
+	if !replaceAll {
+		anchors := 0
+		for pos := 0; ; {
+			idx := strings.Index(content[pos:], first)
+			if idx < 0 {
+				break
+			}
+			abs := pos + idx
+			if strings.Index(content[abs+len(first):], last) >= 0 {
+				anchors++
+			}
+			pos = abs + 1
+		}
+		if anchors > 1 {
+			return nil, fmt.Errorf("old_string (ellipsis) anchor %q matches %d locations; provide more context to make it unique, or set replace_all=true", first, anchors)
+		}
+	}
+
 	return &ReplaceResult{
 		NewContent:   strings.Replace(content, matched, newStr, 1),
 		Replacements: 1,
 		Method:       "ellipsis",
 		Confidence:   0.75,
-	}
+	}, nil
 }
 
 func fuzzyReplace(content, oldStr, newStr string) *ReplaceResult {
@@ -257,11 +314,3 @@ func normalizedEqual(a, b string) bool {
 	return na == nb
 }
 
-func firstNonEmptyLine(s string) string {
-	for _, line := range strings.Split(s, "\n") {
-		if strings.TrimSpace(line) != "" {
-			return line
-		}
-	}
-	return ""
-}
