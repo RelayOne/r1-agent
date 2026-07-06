@@ -4,7 +4,7 @@
 # `.github/workflows/bench-nightly.yml`. Triggered by Cloud Scheduler
 # (configured in services/scripts/setup-bench-cron.sh) at 04:00 UTC
 # nightly. Runs `bench/cmd/bench run` over the corpus and uploads
-# results + reports to gs://relayone-488319-r1-bench-reports/<date>/.
+# results + reports to gs://resolute-parity-484218-g1-r1-bench-reports/<date>/.
 #
 # Resolves issue #99.
 
@@ -12,7 +12,7 @@ substitutions:
   _CORPUS_DIR: corpus/
   _HARNESSES: stoke
   _REPS: '1'
-  _BUCKET: gs://relayone-488319-r1-bench-reports
+  _BUCKET: gs://resolute-parity-484218-g1-r1-bench-reports
 
 options:
   logging: CLOUD_LOGGING_ONLY

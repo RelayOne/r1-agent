@@ -73,7 +73,7 @@ smoke-coderadar: test-coderadar-integration
 	  echo "Materializing CODERADAR_DSN from Secret Manager..."; \
 	  SECRET="r1-$(ENV)-shared-CODERADAR_DSN"; \
 	  if ! gcloud secrets describe "$$SECRET" >/dev/null 2>&1; then \
-	    SECRET="relayone-coderadar-dsn"; \
+	    SECRET="resolute-parity-coderadar-dsn"; \
 	  fi; \
 	  export CODERADAR_DSN=$$(gcloud secrets versions access latest --secret="$$SECRET"); \
 	fi; \

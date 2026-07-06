@@ -30,7 +30,7 @@ chmod +x r1 && sudo mv r1 /usr/local/bin/
 
 ### Step 2. Install
 
-`downloads.r1.run` is `r1-downloads-cdn` on Cloud Run. It's not a real CDN — it's a thin Go reverse-proxy backed by `gs://relayone-488319-r1-releases/{prod,staging,dev}/<asset>`. The Cloud Run service account holds `roles/storage.objectViewer` on the bucket; the proxy streams the requested object back to your `curl` with caching headers. The same channel-namespacing model that powers `homebrew tap` or `apt repository` works here without operating either of those.
+`downloads.r1.run` is `r1-downloads-cdn` on Cloud Run. It's not a real CDN — it's a thin Go reverse-proxy backed by `gs://resolute-parity-484218-g1-r1-releases/{prod,staging,dev}/<asset>`. The Cloud Run service account holds `roles/storage.objectViewer` on the bucket; the proxy streams the requested object back to your `curl` with caching headers. The same channel-namespacing model that powers `homebrew tap` or `apt repository` works here without operating either of those.
 
 You verify the install worked:
 
@@ -232,7 +232,7 @@ The container binds `r1-{env}-shared-DATABASE_URL` from Secret Manager (placehol
 
 A 200-line Go service using the Cloud Storage Go SDK to:
 
-1. List objects under `gs://relayone-488319-r1-releases/{channel}/` for the index.
+1. List objects under `gs://resolute-parity-484218-g1-r1-releases/{channel}/` for the index.
 2. Stream a single object's bytes back to the caller.
 3. Return content-hash metadata.
 
@@ -271,7 +271,7 @@ Spec 8: humans drive r1 via three UIs; agents drive via MCP. If the surfaces div
 Spec 9 D-2026-05-04-01: the model demonstrably ignores prompt-level instructions to defeat self-truncation. Reliable enforcement is at the host process layer in deterministic Go code, in seven independently-effective layers. Operator can override (with a flag); LLM cannot.
 
 ### Why no `/healthz` on the SaaS services
-Cloud Run org policy on `relayone-488319` intercepts `/healthz` and returns 404 from the load balancer before the request hits the container. r1 services answer `/livez` + `/readyz` + `/v1/version` instead. Documented in D-2026-05-04-03.
+Cloud Run org policy on `resolute-parity-484218-g1` intercepts `/healthz` and returns 404 from the load balancer before the request hits the container. r1 services answer `/livez` + `/readyz` + `/v1/version` instead. Documented in D-2026-05-04-03.
 
 ### Why the embed.go fix
 Originally `RegisterDashboardUI` rewrote `r.URL.Path = "/index.html"` and called `http.FileServer`. FileServer auto-canonicalizes back to `/`, creating a 301 loop. The fix (D-2026-05-04-02) reads `static/dist/index.html` directly via `fs.ReadFile`. Legacy `static/index.html` fallback preserved.

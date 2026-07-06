@@ -240,7 +240,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 ### Hosted SaaS surfaces on r1.run
 - **`platform.{,staging.,dev.}r1.run`** — docs site rendered from `docs/` via `r1-docs` Cloud Run service.
 - **`api.{,staging.,dev.}r1.run`** — `r1-coord-api` Cloud Run service: `/healthz`, `/v1/version`, `/v1/license/verify`, `/v1/telemetry/opt-in`. Backed by Cloud SQL `r1-{prod,staging,dev}-pg`.
-- **`downloads.{,staging.,dev.}r1.run`** — `r1-downloads-cdn` Cloud Run service streaming binaries from `gs://relayone-488319-r1-releases/{prod,staging,dev}/<asset>`.
+- **`downloads.{,staging.,dev.}r1.run`** — `r1-downloads-cdn` Cloud Run service streaming binaries from `gs://resolute-parity-484218-g1-r1-releases/{prod,staging,dev}/<asset>`.
 - **`admin.{,staging.,dev.}r1.run`** — `r1-admin` Cloud Run service. The public surface is live; local JWT operator-role verification and runtime/coord-api summary are real, but broader business/session/user data surfaces are still partial.
 - **All 12 public services are live on Cloud Run us-central1** with min-instances=1, instance-based billing, distroless static images, and `/livez` endpoints.
 - **`r1-browser`** is documented and buildable, but it was not present as a live Cloud Run service during the 2026-05-15 audit.
@@ -260,7 +260,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 | JWT login + RelayOne MSP SSO | **Done — Path A Go reimpl** | `services/r1-coord-api/internal/auth/{jwt,sso,middleware}.go`; HS256 + RS256; OIDC code flow. |
 | Admin panel (admin.r1.run) | **Partial** | `services/r1-admin/main.go` — live hosted surface; operator JWT verification and runtime summary are real, but major business/session/user data sections are still partial. |
 | PostHog + Customer.io + CodeRadar tracking | **Partial** | Client/subscriber code exists, and hosted `coord-api` now emits CodeRadar telemetry opt-in + attribution events when `CODERADAR_DSN` is present, but the broader GTM, lifecycle, and marketing-site rollout is not fully live. |
-| Nightly benchmark cron | **Done** | `services/cloudbuild-bench-nightly.yaml` + Cloud Scheduler `r1-bench-nightly-cron` (04:00 UTC daily); reports upload to `gs://relayone-488319-r1-bench-reports/<date>/`. |
+| Nightly benchmark cron | **Done** | `services/cloudbuild-bench-nightly.yaml` + Cloud Scheduler `r1-bench-nightly-cron` (04:00 UTC daily); reports upload to `gs://resolute-parity-484218-g1-r1-bench-reports/<date>/`. |
 | Spec 7 desktop daemon discovery wiring | **Done** | `desktop/src-tauri/src/discovery_state.rs` — Tauri-managed state + `app.discovery_status` IPC verb. |
 | `r1-server-ui-v2` retrofit (61 items) | **Scoped — 5 sub-specs ready for /build** | foundation + 3d-perf + event-rendering + handlers-and-routes + tests. Build order: foundation → (3d-perf, event-rendering, handlers-and-routes parallel) → tests. |
 | Node 22 LTS CI bump | **Scoped (precursor to UI v2 retrofit)** | Node 20 LTS EOL 2026-04-30; bump unblocks jsdom 29 + vitest 4 + vite 7. Single small CI-only PR. |
@@ -307,7 +307,7 @@ This repo follows the portfolio env-branch convention:
 | `staging` | staging     | `r1-{coord-api,docs,downloads-cdn,admin}-staging` (auto-deploy on push to `staging`) |
 | `main`    | prod        | `r1-{coord-api,docs,downloads-cdn,admin}-prod` (auto-deploy on push to `main`) |
 
-**Branch protection on `main` and `staging`:** PR-required, no force-push, no delete, required check is `r1-agent-pr (relayone-488319)`. `dev` allows direct commits.
+**Branch protection on `main` and `staging`:** PR-required, no force-push, no delete, required check is `r1-agent-pr (resolute-parity-484218-g1)`. `dev` allows direct commits.
 
 **Forward-merge flow:** `dev` → `staging` → `main`. Direct pushes to `main`/`staging` are blocked by branch protection.
 

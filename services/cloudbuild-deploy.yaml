@@ -4,7 +4,7 @@
 # + redeploys r1-coord-api, r1-docs, r1-downloads-cdn, r1-admin. _ENV is
 # substituted per trigger.
 #
-# Tag = short SHA. Image path = us-central1-docker.pkg.dev/relayone-488319/r1/<svc>:<sha>.
+# Tag = short SHA. Image path = us-central1-docker.pkg.dev/resolute-parity-484218-g1/r1/<svc>:<sha>.
 #
 # Per the standing rules:
 #   - region us-central1
@@ -15,10 +15,10 @@
 # Current live trigger/secret reality as of 2026-05-15:
 #   - deploy triggers r1-services-{dev,staging,prod}-deploy exist
 #   - r1-<env>-shared-CODERADAR_DSN does NOT currently exist
-#   - relayone-coderadar-dsn exists and is readable by the Cloud Run
+#   - resolute-parity-coderadar-dsn exists and is readable by the Cloud Run
 #     runtime service account
 # Deploys therefore prefer an env-specific CODERADAR_DSN if present and
-# otherwise fall back to relayone-coderadar-dsn.
+# otherwise fall back to resolute-parity-coderadar-dsn.
 #
 # Only secrets actually read by service code are bound (audit A089):
 # AUTH_JWT_SECRET (coord-api, admin) and CODERADAR_DSN. DATABASE_URL /
@@ -128,7 +128,7 @@ steps:
       - -c
       - |
         set -euo pipefail
-        CODERADAR_SECRET="relayone-coderadar-dsn"
+        CODERADAR_SECRET="resolute-parity-coderadar-dsn"
         if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
           CODERADAR_SECRET="r1-${_ENV}-shared-CODERADAR_DSN"
         elif ! gcloud secrets describe "$$CODERADAR_SECRET" >/dev/null 2>&1; then
@@ -165,7 +165,7 @@ steps:
       - -c
       - |
         set -euo pipefail
-        CODERADAR_SECRET="relayone-coderadar-dsn"
+        CODERADAR_SECRET="resolute-parity-coderadar-dsn"
         if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
           CODERADAR_SECRET="r1-${_ENV}-shared-CODERADAR_DSN"
         elif ! gcloud secrets describe "$$CODERADAR_SECRET" >/dev/null 2>&1; then
@@ -201,7 +201,7 @@ steps:
       - -c
       - |
         set -euo pipefail
-        CODERADAR_SECRET="relayone-coderadar-dsn"
+        CODERADAR_SECRET="resolute-parity-coderadar-dsn"
         if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
           CODERADAR_SECRET="r1-${_ENV}-shared-CODERADAR_DSN"
         elif ! gcloud secrets describe "$$CODERADAR_SECRET" >/dev/null 2>&1; then
@@ -220,7 +220,7 @@ steps:
           --memory=512Mi
           --port=8080
           --no-cpu-throttling
-          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_BUCKET=relayone-488319-r1-releases
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_BUCKET=resolute-parity-484218-g1-r1-releases
         )
         if [ -n "$$CODERADAR_SECRET" ]; then
           DEPLOY_ARGS+=(--set-secrets=CODERADAR_DSN=$$CODERADAR_SECRET:latest)
@@ -242,7 +242,7 @@ steps:
         SUB=""
         [ "${_ENV}" = "staging" ] && SUB=".staging"
         [ "${_ENV}" = "dev" ]     && SUB=".dev"
-        CODERADAR_SECRET="relayone-coderadar-dsn"
+        CODERADAR_SECRET="resolute-parity-coderadar-dsn"
         if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
           CODERADAR_SECRET="r1-${_ENV}-shared-CODERADAR_DSN"
         elif ! gcloud secrets describe "$$CODERADAR_SECRET" >/dev/null 2>&1; then
@@ -282,7 +282,7 @@ steps:
   #
   # Step 1 (cloud-sdk): resolve + materialize the DSN, or signal skip.
   # Prefers r1-${_ENV}-shared-CODERADAR_DSN when present and otherwise
-  # falls back to relayone-coderadar-dsn, which exists today. Skips when
+  # falls back to resolute-parity-coderadar-dsn, which exists today. Skips when
   # neither secret exists or the Cloud Build SA cannot read the value.
   - id: resolve-coderadar-dsn
     name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
@@ -295,7 +295,7 @@ steps:
         # Ephemeral handoff to the golang:1.26 step below. /workspace is
         # per-build scratch, discarded when the build ends.
         rm -f /workspace/coderadar_dsn /workspace/coderadar_skip
-        CODERADAR_SECRET="relayone-coderadar-dsn"
+        CODERADAR_SECRET="resolute-parity-coderadar-dsn"
         if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
           CODERADAR_SECRET="r1-${_ENV}-shared-CODERADAR_DSN"
         elif ! gcloud secrets describe "$$CODERADAR_SECRET" >/dev/null 2>&1; then

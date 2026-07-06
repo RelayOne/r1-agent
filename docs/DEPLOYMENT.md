@@ -1,6 +1,6 @@
 # Deployment
 
-Operations guide for r1, covering both the **local agent runtime** (CLI + daemon + UIs) and the **hosted SaaS** (`r1.run` — 12 public Cloud Run services on `relayone-488319`).
+Operations guide for r1, covering both the **local agent runtime** (CLI + daemon + UIs) and the **hosted SaaS** (`r1.run` — 12 public Cloud Run services on `resolute-parity-484218-g1`).
 
 A new operator should be able to deploy this stack at 3 a.m. during an outage following only this doc.
 
@@ -144,7 +144,7 @@ r1 chat --interactive
 
 ### Prerequisites
 
-- GCP project: `relayone-488319` with these APIs enabled:
+- GCP project: `resolute-parity-484218-g1` with these APIs enabled:
   - Cloud Run (`run.googleapis.com`)
   - Cloud SQL Admin (`sqladmin.googleapis.com`)
   - Secret Manager (`secretmanager.googleapis.com`)
@@ -159,10 +159,10 @@ r1 chat --interactive
 
 | Service | Image | Domain |
 |---|---|---|
-| r1-coord-api-{prod,staging,dev} | us-central1-docker.pkg.dev/relayone-488319/r1/r1-coord-api:<sha> | api.{,staging.,dev.}r1.run |
-| r1-docs-{prod,staging,dev} | us-central1-docker.pkg.dev/relayone-488319/r1/r1-docs:<sha> | platform.{,staging.,dev.}r1.run |
-| r1-downloads-cdn-{prod,staging,dev} | us-central1-docker.pkg.dev/relayone-488319/r1/r1-downloads-cdn:<sha> | downloads.{,staging.,dev.}r1.run |
-| r1-admin-{prod,staging,dev} | us-central1-docker.pkg.dev/relayone-488319/r1/r1-admin:<sha> | admin.{,staging.,dev.}r1.run |
+| r1-coord-api-{prod,staging,dev} | us-central1-docker.pkg.dev/resolute-parity-484218-g1/r1/r1-coord-api:<sha> | api.{,staging.,dev.}r1.run |
+| r1-docs-{prod,staging,dev} | us-central1-docker.pkg.dev/resolute-parity-484218-g1/r1/r1-docs:<sha> | platform.{,staging.,dev.}r1.run |
+| r1-downloads-cdn-{prod,staging,dev} | us-central1-docker.pkg.dev/resolute-parity-484218-g1/r1/r1-downloads-cdn:<sha> | downloads.{,staging.,dev.}r1.run |
+| r1-admin-{prod,staging,dev} | us-central1-docker.pkg.dev/resolute-parity-484218-g1/r1/r1-admin:<sha> | admin.{,staging.,dev.}r1.run |
 
 Per the standing GCP rules:
 - Region: `us-central1` (Tier 1 pricing)
@@ -196,7 +196,7 @@ r1-dev-shared-ANTHROPIC_API_KEY
 r1-dev-shared-AUTH_JWT_SECRET
 ```
 
-Public service manifests now prefer `r1-<env>-shared-CODERADAR_DSN` when it exists and otherwise fall back to `relayone-coderadar-dsn`; the live `dev` public services are currently using that shared fallback. That binding is still not proof that the full GTM stack is live: as of the 2026-05-15 audit, no R1 PostHog or Customer.io secrets were visible in Secret Manager, and the broader marketing/browser rollout remains partial.
+Public service manifests now prefer `r1-<env>-shared-CODERADAR_DSN` when it exists and otherwise fall back to `resolute-parity-coderadar-dsn`; the live `dev` public services are currently using that shared fallback. That binding is still not proof that the full GTM stack is live: as of the 2026-05-15 audit, no R1 PostHog or Customer.io secrets were visible in Secret Manager, and the broader marketing/browser rollout remains partial.
 
 To set a real value:
 ```bash
@@ -207,10 +207,10 @@ gcloud secrets versions add r1-prod-shared-DATABASE_URL \
 ### Artifact Registry
 
 ```
-us-central1-docker.pkg.dev/relayone-488319/r1/r1-coord-api:<sha>      # 3.2 MB
-us-central1-docker.pkg.dev/relayone-488319/r1/r1-docs:<sha>           # 4.3 MB
-us-central1-docker.pkg.dev/relayone-488319/r1/r1-downloads-cdn:<sha>  # 7.0 MB
-us-central1-docker.pkg.dev/relayone-488319/r1/r1-admin:<sha>
+us-central1-docker.pkg.dev/resolute-parity-484218-g1/r1/r1-coord-api:<sha>      # 3.2 MB
+us-central1-docker.pkg.dev/resolute-parity-484218-g1/r1/r1-docs:<sha>           # 4.3 MB
+us-central1-docker.pkg.dev/resolute-parity-484218-g1/r1/r1-downloads-cdn:<sha>  # 7.0 MB
+us-central1-docker.pkg.dev/resolute-parity-484218-g1/r1/r1-admin:<sha>
 ```
 
 All distroless static (`gcr.io/distroless/static-debian12:nonroot`). Multi-stage builds; no glibc; no shell.
@@ -218,7 +218,7 @@ All distroless static (`gcr.io/distroless/static-debian12:nonroot`). Multi-stage
 ### GCS
 
 ```
-gs://relayone-488319-r1-releases/{prod,staging,dev}/<asset>
+gs://resolute-parity-484218-g1-r1-releases/{prod,staging,dev}/<asset>
 ```
 
 Per-channel binaries land here via `cloudbuild-binaries.yaml` on tag push (existing trigger). The `r1-downloads-cdn` Cloud Run service streams them out via a service account with `roles/storage.objectViewer`.
@@ -384,7 +384,7 @@ this repo's live deploy path.
 Cloud Build injects `CODERADAR_DSN` + `CODERADAR_SAMPLE_RATE` per env
 across all 4 service deploys in `services/cloudbuild-deploy.yaml`,
 preferring `r1-<env>-shared-CODERADAR_DSN` and falling back to
-`relayone-coderadar-dsn` when that is the only real secret. The
+`resolute-parity-coderadar-dsn` when that is the only real secret. The
 `smoke-coderadar` step uses the same resolution chain and skips cleanly
 when neither secret exists or the build service account cannot read the
 resolved secret.
@@ -440,7 +440,7 @@ gcloud sql backups restore <backup-id> --restore-instance=r1-prod-pg
 | Bad commit on main | `git revert` + auto-deploy | 5-10 min | 0 |
 | GCP project compromised | Recreate from terraform (TODO: terraform doesn't exist yet — operator follow-up) | days | 24 hours |
 | `r1.run` zone hijacked | Rotate Cloudflare credentials + restore from backup zone export | 15 min after detection | 0 |
-| Loss of `relayone-488319-r1-releases` GCS bucket | `gsutil rsync` from a backup project (TODO: cross-region replication not set up — operator follow-up) | 30-60 min | last sync |
+| Loss of `resolute-parity-484218-g1-r1-releases` GCS bucket | `gsutil rsync` from a backup project (TODO: cross-region replication not set up — operator follow-up) | 30-60 min | last sync |
 
 ---
 
@@ -571,7 +571,7 @@ The lane runs in **three modes**, all firing the same `services/cloudbuild-e2e.y
 3. `golang:1.25` — `go test -tags=e2e ./cmd/r1-server/e2e/...` exercises the full Playwright + axe flow with `R1_SERVER_UI_V2=1` + `R1_SERVER_SHARE_ENABLED=1` (the server ignores `R1_SERVER_UI_V2` post-Spec-D; the e2e harness uses it as its opt-in run/skip gate).
 4. `cloud-sdk:slim` — publishes the rehearsal result back to GitHub via Cloud Build's native commit-status integration.
 
-Both Cloud Build triggers run under the BYOSA service account `cloud-build-byosa@relayone-488319.iam.gserviceaccount.com`. The `r1-agent-e2e-rehearsal-main` trigger is path-filtered to `cmd/r1-server/**`, `internal/server/**`, `web/**`, and `services/cloudbuild-e2e.yaml` (changes anywhere else don't fire the rehearsal — keeps build minutes proportional to risk).
+Both Cloud Build triggers run under the BYOSA service account `cloud-build-byosa@resolute-parity-484218-g1.iam.gserviceaccount.com`. The `r1-agent-e2e-rehearsal-main` trigger is path-filtered to `cmd/r1-server/**`, `internal/server/**`, `web/**`, and `services/cloudbuild-e2e.yaml` (changes anywhere else don't fire the rehearsal — keeps build minutes proportional to risk).
 
 ### What "red" means
 
@@ -593,9 +593,9 @@ Prerequisite: `cd web && npx playwright install --with-deps chromium` (one-time)
 ### Setting up the triggers (one-time)
 
 ```bash
-# Requires roles/cloudbuild.builds.editor on relayone-488319
+# Requires roles/cloudbuild.builds.editor on resolute-parity-484218-g1
 bash scripts/setup-cloudbuild-e2e-trigger.sh
-gcloud builds triggers list --project=relayone-488319 --filter='name~e2e-rehearsal'
+gcloud builds triggers list --project=resolute-parity-484218-g1 --filter='name~e2e-rehearsal'
 ```
 
 Re-running the script updates the existing triggers in-place — does not create duplicates. The trigger descriptor is `services/cloudbuild-e2e-trigger.yaml`.
@@ -648,7 +648,7 @@ Operational considerations:
 ### Scoped
 - Cloud Monitoring uptime checks on `/livez` endpoints
 - Alerting policies (5xx rate, Cloud SQL CPU, lane-event throughput)
-- Cross-region replication for `relayone-488319-r1-releases` GCS bucket
+- Cross-region replication for `resolute-parity-484218-g1-r1-releases` GCS bucket
 - Terraform module for the whole stack (recreate in another project from one command)
 
 ### Scoping

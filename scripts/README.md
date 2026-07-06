@@ -26,7 +26,7 @@ permissions / preconditions it needs.
 bash scripts/<script>.sh
 
 # Specific to GCP-touching scripts: requires gcloud + active
-# auth that has roles/cloudbuild.builds.editor on relayone-488319
+# auth that has roles/cloudbuild.builds.editor on resolute-parity-484218-g1
 gcloud auth application-default login   # one-time
 bash scripts/setup-cloudbuild-e2e-trigger.sh
 ```

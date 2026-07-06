@@ -42,7 +42,7 @@ apply_protection() {
   # reports on every PR (push-to-main has different check names like
   # "r1-agent-ci" / "r1-agent-binaries", but those don't run on PRs and
   # therefore can't gate merges via branch protection).
-  local checks='["r1-agent-pr (relayone-488319)"]'
+  local checks='["r1-agent-pr (resolute-parity-484218-g1)"]'
   if [[ "$allow_direct" == "true" ]]; then
     # dev: looser — status checks only, no required reviews
     body=$(jq -n --argjson checks "$checks" '{

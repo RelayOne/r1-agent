@@ -181,7 +181,7 @@ Complete feature inventory for r1 as of 2026-05-15. Status reflects the merged s
 | Release-rehearsal Cloud Build trigger (push-to-main) | `r1-agent-e2e-rehearsal-main` fires on every push to `main` and runs the full Playwright + axe-core E2E flow against a freshly-built `r1-server`; red blocks any release that gates on this check | Done | `services/cloudbuild-e2e-trigger.yaml`, `services/cloudbuild-e2e.yaml` |
 | Release-rehearsal Cloud Build trigger (tag) | `r1-agent-e2e-rehearsal-tag` fires on `^v.*$` tag pushes; same flow; blocks tag promotion when red | Done | `services/cloudbuild-e2e-trigger.yaml` |
 | Manual GitHub Actions rehearsal | `.github/workflows/e2e-rehearsal-manual.yml` lets an operator dispatch the rehearsal from the Actions UI; calls `gcloud builds triggers run` against the main-branch trigger; workflow summary links to the Cloud Build console | Done | `.github/workflows/e2e-rehearsal-manual.yml` |
-| One-time trigger setup script | `scripts/setup-cloudbuild-e2e-trigger.sh` is idempotent — re-running updates triggers in place; requires `roles/cloudbuild.builds.editor` on `relayone-488319` | Done | `scripts/setup-cloudbuild-e2e-trigger.sh` |
+| One-time trigger setup script | `scripts/setup-cloudbuild-e2e-trigger.sh` is idempotent — re-running updates triggers in place; requires `roles/cloudbuild.builds.editor` on `resolute-parity-484218-g1` | Done | `scripts/setup-cloudbuild-e2e-trigger.sh` |
 
 ## Cross-Machine Session Migration (spec C1)
 
@@ -209,11 +209,11 @@ Complete feature inventory for r1 as of 2026-05-15. Status reflects the merged s
 |---|---|---|---|
 | `services/r1-coord-api/` Go service | License-verify + telemetry-opt-in scaffold; Cloud SQL backed | Done (stubs; real auth pending Path-A Go port) | `services/r1-coord-api/main.go` |
 | `services/r1-docs/` Go service | Embeds docs/*.md; renders to HTML; CSP-locked | Done | `services/r1-docs/main.go` |
-| `services/r1-downloads-cdn/` Go service | Streams gs://relayone-488319-r1-releases/{env}/ via service account | Done | `services/r1-downloads-cdn/main.go` |
+| `services/r1-downloads-cdn/` Go service | Streams gs://resolute-parity-484218-g1-r1-releases/{env}/ via service account | Done | `services/r1-downloads-cdn/main.go` |
 | `services/r1-admin/` Go service | Hosted admin surface at `admin.{,staging.,dev.}r1.run`; still scaffold-heavy | Partial | `services/r1-admin/main.go` |
 | 12 public Cloud Run services | dev/staging/prod for `r1-coord-api`, `r1-docs`, `r1-downloads-cdn`, `r1-admin`; min-instances=1; instance billing; distroless static | Live | gcloud run services list |
 | 3 Cloud SQL Postgres 16 instances | r1-{prod,staging,dev}-pg, all RUNNABLE | Live | gcloud sql instances list |
-| Artifact Registry repo | us-central1-docker.pkg.dev/relayone-488319/r1 | Live | gcloud artifacts repositories list |
+| Artifact Registry repo | us-central1-docker.pkg.dev/resolute-parity-484218-g1/r1 | Live | gcloud artifacts repositories list |
 | Core Secret Manager env set | `r1-{prod,staging,dev}-shared-{DATABASE_URL,ANTHROPIC_API_KEY,AUTH_JWT_SECRET}` visible during audit; broader GTM secrets not confirmed for R1 | Partial | gcloud secrets list |
 | 12 domain mappings | platform/api/downloads/admin × dev/staging/prod under r1.run | Live | gcloud beta run domain-mappings list |
 | `services/cloudbuild-deploy.yaml` auto-deploy | Build + push + deploy + smoke /livez on push to main/staging/dev | Done | services/cloudbuild-deploy.yaml |
