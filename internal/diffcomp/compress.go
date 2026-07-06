@@ -211,9 +211,32 @@ type diffOp struct {
 	text string
 }
 
+// maxLCSCells caps the size of the O(N*M) LCS dynamic-programming matrix.
+// Above this, computeOps falls back to a full-replace representation instead
+// of allocating an unbounded matrix (a 50k x 50k diff would otherwise try to
+// allocate ~20 GB and OOM the process). 4,000,000 cells (~2000x2000 lines)
+// keeps peak allocation to a few tens of MB while still giving minimal diffs
+// for all realistic source files.
+const maxLCSCells = 4_000_000
+
 func computeOps(oldLines, newLines []string) []diffOp {
 	// Simple O(NM) LCS for correctness; fine for typical file sizes
 	m, n := len(oldLines), len(newLines)
+
+	// Guard the matrix allocation: above the cap (or on multiplication
+	// overflow), degrade to a full replace — every old line removed, every
+	// new line added — which is O(N+M) space and never OOMs.
+	if cells := int64(m) * int64(n); cells > maxLCSCells || cells < 0 {
+		ops := make([]diffOp, 0, m+n)
+		for _, l := range oldLines {
+			ops = append(ops, diffOp{OpRemove, l})
+		}
+		for _, l := range newLines {
+			ops = append(ops, diffOp{OpAdd, l})
+		}
+		return ops
+	}
+
 	dp := make([][]int, m+1)
 	for i := range dp {
 		dp[i] = make([]int, n+1)
