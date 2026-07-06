@@ -2,6 +2,14 @@ module github.com/RelayOne/r1
 
 go 1.25.5
 
+// Run the go1.26.4 toolchain everywhere (dev + CI) to eliminate the
+// go1.25/go1.26 behavioral skew that produced "passes locally, fails in
+// CI" flakes. The `go` line stays at 1.25.5 (the language floor) so a
+// go1.25 environment that cannot fetch a newer toolchain (e.g. the
+// r1d-server workflow's pinned setup-go under GOTOOLCHAIN=local) still
+// builds rather than hard-failing; all docker CI images are golang:1.26.
+toolchain go1.26.4
+
 // S2-1 (work-r1-rename) — module renamed from
 // github.com/ericmacdougall/stoke to github.com/RelayOne/r1 to fix
 // the portfolio-org gap (the repo moved from an individual account

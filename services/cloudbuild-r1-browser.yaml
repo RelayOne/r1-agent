@@ -32,7 +32,7 @@ steps:
   # (audit A045). services/r1-browser has its own go.mod, so the
   # repo-root CI gate (`go test ./...`) never executes these tests.
   - id: test-r1-browser
-    name: 'golang:1.25'
+    name: 'golang:1.26'
     waitFor: ['-']
     entrypoint: bash
     args:

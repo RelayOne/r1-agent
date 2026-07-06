@@ -8,7 +8,7 @@
 #   gcloud builds submit --config=services/cloudbuild-e2e.yaml .
 
 steps:
-  - name: 'golang:1.25'
+  - name: 'golang:1.26'
     id: build
     entrypoint: bash
     args:
@@ -32,7 +32,7 @@ steps:
         npm install --workspaces --include-workspace-root --no-audit --no-fund
         npx playwright install --with-deps chromium
 
-  - name: 'golang:1.25'
+  - name: 'golang:1.26'
     id: e2e-test
     waitFor: ['playwright-install']
     entrypoint: bash

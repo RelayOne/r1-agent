@@ -22,7 +22,7 @@ steps:
   # 1. Build the bench binary using vendored deps so the runner needs
   #    no network for module fetches.
   - id: build-bench
-    name: 'golang:1.25'
+    name: 'golang:1.26'
     waitFor: ['-']
     entrypoint: bash
     args:
@@ -35,7 +35,7 @@ steps:
   # 2. Run the corpus through the harnesses. Output goes to
   #    /workspace/bench-out/ which we tar+upload in the next step.
   - id: run-bench
-    name: 'golang:1.25'
+    name: 'golang:1.26'
     waitFor: ['build-bench']
     entrypoint: bash
     args:

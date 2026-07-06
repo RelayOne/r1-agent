@@ -4,7 +4,7 @@
 # pinned to Go 1.25; runtime stage runs r1-bench against the embedded
 # golden corpus.
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 WORKDIR /src
 COPY . .
 RUN go build -trimpath -o /out/r1-bench ./cmd/r1-bench
