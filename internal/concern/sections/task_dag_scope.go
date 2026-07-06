@@ -9,7 +9,7 @@ import (
 )
 
 // TaskDAGScope queries the task node and its parent chain via depends_on edges.
-func TaskDAGScope(ctx context.Context, scope Scope, l *ledger.Ledger) (string, error) {
+func TaskDAGScope(ctx context.Context, scope Scope, l *ledger.Ledger, _ int) (string, error) {
 	if scope.TaskID == "" {
 		return "(no task in scope)", nil
 	}

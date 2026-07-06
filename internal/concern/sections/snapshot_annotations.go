@@ -8,7 +8,7 @@ import (
 )
 
 // SnapshotAnnotations queries annotation nodes for files in scope.
-func SnapshotAnnotations(ctx context.Context, scope Scope, l *ledger.Ledger) (string, error) {
+func SnapshotAnnotations(ctx context.Context, scope Scope, l *ledger.Ledger, maxItems int) (string, error) {
 	nodes, err := l.Query(ctx, ledger.QueryFilter{
 		Type:      "annotation",
 		MissionID: scope.MissionID,
@@ -19,5 +19,5 @@ func SnapshotAnnotations(ctx context.Context, scope Scope, l *ledger.Ledger) (st
 	if len(nodes) == 0 {
 		return "(no annotations)", nil
 	}
-	return renderNodeList(nodes, "text", 0), nil
+	return renderNodeList(nodes, "text", maxItems), nil
 }

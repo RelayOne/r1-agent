@@ -128,7 +128,7 @@ func (b *Builder) BuildConcernField(ctx context.Context, role StanceRole, face F
 
 	hasSkillsSection := false
 	for _, spec := range tmpl.Sections {
-		content, err := spec.QueryFn(ctx, sScope, b.ledger)
+		content, err := spec.QueryFn(ctx, sScope, b.ledger, spec.Cap)
 		if err != nil {
 			if spec.Required {
 				return nil, fmt.Errorf("required section %q failed: %w", spec.Name, err)
