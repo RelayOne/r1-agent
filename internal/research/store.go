@@ -60,7 +60,17 @@ type Store struct {
 	// when no external embedding service is configured.
 	vecIdx *vecindex.Index
 	vocab  []string // vocabulary for bag-of-words embedding
-	vecMu  sync.RWMutex // protects vecIdx and vocab from concurrent access
+	vecMu  sync.RWMutex // protects vecIdx, vocab, and the rebuild bookkeeping below
+
+	// vecStale is set when an incremental Add introduces vocabulary the current
+	// embedding space doesn't cover. The expensive full rebuild that folds the
+	// new vocabulary in is deferred to the next SemanticSearch (rebuild-lazily),
+	// so a burst of N Adds costs O(N) instead of the O(N^2) of rebuilding the
+	// whole corpus on every Add, while search results stay correct.
+	vecStale bool
+	// vecRebuilds counts full index rebuilds; used by tests to assert Add does
+	// not rebuild the entire corpus each time.
+	vecRebuilds int
 }
 
 // NewStore opens or creates a research database at the given directory.
@@ -237,6 +247,15 @@ func (s *Store) Delete(id string) error {
 	if n == 0 {
 		return fmt.Errorf("entry %q not found", id)
 	}
+
+	// Drop the entry's vector too, or it lingers as an orphan in the in-memory
+	// index and keeps surfacing in SemanticSearch after the row is gone.
+	s.vecMu.Lock()
+	if s.vecIdx != nil {
+		s.vecIdx.Remove(id)
+	}
+	s.vecMu.Unlock()
+
 	return nil
 }
 
@@ -397,12 +416,45 @@ func (s *Store) HasResearch(topic, query string) (bool, error) {
 // Prune removes entries not used since the cutoff time.
 // Returns the number of entries removed.
 func (s *Store) Prune(olderThan time.Time) (int, error) {
-	result, err := s.db.Exec("DELETE FROM entries WHERE updated_at < ? AND use_count < 2",
-		olderThan.Format(time.RFC3339Nano))
+	cutoff := olderThan.Format(time.RFC3339Nano)
+
+	// Collect the ids about to be deleted so their vectors can be dropped from
+	// the in-memory index; otherwise they linger as orphans in SemanticSearch.
+	rows, err := s.db.Query("SELECT id FROM entries WHERE updated_at < ? AND use_count < 2", cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("prune (select ids): %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("prune (scan id): %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("prune (iterate ids): %w", err)
+	}
+	rows.Close()
+
+	result, err := s.db.Exec("DELETE FROM entries WHERE updated_at < ? AND use_count < 2", cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("prune: %w", err)
 	}
 	n, _ := result.RowsAffected()
+
+	if len(ids) > 0 {
+		s.vecMu.Lock()
+		if s.vecIdx != nil {
+			for _, id := range ids {
+				s.vecIdx.Remove(id)
+			}
+		}
+		s.vecMu.Unlock()
+	}
+
 	return int(n), nil
 }
 
@@ -485,6 +537,10 @@ func sanitizeFTSQuery(query string) string {
 // buildVectorIndex creates an in-memory vector index from all existing entries.
 // Uses bag-of-words embedding over vocabulary extracted from entry content.
 func (s *Store) buildVectorIndex() {
+	// Every full rebuild clears the deferred-rebuild flag.
+	s.vecRebuilds++
+	s.vecStale = false
+
 	rows, err := s.db.Query(`SELECT id, content, topic, query FROM entries`)
 	if err != nil {
 		return
@@ -547,19 +603,31 @@ func (s *Store) buildVectorIndex() {
 	s.vecIdx = idx
 }
 
-// indexEntry adds or updates an entry in the vector index.
-// If the entry introduces new vocabulary terms, rebuilds the entire index
-// to ensure all entries are embedded in the same vector space.
+// indexEntry adds or updates a single entry in the vector index incrementally.
+//
+// Rather than rebuilding the entire corpus on every Add (O(N) per Add → O(N^2)
+// ingestion), it embeds and inserts only the new document against the current
+// vocabulary. If the entry introduces vocabulary the current embedding space
+// doesn't cover, the index is flagged stale; the expensive full rebuild that
+// folds the new terms into the shared space is deferred to the next
+// SemanticSearch (see rebuildIfStale). This keeps ingestion O(N) while search
+// results stay correct.
 func (s *Store) indexEntry(id, topic, query, content string) {
 	s.vecMu.Lock()
 	defer s.vecMu.Unlock()
 
-	// Check if new vocabulary terms exist
-	hasNew := false
+	// Cold index (first entry, or open with an empty corpus): build once.
+	if s.vecIdx == nil {
+		s.buildVectorIndex()
+		return
+	}
+
+	// Does this entry introduce vocabulary the current space doesn't cover?
 	vocabSet := make(map[string]bool, len(s.vocab))
 	for _, w := range s.vocab {
 		vocabSet[w] = true
 	}
+	hasNew := false
 	for _, text := range []string{content, topic, query} {
 		for _, w := range strings.Fields(strings.ToLower(text)) {
 			w = strings.Trim(w, ".,;:!?\"'()[]{}#*-_/\\")
@@ -573,14 +641,23 @@ func (s *Store) indexEntry(id, topic, query, content string) {
 		}
 	}
 
-	if s.vecIdx == nil || hasNew {
-		// Rebuild with updated vocabulary so all entries share the same vector space
-		s.buildVectorIndex()
-		return
-	}
-
+	// Embed and insert just this document against the current vocabulary so it
+	// is immediately present. If it introduced new vocabulary, defer the full
+	// rebuild (which re-embeds every doc in the widened space) to the next
+	// search rather than paying it now on every Add.
 	text := topic + " " + query + " " + content
 	s.vecIdx.AddText(id, text, "")
+	if hasNew {
+		s.vecStale = true
+	}
+}
+
+// rebuildIfStale folds any vocabulary accumulated by incremental Adds into the
+// shared embedding space. It must be called with s.vecMu held for writing.
+func (s *Store) rebuildIfStale() {
+	if s.vecStale {
+		s.buildVectorIndex()
+	}
 }
 
 // SemanticSearch performs vector-based similarity search across research entries.
@@ -594,18 +671,21 @@ func (s *Store) SemanticSearch(query string, limit int) ([]SearchResult, error) 
 		limit = 20
 	}
 
-	s.vecMu.RLock()
+	// Fold any vocabulary accumulated by incremental Adds into the shared
+	// embedding space before searching, so deferred rebuilds never cost
+	// correctness. This is the single, lazy O(N) rebuild that replaces the
+	// former per-Add rebuild.
+	s.vecMu.Lock()
+	s.rebuildIfStale()
 	vecAvailable := s.vecIdx != nil && s.vecIdx.Count() > 0
-	s.vecMu.RUnlock()
-
-	if !vecAvailable {
-		return s.Search(query, limit)
+	var results []vecindex.SearchResult
+	var err error
+	if vecAvailable {
+		results, err = s.vecIdx.SearchText(query, limit)
 	}
+	s.vecMu.Unlock()
 
-	s.vecMu.RLock()
-	results, err := s.vecIdx.SearchText(query, limit)
-	s.vecMu.RUnlock()
-	if err != nil {
+	if !vecAvailable || err != nil {
 		return s.Search(query, limit)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -165,7 +166,14 @@ func (s *SQLStore) SaveAttempt(a Attempt) error {
 		s.db.QueryRow("SELECT fail_summary FROM attempts WHERE task_id=? AND number=? AND success=0",
 			a.TaskID, a.Number-1).Scan(&prevSummary)
 		if prevSummary != "" {
-			s.addPattern(prevSummary, fmt.Sprintf("resolved on attempt %d", a.Number))
+			// The attempt row is already durably committed above; a failure to
+			// persist the auto-learned pattern (disk full, SQLITE_BUSY, closed
+			// DB) must not fail the whole SaveAttempt, but it must not be
+			// silently swallowed either — surface it so the learning loss is
+			// observable rather than a phantom.
+			if err := s.addPattern(prevSummary, fmt.Sprintf("resolved on attempt %d", a.Number)); err != nil {
+				log.Printf("[session] auto-learn pattern not saved for task %s: %v", a.TaskID, err)
+			}
 		}
 	}
 	return nil
@@ -197,8 +205,11 @@ func (s *SQLStore) LoadAttempts(taskID string) ([]Attempt, error) {
 
 // --- Learned patterns ---
 
-func (s *SQLStore) addPattern(issue, fix string) {
-	s.db.Exec("INSERT INTO patterns (issue, fix) VALUES (?, ?) ON CONFLICT(issue) DO UPDATE SET occurrences=occurrences+1, fix=?", issue, fix, fix)
+func (s *SQLStore) addPattern(issue, fix string) error {
+	if _, err := s.db.Exec("INSERT INTO patterns (issue, fix) VALUES (?, ?) ON CONFLICT(issue) DO UPDATE SET occurrences=occurrences+1, fix=?", issue, fix, fix); err != nil {
+		return fmt.Errorf("add learned pattern: %w", err)
+	}
+	return nil
 }
 
 func (s *SQLStore) SaveLearning(l *Learning) error {
