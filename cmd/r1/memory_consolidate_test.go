@@ -140,7 +140,12 @@ func TestRunConsolidateDaemon_TicksAndStops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildConsolidationJob: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	// Give the daemon a window generous enough that at least one 5ms tick
+	// fires even under heavy parallel-suite contention (the old 80ms window
+	// occasionally elapsed before the first tick when the container was
+	// loaded). It still returns as soon as the context deadline hits, so the
+	// common case stays fast.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	var out bytes.Buffer
 	if code := runConsolidateDaemon(ctx, job, &out, false); code != 0 {

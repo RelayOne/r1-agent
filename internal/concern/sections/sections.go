@@ -56,6 +56,13 @@ func nodeContentField(n ledger.Node, field string) (string, bool) {
 // full-key scoping the audit requires while remaining backward compatible
 // with untagged nodes.
 func filterByScope(nodes []ledger.Node, scope Scope) []ledger.Node {
+	// Content-field scoping: a node is dropped only when it CARRIES the
+	// dimension's field and that field's value differs; a node that never
+	// recorded the field is kept as mission-global. This scopes nodes that
+	// embed their own loop_ref / task_dag_scope / branch_ref (e.g. decision
+	// and branch-annotation nodes). Nodes that reference a scoped parent
+	// instead of carrying the field themselves (dissent -> draft) are
+	// scoped separately via scopeByReferencedLoop.
 	dims := []struct{ field, want string }{
 		{"loop_ref", scope.LoopID},
 		{"task_dag_scope", scope.TaskID},
@@ -74,6 +81,39 @@ func filterByScope(nodes []ledger.Node, scope Scope) []ledger.Node {
 			}
 		}
 		if keep {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// scopeByReferencedLoop scopes nodes that do NOT carry a loop_ref of their
+// own (e.g. dissent nodes, which reference a draft via refField) by
+// resolving that reference to its parent node and comparing the parent's
+// loop_ref to scope.LoopID. This closes the cross-loop leak that
+// filterByScope cannot: a dissent node has only draft_ref, so a bare
+// MissionID query surfaced every loop's objections in every loop's
+// projection. A node with no reference, an unresolvable reference, or a
+// parent with no loop_ref is kept (mission-global / fail-open for
+// visibility). No-op when scope.LoopID is unset.
+func scopeByReferencedLoop(ctx context.Context, nodes []ledger.Node, refField string, scope Scope, l *ledger.Ledger) []ledger.Node {
+	if scope.LoopID == "" || l == nil {
+		return nodes
+	}
+	out := make([]ledger.Node, 0, len(nodes))
+	for _, n := range nodes {
+		ref, present := nodeContentField(n, refField)
+		if !present || ref == "" {
+			out = append(out, n)
+			continue
+		}
+		parent, err := l.Get(ctx, ledger.NodeID(ref))
+		if err != nil || parent == nil {
+			out = append(out, n)
+			continue
+		}
+		loop, ok := nodeContentField(*parent, "loop_ref")
+		if !ok || loop == "" || loop == scope.LoopID {
 			out = append(out, n)
 		}
 	}

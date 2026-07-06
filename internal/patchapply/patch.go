@@ -275,13 +275,29 @@ func applyPatch(patch *Patch, root string, reverse, dryRun bool) *ApplyResult {
 			// Preserve the target's existing mode across the rewrite and
 			// write via temp+rename so a crash mid-write can never leave a
 			// truncated source file (audit: non-atomic os.WriteFile).
+			// Resolve symlinks so the atomic temp+rename lands on the REAL
+			// target file, not the link entry — otherwise rename would
+			// replace the symlink with a fresh regular-file inode, dropping
+			// the link and leaving its target stale. A hardlinked file
+			// (nlink>1) cannot be updated by rename without breaking the
+			// group, so those are written in place (O_TRUNC, same inode).
+			writeTarget := fullPath
+			if resolved, rErr := filepath.EvalSymlinks(fullPath); rErr == nil {
+				writeTarget = resolved
+			}
 			perm := os.FileMode(0644)
-			if fi, statErr := os.Stat(fullPath); statErr == nil {
+			if fi, statErr := os.Stat(writeTarget); statErr == nil {
 				perm = fi.Mode().Perm()
 			}
-			if err := atomicWriteFile(fullPath, []byte(output), perm); err != nil {
+			var wErr error
+			if isHardLinked(writeTarget) {
+				wErr = os.WriteFile(writeTarget, []byte(output), perm)
+			} else {
+				wErr = atomicWriteFile(writeTarget, []byte(output), perm)
+			}
+			if wErr != nil {
 				result.Failed = append(result.Failed, path)
-				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", path, err))
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", path, wErr))
 				continue
 			}
 		}

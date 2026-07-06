@@ -389,7 +389,7 @@ func TestWALKeeperLobe_SurvivesRestartNoDup(t *testing.T) {
 
 	// Wait until all 100 land in the WAL.
 	wantPrefix := defaultTypePrefix + string(hub.EventSessionInit)
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(30 * time.Second) // wider window: 100 async events must drain to the WAL even under full-suite parallel contention
 	for time.Now().Before(deadline) {
 		got := replayDurable(t, durable, defaultTypePrefix)
 		if countWithType(got, wantPrefix) >= 100 {
@@ -419,7 +419,7 @@ func TestWALKeeperLobe_SurvivesRestartNoDup(t *testing.T) {
 
 	// Wait for the marker to land.
 	wantMarker := defaultTypePrefix + string(hub.EventTaskCompleted)
-	deadline = time.Now().Add(3 * time.Second)
+	deadline = time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		got = replayDurable(t, durable, defaultTypePrefix)
 		if countWithType(got, wantMarker) >= 1 {

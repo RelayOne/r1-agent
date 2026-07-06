@@ -503,6 +503,18 @@ func exprString(expr ast.Expr) string {
 		return "chan " + exprString(t.Value)
 	case *ast.Ellipsis:
 		return "..." + exprString(t.Elt)
+	case *ast.IndexExpr:
+		// Generic instantiation Foo[T]. Without this, a generic receiver
+		// rendered as "?", so every generic type's same-named method
+		// collided on "method ?.Name" and all but one were dropped.
+		return exprString(t.X) + "[" + exprString(t.Index) + "]"
+	case *ast.IndexListExpr:
+		// Generic instantiation Foo[T, U].
+		parts := make([]string, len(t.Indices))
+		for i, idx := range t.Indices {
+			parts[i] = exprString(idx)
+		}
+		return exprString(t.X) + "[" + strings.Join(parts, ", ") + "]"
 	}
 	return "?"
 }

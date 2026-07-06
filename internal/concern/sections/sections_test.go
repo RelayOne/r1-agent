@@ -42,6 +42,27 @@ func addNode(t *testing.T, l *ledger.Ledger, typ, mission string, content map[st
 	}
 }
 
+// addNodeID is addNode but returns the created node's ID so a child node
+// (e.g. a dissent's draft_ref) can reference it.
+func addNodeID(t *testing.T, l *ledger.Ledger, typ, mission string, content map[string]any) string {
+	t.Helper()
+	raw, err := json.Marshal(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := l.AddNode(context.Background(), ledger.Node{
+		Type:          typ,
+		SchemaVersion: 1,
+		CreatedBy:     "test",
+		MissionID:     mission,
+		Content:       json.RawMessage(raw),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(id)
+}
+
 // lineCount counts rendered bullet lines ("- ...\n") in a section body.
 func lineCount(s string) int {
 	n := 0
@@ -101,8 +122,15 @@ func TestRecentActivity_HonorsCap(t *testing.T) {
 // different loop does not leak into another loop's projection.
 func TestDissentHistory_ScopeIsolation(t *testing.T) {
 	l := newTestLedger(t)
-	addNode(t, l, "dissent", "m1", map[string]any{"objection": "loop A concern", "loop_ref": "loop-A"})
-	addNode(t, l, "dissent", "m1", map[string]any{"objection": "loop B concern", "loop_ref": "loop-B"})
+	// Real dissent nodes carry only draft_ref (NOT loop_ref); their loop is
+	// determined by the draft they object to. Build the real schema: a draft
+	// per loop, then a dissent referencing each. Scoping must resolve
+	// dissent.draft_ref -> draft.loop_ref, not read a loop_ref off the
+	// dissent itself.
+	draftA := addNodeID(t, l, "draft", "m1", map[string]any{"draft_type": "sow", "loop_ref": "loop-A"})
+	draftB := addNodeID(t, l, "draft", "m1", map[string]any{"draft_type": "sow", "loop_ref": "loop-B"})
+	addNode(t, l, "dissent", "m1", map[string]any{"objection": "loop A concern", "draft_ref": draftA})
+	addNode(t, l, "dissent", "m1", map[string]any{"objection": "loop B concern", "draft_ref": draftB})
 
 	out, err := DissentHistory(context.Background(), Scope{MissionID: "m1", LoopID: "loop-A"}, l, 0)
 	if err != nil {

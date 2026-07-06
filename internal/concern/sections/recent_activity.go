@@ -11,9 +11,12 @@ import (
 // (SectionSpec.Cap) bounds both the ledger fetch and the rendered list;
 // 0 means unlimited.
 func RecentActivity(ctx context.Context, scope Scope, l *ledger.Ledger, maxItems int) (string, error) {
+	// Do NOT push maxItems into the query Limit: scope filtering runs AFTER
+	// the fetch, so a pre-filter LIMIT starves the result (fewer than the
+	// cap even when more in-scope nodes exist deeper in the recency order).
+	// Fetch the mission's nodes, scope-filter, then cap in renderNodeList.
 	nodes, err := l.Query(ctx, ledger.QueryFilter{
 		MissionID: scope.MissionID,
-		Limit:     maxItems,
 	})
 	if err != nil {
 		return "", fmt.Errorf("query recent activity: %w", err)

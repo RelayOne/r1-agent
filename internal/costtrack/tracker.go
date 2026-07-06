@@ -51,9 +51,17 @@ var ModelPricing = map[string]Pricing{
 		InputPerMillion:  2.5,
 		OutputPerMillion: 10.0,
 	},
+	"gpt-4o-mini": {
+		InputPerMillion:  0.15,
+		OutputPerMillion: 0.6,
+	},
 	"o3-mini": {
 		InputPerMillion:  1.1,
 		OutputPerMillion: 4.4,
+	},
+	"o3": {
+		InputPerMillion:  2.0,
+		OutputPerMillion: 8.0,
 	},
 	"codex-mini": {
 		InputPerMillion:  1.5,
@@ -340,10 +348,14 @@ func NormalizeModel(model string) (string, bool) {
 		return "claude-sonnet-4", true
 	case strings.Contains(m, "haiku"):
 		return "claude-haiku-3.5", true
+	case strings.Contains(m, "gpt-4o-mini"):
+		return "gpt-4o-mini", true
 	case strings.Contains(m, "gpt-4o"):
 		return "gpt-4o", true
-	case strings.Contains(m, "o3"):
+	case strings.Contains(m, "o3-mini"):
 		return "o3-mini", true
+	case strings.Contains(m, "o3"):
+		return "o3", true
 	case strings.Contains(m, "codex"):
 		return "codex-mini", true
 	}
