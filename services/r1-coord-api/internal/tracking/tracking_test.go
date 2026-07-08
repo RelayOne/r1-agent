@@ -175,20 +175,46 @@ func TestCodeRadarCaptureErrorPostsToErrors(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
+	// BaseURL must carry the /v1 the real parseDSN produces, so the
+	// endpoint resolves to a single /v1/errors — not the /v1/v1/errors a
+	// bare BaseURL used to mask.
 	cr := &CodeRadar{
-		APIKey: "k", BaseURL: srv.URL, ServiceName: "r1-coord-api",
+		APIKey: "k", BaseURL: srv.URL + "/v1", ServiceName: "r1-coord-api",
 		Env: "prod", Version: "abc1234",
 		HTTP: &http.Client{Timeout: 5 * time.Second}, Now: time.Now, enabled: true,
 	}
 	cr.CaptureError(context.Background(), errors.New("boom"), map[string]any{"endpoint": "/v1/license/verify"})
 	if path != "/v1/errors" {
-		t.Errorf("path=%q", path)
+		t.Errorf("path=%q, want /v1/errors (single /v1)", path)
 	}
 	if key != "k" {
 		t.Errorf("x-coderadar-key=%q", key)
 	}
 	if got["message"] != "boom" {
 		t.Errorf("message=%v", got["message"])
+	}
+}
+
+// TestCodeRadarCaptureErrorViaDSNHasSingleV1 drives the real
+// NewCodeRadar(DSN) → CaptureError path (parseDSN appends /v1) and asserts
+// the error ingest resolves to exactly /v1/errors, not /v1/v1/errors.
+func TestCodeRadarCaptureErrorViaDSNHasSingleV1(t *testing.T) {
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// DSN with credentials + host; parseDSN yields BaseURL ending in /v1.
+	dsn := strings.Replace(srv.URL, "://", "://key123@", 1)
+	cr := NewCodeRadar(dsn, "r1-coord-api", "prod", "abc1234")
+	if !strings.HasSuffix(cr.BaseURL, "/v1") {
+		t.Fatalf("BaseURL=%q, want it to end with /v1", cr.BaseURL)
+	}
+	cr.CaptureError(context.Background(), errors.New("boom"), nil)
+	if path != "/v1/errors" {
+		t.Fatalf("path=%q, want /v1/errors (regression: no double /v1)", path)
 	}
 }
 

@@ -78,7 +78,7 @@ func (c *CodeRadar) CaptureError(ctx context.Context, err error, contextProps ma
 		"message":      err.Error(),
 		"context":      contextProps,
 	}
-	_ = c.postIgnoreErr(ctx, "/v1/errors", body)
+	_ = c.postIgnoreErr(ctx, "/errors", body)
 }
 
 // CaptureMessage sends a structured log line at the given level.
@@ -95,7 +95,7 @@ func (c *CodeRadar) CaptureMessage(ctx context.Context, level, msg string, conte
 		"message":      msg,
 		"context":      contextProps,
 	}
-	_ = c.postIgnoreErr(ctx, "/v1/errors", body)
+	_ = c.postIgnoreErr(ctx, "/errors", body)
 }
 
 // Track sends a product-analytics event to CodeRadar's CR-1 /v1/track
