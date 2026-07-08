@@ -574,7 +574,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			},
 		})
 		if e.CostTracker != nil && planResult.CostUSD > 0 {
-			e.CostTracker.Record(planRunner, e.Task+"/plan", planResult.Tokens.Input, planResult.Tokens.Output, planResult.Tokens.CacheRead, planResult.Tokens.CacheCreation)
+			e.CostTracker.Record(recordModel(planRunner, planEngine), e.Task+"/plan", planResult.Tokens.Input, planResult.Tokens.Output, planResult.Tokens.CacheRead, planResult.Tokens.CacheCreation)
 		}
 
 		// P1: thread the plan-phase output into the execute prompt. The plan
@@ -886,7 +886,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		})
 		result.TotalCostUSD += execResult.CostUSD
 		if e.CostTracker != nil && execResult.CostUSD > 0 {
-			e.CostTracker.Record(execRunnerName, e.Task, execResult.Tokens.Input, execResult.Tokens.Output, execResult.Tokens.CacheRead, execResult.Tokens.CacheCreation)
+			e.CostTracker.Record(recordModel(execRunnerName, execRunner), e.Task, execResult.Tokens.Input, execResult.Tokens.Output, execResult.Tokens.CacheRead, execResult.Tokens.CacheCreation)
 		}
 		e.emitEventAsync(&hub.Event{
 			Type:   hub.EventModelPostCall,
@@ -1697,7 +1697,7 @@ func (e Engine) runCrossModelReview(
 	})
 	result.TotalCostUSD += verifyResult.CostUSD
 	if e.CostTracker != nil && verifyResult.CostUSD > 0 {
-		e.CostTracker.Record(verifyRunnerName, e.Task+"/review", verifyResult.Tokens.Input, verifyResult.Tokens.Output, verifyResult.Tokens.CacheRead, verifyResult.Tokens.CacheCreation)
+		e.CostTracker.Record(recordModel(verifyRunnerName, verifyRunner), e.Task+"/review", verifyResult.Tokens.Input, verifyResult.Tokens.Output, verifyResult.Tokens.CacheRead, verifyResult.Tokens.CacheCreation)
 	}
 	evidence.ReviewOutput = verifyResult.ResultText
 
@@ -2290,6 +2290,24 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			Affinity:    engine.ComputeGPUInference,
 		},
 	}
+}
+
+// recordModel returns the model identifier used for cost attribution at a
+// CostTracker.Record call site. Only the native runner knows its exact
+// backing model, so its real model ID (e.g. "claude-sonnet-4-5") is threaded
+// through — costtrack.NormalizeModel then prices it against the correct tier.
+// CLI-backed runners (Claude/Codex) let the CLI choose the model, so their
+// provider label is the honest best value: "codex" normalizes to codex-mini,
+// and "claude" stays unresolved and is flagged by ComputeCost rather than
+// silently mispriced. Residual of gap-discovery-2 item on workflow.go
+// Record call sites (577/889/1700).
+func recordModel(runnerName string, r engine.CommandRunner) string {
+	if nr, ok := r.(*engine.NativeRunner); ok {
+		if m := strings.TrimSpace(nr.Model()); m != "" {
+			return m
+		}
+	}
+	return runnerName
 }
 
 func pickRunner(e Engine, phase string) (string, engine.CommandRunner) {

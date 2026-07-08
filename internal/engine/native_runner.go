@@ -89,6 +89,13 @@ func NewNativeRunner(apiKey, model string) *NativeRunner {
 	}
 }
 
+// Model returns the concrete backing model ID this native runner calls
+// (e.g. "claude-sonnet-4-5"). Cost accounting threads this into
+// CostTracker.Record so spend is priced against the real model tier instead
+// of a bare "native"/"claude" runner label. CLI-backed runners have no such
+// accessor: the CLI, not the harness, chooses the model.
+func (n *NativeRunner) Model() string { return n.model }
+
 // Prepare returns a PreparedCommand for informational/logging purposes.
 // The native runner doesn't spawn a subprocess, so this is minimal.
 func (n *NativeRunner) Prepare(spec RunSpec) (PreparedCommand, error) {
