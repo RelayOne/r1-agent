@@ -6,6 +6,8 @@
 //	GET /v1/version    — version metadata
 //	POST /v1/license/verify  — license-key shape stub; valid iff key length >= 8 (shape check only, no key store)
 //	POST /v1/telemetry/opt-in  — accepts an opt-in record; returns {accepted:true,seq:<int>}
+//	POST /v1/sessions/report — JWT-gated daemon heartbeat; upserts one active-session row (see sessions.go)
+//	GET /v1/sessions   — operator-JWT-gated, paginated listing: one row per active session across all daemons
 //
 // Deployment:
 //
@@ -25,6 +27,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -440,6 +443,17 @@ func main() {
 	mux.HandleFunc("/v1/auth/sso/start", handleSsoStart(sso))
 	mux.HandleFunc("/v1/auth/sso/callback", handleSsoCallback(sso, jwt))
 	mux.HandleFunc("/v1/auth/refresh", handleAuthRefresh(jwt))
+	// Active-session registry: TTL configurable via
+	// R1_SESSION_ACTIVE_TTL_SEC (default 300s). Both routes stay OUT of
+	// publicPaths below so the JWT middleware gates them; the GET
+	// additionally requires the operator role inside the handler.
+	ttlSec, err := strconv.Atoi(getenv("R1_SESSION_ACTIVE_TTL_SEC", "300"))
+	if err != nil || ttlSec <= 0 {
+		log.Fatalf("R1_SESSION_ACTIVE_TTL_SEC must be a positive integer, got %q", getenv("R1_SESSION_ACTIVE_TTL_SEC", "300"))
+	}
+	sessions := newSessionRegistry(time.Duration(ttlSec) * time.Second)
+	mux.HandleFunc("/v1/sessions", handleSessionsList(sessions))
+	mux.HandleFunc("/v1/sessions/report", handleSessionsReport(sessions))
 	mux.HandleFunc("/", handleRoot)
 
 	// Wrap the mux in the auth middleware. Public paths (health probes,

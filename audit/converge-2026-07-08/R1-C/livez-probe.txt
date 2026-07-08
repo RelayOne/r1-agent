@@ -1,0 +1,32 @@
+# r1.run /livez probe — 2026-07-08T21:38:35Z
+# context: backing GCP project relayone-488319 emptied 2026-07-08
+api.r1.run /livez -> curl: (35) TLS connect error: error:00000000:lib(0)::reason(0)
+000 0.124030s
+api.staging.r1.run /livez -> curl: (35) TLS connect error: error:00000000:lib(0)::reason(0)
+000 0.105350s
+api.dev.r1.run /livez -> curl: (35) TLS connect error: error:00000000:lib(0)::reason(0)
+000 0.213691s
+docs.r1.run /livez -> curl: (6) Could not resolve host: docs.r1.run
+000 0.066811s
+docs.staging.r1.run /livez -> curl: (6) Could not resolve host: docs.staging.r1.run
+000 0.129414s
+docs.dev.r1.run /livez -> curl: (6) Could not resolve host: docs.dev.r1.run
+000 0.129046s
+downloads.r1.run /livez -> curl: (35) TLS connect error: error:00000000:lib(0)::reason(0)
+000 0.092119s
+downloads.staging.r1.run /livez -> curl: (35) TLS connect error: error:00000000:lib(0)::reason(0)
+000 0.076722s
+downloads.dev.r1.run /livez -> curl: (35) TLS connect error: error:00000000:lib(0)::reason(0)
+000 0.111563s
+admin.r1.run /livez -> curl: (35) TLS connect error: error:00000000:lib(0)::reason(0)
+000 0.062151s
+admin.staging.r1.run /livez -> curl: (35) TLS connect error: error:00000000:lib(0)::reason(0)
+000 0.059981s
+admin.dev.r1.run /livez -> curl: (35) TLS connect error: error:00000000:lib(0)::reason(0)
+000 0.078621s
+platform.r1.run /livez -> curl: (35) TLS connect error: error:00000000:lib(0)::reason(0)
+000 0.118993s
+platform.staging.r1.run /livez -> curl: (35) TLS connect error: error:00000000:lib(0)::reason(0)
+000 0.068584s
+platform.dev.r1.run /livez -> curl: (35) TLS connect error: error:00000000:lib(0)::reason(0)
+000 0.074326s
