@@ -224,6 +224,11 @@ func checkTrustRootForAdopt(repoAbs, packName string, signature *skillmfr.PackSi
 		// Trust root absent — fall back to v1 signature-only.
 		return "", nil
 	}
+	// Verify the document's own signature against the pinned root key
+	// (when configured) BEFORE trusting any key it lists.
+	if err := verifyTrustRootDoc(doc); err != nil {
+		return "", fmt.Errorf("trust root document: %w", err)
+	}
 	entry, err := skill.MatchKey(doc, signature.KeyID, packName, now)
 	if err != nil {
 		if errors.Is(err, skill.ErrTrustRootKeyNotFound) {
