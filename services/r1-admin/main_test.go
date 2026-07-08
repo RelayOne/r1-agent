@@ -96,7 +96,7 @@ func TestBuildDashboardSnapshotUsesCoordHealthAndJWTConfig(t *testing.T) {
 	defer coordSrv.Close()
 	coordAPI = coordSrv.URL
 
-	snapshot := buildDashboardSnapshot(context.Background(), startedAt.Add(95*time.Second), coordSrv.Client())
+	snapshot := buildDashboardSnapshot(context.Background(), startedAt.Add(95*time.Second), coordSrv.Client(), "")
 	if snapshot.Admin.Version != "v2026.05.15" {
 		t.Fatalf("admin version=%q want v2026.05.15", snapshot.Admin.Version)
 	}
@@ -131,7 +131,7 @@ func TestBuildDashboardSnapshotDegradesWhenCoordUnavailable(t *testing.T) {
 	coordAPI = "http://127.0.0.1:1"
 	startedAt = time.Unix(1_700_000_000, 0).UTC()
 
-	snapshot := buildDashboardSnapshot(context.Background(), startedAt.Add(5*time.Second), &http.Client{Timeout: 50 * time.Millisecond})
+	snapshot := buildDashboardSnapshot(context.Background(), startedAt.Add(5*time.Second), &http.Client{Timeout: 50 * time.Millisecond}, "")
 	if snapshot.Coord.Status != "unreachable" {
 		t.Fatalf("coord status=%q want unreachable", snapshot.Coord.Status)
 	}
@@ -508,6 +508,130 @@ func TestHandleVersionShape(t *testing.T) {
 		if !strings.Contains(rr.Body.String(), want) {
 			t.Fatalf("body=%q, want %q", rr.Body.String(), want)
 		}
+	}
+}
+
+// --- /sessions live-wiring tests -----------------------------------------
+
+// TestSessionsPageNoBearerRendersExplicitState: with no forwarded bearer
+// (the dev bypass path), the page renders an explicit not-available state
+// and NO fabricated rows, and the stale "not implemented" copy is gone.
+func TestSessionsPageNoBearerRendersExplicitState(t *testing.T) {
+	rr := httptest.NewRecorder()
+	handleSessions(rr, httptest.NewRequest(http.MethodGet, "/sessions", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "No operator bearer was forwarded") {
+		t.Fatalf("missing no-bearer explanation: %q", body)
+	}
+	if strings.Contains(body, "not implemented in this repo's coord-api") {
+		t.Fatalf("stale 'not implemented' notice still present")
+	}
+	if strings.Contains(body, "post-deploy iteration") {
+		t.Fatalf("stale 'post-deploy iteration' scaffold copy still present")
+	}
+}
+
+// TestSessionsPageRendersLiveRows: with a forwarded bearer and a coord-api
+// that returns real rows, the page renders one escaped row per session plus
+// the pagination/freshness footer.
+func TestSessionsPageRendersLiveRows(t *testing.T) {
+	prevCoordAPI := coordAPI
+	t.Cleanup(func() { coordAPI = prevCoordAPI })
+
+	coordSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sessions" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer op-token" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "operator role required"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true,
+			"sessions": []map[string]any{
+				{"daemon_id": "d-alpha", "session_id": "s-100", "workdir": "/work/repo", "status": "active", "started_at": "2026-07-08T11:00:00Z", "last_activity": "2026-07-08T11:59:00Z", "cost_usd": 0.4242},
+			},
+			"total": 1, "page": 1, "page_size": 50, "active_ttl_sec": 300,
+		})
+	}))
+	defer coordSrv.Close()
+	coordAPI = coordSrv.URL
+
+	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	req.Header.Set("Authorization", "Bearer op-token")
+	rr := httptest.NewRecorder()
+	handleSessions(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"d-alpha", "s-100", "/work/repo", "active", "$0.4242", "Active total:", "Freshness window:"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("live sessions body missing %q: %q", want, body)
+		}
+	}
+}
+
+// TestSessionsPageSurfacesCoordError: a 403 from coord-api is rendered as an
+// honest error (with the reason) and no synthetic rows.
+func TestSessionsPageSurfacesCoordError(t *testing.T) {
+	prevCoordAPI := coordAPI
+	t.Cleanup(func() { coordAPI = prevCoordAPI })
+
+	coordSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "operator role required"})
+	}))
+	defer coordSrv.Close()
+	coordAPI = coordSrv.URL
+
+	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	req.Header.Set("Authorization", "Bearer member-token")
+	rr := httptest.NewRecorder()
+	handleSessions(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200 (page renders the error, does not 500)", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Could not read live sessions") || !strings.Contains(body, "operator role required") {
+		t.Fatalf("error not surfaced honestly: %q", body)
+	}
+	if !strings.Contains(body, "status 403") {
+		t.Fatalf("expected coord status in error: %q", body)
+	}
+}
+
+// TestDashboardActiveSessionsCardLiveCount: with an operator bearer and a
+// coord-api that answers /healthz + /v1/sessions, the dashboard card shows
+// the real active-session total instead of "Unavailable".
+func TestDashboardActiveSessionsCardLiveCount(t *testing.T) {
+	prevCoordAPI := coordAPI
+	t.Cleanup(func() { coordAPI = prevCoordAPI })
+
+	coordSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "r1-coord-api", "env": "prod", "version": "v1", "uptime_sec": 10})
+		case "/v1/sessions":
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sessions": []map[string]any{}, "total": 7, "page": 1, "page_size": 1, "active_ttl_sec": 300})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer coordSrv.Close()
+	coordAPI = coordSrv.URL
+
+	snapshot := buildDashboardSnapshot(context.Background(), startedAt.Add(time.Second), coordSrv.Client(), "Bearer op-token")
+	if !snapshot.Sessions.Available {
+		t.Fatalf("expected sessions available with bearer, got %+v", snapshot.Sessions)
+	}
+	if snapshot.Sessions.Count != 7 || snapshot.Sessions.Value != "7" {
+		t.Fatalf("sessions count=%d value=%q, want 7", snapshot.Sessions.Count, snapshot.Sessions.Value)
 	}
 }
 

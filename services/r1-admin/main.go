@@ -181,7 +181,7 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		handleNotFound(w, r)
 		return
 	}
-	snapshot := buildDashboardSnapshot(r.Context(), time.Now(), coordHTTP)
+	snapshot := buildDashboardSnapshot(r.Context(), time.Now(), coordHTTP, r.Header.Get("Authorization"))
 	body := template.HTML(fmt.Sprintf(`
 <div class="cards">
   <div class="card"><div class="label">Admin version</div><div class="value">%s</div></div>
@@ -192,7 +192,7 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 <p>This dashboard now reflects live hosted runtime truth for the admin service, operator auth mode, and coord-api reachability. Sessions, lanes, usage, revenue, and user data still require their backing stores/endpoints.</p>
 <h2>Dashboard truth</h2>
 <div class="cards">
-  <div class="card"><div class="label">Active sessions</div><div class="value">Unavailable</div><div class="muted">Requires <code>GET /v1/sessions</code> on the configured coord API.</div></div>
+  <div class="card"><div class="label">Active sessions</div><div class="value">%s</div><div class="muted">%s</div></div>
   <div class="card"><div class="label">Live lanes</div><div class="value">Unavailable</div><div class="muted">No coord-api lane endpoint is wired in this repo.</div></div>
   <div class="card"><div class="label">USD spent (24h)</div><div class="value">Unavailable</div><div class="muted">No central usage aggregation endpoint or table is wired.</div></div>
   <div class="card"><div class="label">Anti-trunc fires (24h)</div><div class="value">Unavailable</div><div class="muted">No persisted anti-trunc result store is exposed to this page.</div></div>
@@ -226,6 +226,8 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		template.HTMLEscapeString(snapshot.Admin.Uptime),
 		template.HTMLEscapeString(snapshot.Coord.Status),
 		template.HTMLEscapeString(snapshot.Auth.Mode),
+		template.HTMLEscapeString(snapshot.Sessions.Value),
+		snapshot.Sessions.Note, // pre-escaped; carries intentional <code> markup
 		template.HTMLEscapeString(snapshot.Admin.Service),
 		template.HTMLEscapeString(snapshot.Admin.Env),
 		template.HTMLEscapeString(snapshot.Admin.StartedAt),
@@ -242,18 +244,106 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSessions(w http.ResponseWriter, r *http.Request) {
-	body := template.HTML(`
-<p>This page surfaces every active session across every daemon (one row per session). Requires <code>GET ` + template.HTMLEscapeString(coordAPI) + `/v1/sessions</code> — that endpoint is not implemented in this repo's coord-api.</p>
-<table><thead><tr><th>Daemon</th><th>Session</th><th>Workdir</th><th>Status</th><th>Last activity</th><th>Cost USD</th></tr></thead>
-<tbody><tr><td colspan=6 style="color:#888;text-align:center;padding:2rem">Wiring depends on the coord-api Sessions endpoint (post-deploy iteration).</td></tr></tbody></table>`)
-	render(w, page{Title: "Sessions", Path: "/sessions", Body: body})
+	pageNum, pageSize := sessionsPageParams(r)
+	bearer := strings.TrimSpace(r.Header.Get("Authorization"))
+
+	// The coord-api /v1/sessions endpoint is operator-JWT-gated. We forward
+	// this request's own operator bearer. With no bearer (the dev auth
+	// bypass forwards none) we cannot query it — render an explicit state
+	// rather than a fabricated table.
+	if bearer == "" || !strings.HasPrefix(bearer, "Bearer ") {
+		notice := template.HTML(fmt.Sprintf(
+			`No operator bearer was forwarded on this request, so the operator-gated <code>GET %s/v1/sessions</code> endpoint cannot be queried. In dev the admin runs with an auth bypass and forwards no token; authenticate with an operator JWT to see live rows.`,
+			template.HTMLEscapeString(coordAPI)))
+		render(w, page{Title: "Sessions", Path: "/sessions", Body: sessionsBody(notice, "", noSessionRowsNote("Authenticate as an operator to load live sessions."))})
+		return
+	}
+
+	resp, err := fetchCoordSessions(r.Context(), coordHTTP, coordAPI, bearer, pageNum, pageSize)
+	if err != nil {
+		notice := template.HTML(fmt.Sprintf(
+			`Could not read live sessions from <code>%s/v1/sessions</code>: %s. No synthetic rows are shown.`,
+			template.HTMLEscapeString(coordAPI), template.HTMLEscapeString(err.Error())))
+		render(w, page{Title: "Sessions", Path: "/sessions", Body: sessionsBody(notice, "", noSessionRowsNote("Endpoint unavailable — see the message above."))})
+		return
+	}
+
+	notice := template.HTML(fmt.Sprintf(
+		`Live active sessions across every daemon (one row per session), from <code>%s/v1/sessions</code>. A session drops off after the freshness window with no heartbeat.`,
+		template.HTMLEscapeString(coordAPI)))
+	render(w, page{Title: "Sessions", Path: "/sessions", Body: sessionsBody(notice, renderSessionRows(resp.Sessions), sessionsMeta(resp))})
+}
+
+// sessionsPageParams parses page / page_size from the query, clamped to the
+// coord-api's accepted ranges (page >= 1; 1 <= page_size <= 200, default 50).
+func sessionsPageParams(r *http.Request) (int, int) {
+	pageNum := 1
+	if v, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && v >= 1 {
+		pageNum = v
+	}
+	pageSize := 50
+	if v, err := strconv.Atoi(r.URL.Query().Get("page_size")); err == nil && v >= 1 && v <= 200 {
+		pageSize = v
+	}
+	return pageNum, pageSize
+}
+
+// sessionsBody composes the sessions page: an explanatory notice, the table
+// (rows or a centered placeholder note), and optional pagination metadata.
+func sessionsBody(notice template.HTML, rows template.HTML, meta template.HTML) template.HTML {
+	bodyRows := rows
+	if strings.TrimSpace(string(rows)) == "" {
+		bodyRows = noSessionRowsNote("No active sessions in the freshness window.")
+	}
+	return template.HTML(`<p>` + string(notice) + `</p>` +
+		`<table><thead><tr><th>Daemon</th><th>Session</th><th>Workdir</th><th>Status</th><th>Started</th><th>Last activity</th><th>Cost USD</th></tr></thead><tbody>` +
+		string(bodyRows) + `</tbody></table>` + string(meta))
+}
+
+func noSessionRowsNote(msg string) template.HTML {
+	return template.HTML(`<tr><td colspan=7 style="color:#888;text-align:center;padding:2rem">` + template.HTMLEscapeString(msg) + `</td></tr>`)
+}
+
+// renderSessionRows builds one escaped <tr> per active session.
+func renderSessionRows(rows []coordSessionRow) template.HTML {
+	if len(rows) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, row := range rows {
+		b.WriteString("<tr>")
+		b.WriteString("<td>" + template.HTMLEscapeString(orDash(row.DaemonID)) + "</td>")
+		b.WriteString("<td>" + template.HTMLEscapeString(orDash(row.SessionID)) + "</td>")
+		b.WriteString(`<td><code>` + template.HTMLEscapeString(orDash(row.Workdir)) + "</code></td>")
+		b.WriteString(`<td><span class="tag">` + template.HTMLEscapeString(orDash(row.Status)) + "</span></td>")
+		b.WriteString("<td>" + template.HTMLEscapeString(orDash(row.StartedAt)) + "</td>")
+		b.WriteString("<td>" + template.HTMLEscapeString(orDash(row.LastActivity)) + "</td>")
+		b.WriteString("<td>" + template.HTMLEscapeString(fmt.Sprintf("$%.4f", row.CostUSD)) + "</td>")
+		b.WriteString("</tr>")
+	}
+	return template.HTML(b.String())
+}
+
+// sessionsMeta renders the pagination + freshness footer under the table.
+func sessionsMeta(resp coordSessionsResponse) template.HTML {
+	return template.HTML(fmt.Sprintf(
+		`<div class="kv"><span><b>Active total:</b> %d</span><span><b>Page:</b> %d</span><span><b>Page size:</b> %d</span><span><b>Freshness window:</b> %ds</span></div>`,
+		resp.Total, resp.Page, resp.PageSize, resp.ActiveTTLSec))
+}
+
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "—"
+	}
+	return s
 }
 
 func handleLanes(w http.ResponseWriter, r *http.Request) {
 	body := template.HTML(`
-<p>Live lane overview. Each row corresponds to a single lane (cognitive thread, tool call, mission task) on any session in any daemon.</p>
+<p>Live lane overview. Each row would correspond to a single lane (cognitive thread, tool call, mission task) on any session in any daemon.</p>
+<p><b>Not configured:</b> this repo's coord-api exposes no per-lane endpoint. Lanes are an in-daemon concept (see <code>cortex/lanes/</code>); no fleet-wide lane aggregation is wired, so no rows are shown rather than fabricated ones.</p>
 <table><thead><tr><th>Lane</th><th>Session</th><th>Kind</th><th>State</th><th>Started</th><th>Notes</th></tr></thead>
-<tbody><tr><td colspan=6 style="color:#888;text-align:center;padding:2rem">Wiring depends on the coord-api Lanes endpoint (post-deploy iteration).</td></tr></tbody></table>`)
+<tbody><tr><td colspan=6 style="color:#888;text-align:center;padding:2rem">No fleet-wide lane endpoint is configured in this repo's coord-api.</td></tr></tbody></table>`)
 	render(w, page{Title: "Lanes", Path: "/lanes", Body: body})
 }
 
@@ -311,7 +401,8 @@ func handleUsage(w http.ResponseWriter, r *http.Request) {
 
 func handleRevenue(w http.ResponseWriter, r *http.Request) {
 	body := template.HTML(`
-<p>Per-tier MRR + ARR + churn dashboard. Hooks into Stripe (or whichever billing vendor lands; not yet wired).</p>
+<p>Per-tier MRR + ARR + churn dashboard.</p>
+<p><b>Not configured:</b> no billing vendor is connected to this admin service. RelayGate is the portfolio's single billing truth; until a billing/metering source (RelayGate export or a vendor such as Stripe) is wired here, these figures are unavailable and are shown as <code>—</code> rather than invented numbers.</p>
 <div class="cards">
 <div class="card"><div class="label">MRR</div><div class="value">—</div></div>
 <div class="card"><div class="label">ARR</div><div class="value">—</div></div>
@@ -413,9 +504,20 @@ func buildOperatorScopeSnapshot(r *http.Request) operatorScopeSnapshot {
 }
 
 type dashboardSnapshot struct {
-	Admin dashboardServiceStatus
-	Coord dashboardCoordStatus
-	Auth  dashboardAuthStatus
+	Admin    dashboardServiceStatus
+	Coord    dashboardCoordStatus
+	Auth     dashboardAuthStatus
+	Sessions dashboardSessionsStatus
+}
+
+// dashboardSessionsStatus is the "Active sessions" card. It is populated
+// with a real count only when this request carried an operator bearer that
+// coord-api accepted; otherwise Available is false and Note explains why.
+type dashboardSessionsStatus struct {
+	Available bool
+	Count     int
+	Value     string
+	Note      string
 }
 
 type dashboardServiceStatus struct {
@@ -451,7 +553,7 @@ type healthzPayload struct {
 	UptimeSec int64  `json:"uptime_sec"`
 }
 
-func buildDashboardSnapshot(ctx context.Context, now time.Time, client *http.Client) dashboardSnapshot {
+func buildDashboardSnapshot(ctx context.Context, now time.Time, client *http.Client, bearer string) dashboardSnapshot {
 	snapshot := dashboardSnapshot{
 		Admin: dashboardServiceStatus{
 			Service:   serviceName,
@@ -474,12 +576,34 @@ func buildDashboardSnapshot(ctx context.Context, now time.Time, client *http.Cli
 			Audience: getenv("AUTH_JWT_AUDIENCE", "(unset)"),
 			Secret:   envOrUnset("AUTH_JWT_SECRET"),
 		},
+		Sessions: dashboardSessionsStatus{
+			Available: false,
+			Value:     "Unavailable",
+			Note:      "Requires <code>GET /v1/sessions</code> on the configured coord API.",
+		},
 	}
 
 	if envName == "dev" {
 		snapshot.Auth.Mode = "dev bypass"
 	} else if _, err := loadAdminJWTConfig(); err == nil {
 		snapshot.Auth.Mode = "jwt enforced"
+	}
+
+	// Real active-session count, but only when this request forwarded an
+	// operator bearer coord-api accepts. No bearer → keep the explicit
+	// not-configured card rather than fabricating a number.
+	bearer = strings.TrimSpace(bearer)
+	if strings.HasPrefix(bearer, "Bearer ") {
+		if resp, err := fetchCoordSessions(ctx, client, coordAPI, bearer, 1, 1); err == nil {
+			snapshot.Sessions = dashboardSessionsStatus{
+				Available: true,
+				Count:     resp.Total,
+				Value:     strconv.Itoa(resp.Total),
+				Note:      fmt.Sprintf("Live from <code>%s/v1/sessions</code> · freshness window %ds.", template.HTMLEscapeString(coordAPI), resp.ActiveTTLSec),
+			}
+		} else {
+			snapshot.Sessions.Note = "Operator bearer present but <code>GET /v1/sessions</code> was not readable: " + template.HTMLEscapeString(err.Error())
+		}
 	}
 
 	health, err := fetchCoordHealth(ctx, client, coordAPI)
@@ -523,6 +647,63 @@ func fetchCoordHealth(ctx context.Context, client *http.Client, baseURL string) 
 	}
 	if payload.Version == "" {
 		payload.Version = "unknown"
+	}
+	return payload, nil
+}
+
+// coordSessionRow mirrors one row of coord-api's GET /v1/sessions response
+// (services/r1-coord-api/sessions.go sessionRow). Timestamps arrive as
+// RFC3339 strings; started_at may be empty (omitempty on the coord side).
+type coordSessionRow struct {
+	DaemonID     string  `json:"daemon_id"`
+	SessionID    string  `json:"session_id"`
+	Workdir      string  `json:"workdir"`
+	Status       string  `json:"status"`
+	StartedAt    string  `json:"started_at"`
+	LastActivity string  `json:"last_activity"`
+	CostUSD      float64 `json:"cost_usd"`
+}
+
+// coordSessionsResponse is coord-api's GET /v1/sessions envelope.
+type coordSessionsResponse struct {
+	OK           bool              `json:"ok"`
+	Sessions     []coordSessionRow `json:"sessions"`
+	Total        int               `json:"total"`
+	Page         int               `json:"page"`
+	PageSize     int               `json:"page_size"`
+	ActiveTTLSec int               `json:"active_ttl_sec"`
+	Error        string            `json:"error"`
+}
+
+// fetchCoordSessions calls the operator-gated coord-api sessions endpoint
+// with the caller's forwarded bearer. A non-200 (e.g. 403 operator role
+// required, 401 bad token) is surfaced as an error carrying the coord-api
+// reason so the page can render it honestly instead of fabricating rows.
+func fetchCoordSessions(ctx context.Context, client *http.Client, baseURL, bearer string, page, pageSize int) (coordSessionsResponse, error) {
+	if client == nil {
+		client = coordHTTP
+	}
+	u := fmt.Sprintf("%s/v1/sessions?page=%d&page_size=%d", strings.TrimRight(baseURL, "/"), page, pageSize)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return coordSessionsResponse{}, err
+	}
+	req.Header.Set("Authorization", bearer)
+	resp, err := client.Do(req)
+	if err != nil {
+		return coordSessionsResponse{}, err
+	}
+	defer resp.Body.Close()
+	var payload coordSessionsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return coordSessionsResponse{}, fmt.Errorf("coord-api /v1/sessions status %d: unparseable body", resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusOK {
+		reason := payload.Error
+		if reason == "" {
+			reason = "no error detail"
+		}
+		return coordSessionsResponse{}, fmt.Errorf("coord-api /v1/sessions status %d: %s", resp.StatusCode, reason)
 	}
 	return payload, nil
 }
