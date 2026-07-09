@@ -70,6 +70,8 @@ func runReceiptCmd(args []string, stdout, stderr io.Writer) int {
 		return runReceiptList(args[1:], stdout, stderr)
 	case "export":
 		return runReceiptExport(args[1:], stdout, stderr)
+	case "stats":
+		return runReceiptStats(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		fmt.Fprintln(stdout, "usage: r1 receipt <verb> [flags] [path]")
 		fmt.Fprintln(stdout, "verbs:")
@@ -78,6 +80,7 @@ func runReceiptCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "  record    persist a Wave-B mission receipt with optional signature")
 		fmt.Fprintln(stdout, "  list      query persisted mission receipts")
 		fmt.Fprintln(stdout, "  export    export a persisted mission receipt to json")
+		fmt.Fprintln(stdout, "  stats     per-worker table: turns/cost/receipts/pass-fail")
 		return 0
 	default:
 		fmt.Fprintf(stderr, "receipt: unknown verb %q\n", args[0])
