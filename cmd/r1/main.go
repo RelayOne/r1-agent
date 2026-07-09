@@ -3187,7 +3187,7 @@ func sowCmd(args []string) {
 		// this closes that gap. Gated behind R1_SOW_MCP=1 because exposing
 		// extra tools to the worker is a behavioural change operators should
 		// opt into. Note: MCP exposure makes the tools AVAILABLE; the
-		// deterministic offload pre-pass (R1_SOW_OFFLOAD, sow_offload.go) is
+		// deterministic offload pre-pass (R1_SOW_OFFLOAD, internal/substrate) is
 		// what guarantees covered codegen actually uses Substrate regardless
 		// of model discretion.
 		if os.Getenv("R1_SOW_MCP") == "1" {

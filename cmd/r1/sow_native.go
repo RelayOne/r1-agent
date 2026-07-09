@@ -25,13 +25,14 @@ import (
 	"github.com/RelayOne/r1/internal/memory/membus"
 	"github.com/RelayOne/r1/internal/perflog"
 	"github.com/RelayOne/r1/internal/plan"
-	"github.com/RelayOne/r1/internal/taskstats"
 	"github.com/RelayOne/r1/internal/provider"
 	"github.com/RelayOne/r1/internal/r1env"
 	"github.com/RelayOne/r1/internal/repomap"
 	"github.com/RelayOne/r1/internal/skill"
 	"github.com/RelayOne/r1/internal/stream"
 	"github.com/RelayOne/r1/internal/streamjson"
+	"github.com/RelayOne/r1/internal/substrate"
+	"github.com/RelayOne/r1/internal/taskstats"
 	"github.com/RelayOne/r1/internal/wisdom"
 )
 
@@ -206,7 +207,7 @@ type sowNativeConfig struct {
 	// scheduler emits non-conflicting task sets.
 	PerTaskWorktree bool
 	Runner          *engine.NativeRunner
-	EventBus *hub.Bus
+	EventBus        *hub.Bus
 	// MaxTurns is the turn budget per task. Default 100.
 	MaxTurns int
 	// MaxRepairAttempts is how many times the self-repair loop will try
@@ -1052,7 +1053,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// the outer SessionScheduler and it halts the whole SOW).
 	phase1Span := perflog.Start("phase1.tasks", "session="+session.ID, "tasks="+strconv.Itoa(len(session.Tasks)))
 	results := runSessionPhase1(ctx, session, workingSession, sowDoc, runtimeDir, cfg, maxTurns)
-	phase1Span.End("results="+strconv.Itoa(len(results)))
+	phase1Span.End("results=" + strconv.Itoa(len(results)))
 
 	// H-49 async mode: drain any in-flight background reviewers +
 	// their follow-up workers before Phase 1.4 runs. Integration
@@ -1184,37 +1185,37 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			cfg, runtimeDir, maxTurns, maxRepairs,
 		)
 	} else if len(effectiveCriteria) > 0 {
-	// stickyFailures tracks which criterion IDs failed in EVERY prior
-	// repair attempt. Criteria that keep failing across attempts are
-	// likely either (a) structurally unsatisfiable (the AC command is
-	// broken), or (b) the model is applying the same failed fix. We
-	// note them explicitly in the next repair prompt so the model can
-	// switch approach rather than retry identically. A criterion
-	// becomes "sticky" only after failing twice in a row.
-	stickyAttempts := map[string]int{} // criterion ID -> consecutive failure count
-	// reasoningApplied tracks which criterion IDs have already been
-	// run through the multi-analyst reasoning loop in this session.
-	// Each stuck criterion gets one reasoning pass; running it twice
-	// for the same criterion would just pay for the same verdict.
-	reasoningApplied := map[string]bool{}
-	// H-87: track per-AC count of `ac_bug` verdicts. When the
-	// reasoning pass declares ac_bug twice (the rewrite didn't
-	// stick), the AC's command is structurally broken and can't
-	// be mechanically rescued. JS sow-serial R05 today PASSED
-	// 3/4 ACs, failed AC4 only because `node -e "import ..."`
-	// runs ESM syntax in CJS context; reasoner correctly
-	// identified ac_bug, rewrote, rewrite also broke, declared
-	// ac_bug again, same loop. After H-87's second ac_bug in a
-	// row, soft-pass the AC with a note — the code is confirmed
-	// correct by the multi-analyst pass; the AC command itself
-	// is the bug.
-	acBugCount := map[string]int{}
-	// seenFingerprints maps directive fingerprint -> attempt number
-	// of the earliest attempt that tried it. Populated after each
-	// dispatch; consulted BEFORE the next dispatch to short-circuit
-	// retry loops that would try the same fix twice.
-	seenFingerprints := map[string]int{}
-	_ = seenFingerprints // reserved for future fingerprint dedup gate
+		// stickyFailures tracks which criterion IDs failed in EVERY prior
+		// repair attempt. Criteria that keep failing across attempts are
+		// likely either (a) structurally unsatisfiable (the AC command is
+		// broken), or (b) the model is applying the same failed fix. We
+		// note them explicitly in the next repair prompt so the model can
+		// switch approach rather than retry identically. A criterion
+		// becomes "sticky" only after failing twice in a row.
+		stickyAttempts := map[string]int{} // criterion ID -> consecutive failure count
+		// reasoningApplied tracks which criterion IDs have already been
+		// run through the multi-analyst reasoning loop in this session.
+		// Each stuck criterion gets one reasoning pass; running it twice
+		// for the same criterion would just pay for the same verdict.
+		reasoningApplied := map[string]bool{}
+		// H-87: track per-AC count of `ac_bug` verdicts. When the
+		// reasoning pass declares ac_bug twice (the rewrite didn't
+		// stick), the AC's command is structurally broken and can't
+		// be mechanically rescued. JS sow-serial R05 today PASSED
+		// 3/4 ACs, failed AC4 only because `node -e "import ..."`
+		// runs ESM syntax in CJS context; reasoner correctly
+		// identified ac_bug, rewrote, rewrite also broke, declared
+		// ac_bug again, same loop. After H-87's second ac_bug in a
+		// row, soft-pass the AC with a note — the code is confirmed
+		// correct by the multi-analyst pass; the AC command itself
+		// is the bug.
+		acBugCount := map[string]int{}
+		// seenFingerprints maps directive fingerprint -> attempt number
+		// of the earliest attempt that tried it. Populated after each
+		// dispatch; consulted BEFORE the next dispatch to short-circuit
+		// retry loops that would try the same fix twice.
+		seenFingerprints := map[string]int{}
+		_ = seenFingerprints // reserved for future fingerprint dedup gate
 		for attempt := 1; attempt <= maxRepairs; attempt++ {
 			if ctx.Err() != nil {
 				return results, ctx.Err()
@@ -1375,7 +1376,12 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			if cfg.Timeline != nil {
 				cfg.Timeline.Checkpoint(
 					fmt.Sprintf("ac-attempt:%s:%d", session.ID, attempt), "", nil,
-					func() float64 { if cfg.spent != nil { return *cfg.spent }; return 0 }(),
+					func() float64 {
+						if cfg.spent != nil {
+							return *cfg.spent
+						}
+						return 0
+					}(),
 					0, session.ID,
 					map[string]any{"passed": passedCount, "total": len(acceptance)})
 			}
@@ -1814,7 +1820,9 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				completed = append(completed, strings.TrimSuffix(filepath.Base(m), ".json"))
 			}
 			cost := 0.0
-			if cfg.spent != nil { cost = *cfg.spent }
+			if cfg.spent != nil {
+				cost = *cfg.spent
+			}
 			cfg.Timeline.Checkpoint("session-done:"+session.ID, "", completed, cost, len(results), session.ID, map[string]any{"passed": finalPassed})
 		}
 	}
@@ -1917,7 +1925,7 @@ func taskOutputsLookComplete(repoRoot string, t plan.Task) bool {
 //
 // Expanded to catch TS/JS-specific fakes that pass type-checks but
 // don't actually implement the spec: trivial `return null/[] /{};`
-// bodies, bare `throw new Error('')` rejections, empty catch blocks
+// bodies, bare `throw new Error(”)` rejections, empty catch blocks
 // that swallow failures, and `as any` / `as never` type-bypasses
 // used to paper over missing implementations. These patterns
 // regularly land in worker output because they compile cleanly and
@@ -2336,9 +2344,9 @@ func scopeIsExempt(f string, declared map[string]bool) bool {
 
 // crossReviewResult is the structured output of the review model's pass.
 type crossReviewResult struct {
-	Approved bool                `json:"approved"`
-	Score    int                 `json:"score"`
-	Summary  string              `json:"summary"`
+	Approved bool                 `json:"approved"`
+	Score    int                  `json:"score"`
+	Summary  string               `json:"summary"`
 	Concerns []crossReviewConcern `json:"concerns"`
 }
 
@@ -2779,11 +2787,11 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 		// covered codegen tasks Substrate emits validated code at ~0
 		// generation tokens; when it returns a confident hit we apply that
 		// code and skip the LLM dispatch entirely. nil => fall through to the
-		// normal worker loop (fail-safe). See sow_offload.go for the rationale
-		// (exposure != usage: advertising the MCP tool did not make the worker
-		// use it, so the decision is made deterministically here).
+		// normal worker loop (fail-safe). See internal/substrate for the
+		// rationale (exposure != usage: advertising the MCP tool did not make
+		// the worker use it, so the decision is made deterministically here).
 		var tr plan.TaskExecResult
-		if pre := offloadPrePass(task, taskCfg.RepoRoot); pre != nil {
+		if pre := substrate.PrePass(task, taskCfg.RepoRoot); pre != nil {
 			tr = *pre
 		} else {
 			tr = execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, taskCfg, maxTurns, sup)
@@ -2899,19 +2907,19 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 //
 // Return values:
 //
-//	(committed bool, err error)
+//		(committed bool, err error)
 //
-//   - committed=true, err=nil → a commit landed (or the staged tree was
-//     already committed by some upstream hook — either way the task's
-//     work is durably in the branch).
-//   - committed=false, err=nil → tree was clean, nothing to commit.
-//     This is a distinct signal from "commit failed" because a zombie
-//     task that wrote zero files still "succeeded" as far as the worker
-//     is concerned; callers handle that via the pre/post dirty-set
-//     drift detector, not via this error channel.
-//   - committed=false, err != nil → git add or git commit errored. The
-//     caller MUST treat the task as unsuccessful — its code did not
-//     land, so tr.Success=true would be a false positive downstream.
+//	  - committed=true, err=nil → a commit landed (or the staged tree was
+//	    already committed by some upstream hook — either way the task's
+//	    work is durably in the branch).
+//	  - committed=false, err=nil → tree was clean, nothing to commit.
+//	    This is a distinct signal from "commit failed" because a zombie
+//	    task that wrote zero files still "succeeded" as far as the worker
+//	    is concerned; callers handle that via the pre/post dirty-set
+//	    drift detector, not via this error channel.
+//	  - committed=false, err != nil → git add or git commit errored. The
+//	    caller MUST treat the task as unsuccessful — its code did not
+//	    land, so tr.Success=true would be a false positive downstream.
 //
 // Prior to this change commitPerTask returned no values and only
 // printed to stdout, which meant commit failures were silently
@@ -2972,7 +2980,7 @@ func setupTaskWorktree(ctx context.Context, mainRepo, wtPath, wtBranch string) e
 	// Clean up any stale state from a prior run — worktree remove is
 	// idempotent with --force, branch -D fails quietly if not-exists.
 	_ = exec.CommandContext(ctx, "git", "-C", mainRepo, "worktree", "remove", "--force", wtPath).Run() // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
-	_ = exec.CommandContext(ctx, "git", "-C", mainRepo, "branch", "-D", wtBranch).Run() // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
+	_ = exec.CommandContext(ctx, "git", "-C", mainRepo, "branch", "-D", wtBranch).Run()                // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	_ = os.RemoveAll(wtPath)
 	// Ensure parent directory exists (e.g. .worktrees/).
 	if err := os.MkdirAll(filepath.Dir(wtPath), 0o755); err != nil {
@@ -3139,20 +3147,20 @@ func containsExplicitStubMarkers(repoRoot string, t plan.Task) bool {
 // re-export that's all the task asked for). This gate
 // ONLY fires when all three conditions hold:
 //
-//   1. The extension suggests source code with substantive
-//      logic — NOT .json/.yaml/.toml/.md/.d.ts/.gitignore/
-//      etc. Type-declaration shims (.d.ts) legitimately
-//      stay small.
-//   2. The BASENAME isn't a known barrel convention
-//      (index.*, mod.rs, lib.rs, main.rs, __init__.py,
-//      Dockerfile, Makefile). Those files legitimately
-//      re-export and stay small.
-//   3. The task declared MORE THAN ONE file. A single-file
-//      task that wrote a small file is plausibly a thin
-//      wrapper — the content judge handles that case. The
-//      multi-file-with-one-tiny-sibling pattern is the
-//      classic partial-stub shape run 40 repeatedly
-//      produced.
+//  1. The extension suggests source code with substantive
+//     logic — NOT .json/.yaml/.toml/.md/.d.ts/.gitignore/
+//     etc. Type-declaration shims (.d.ts) legitimately
+//     stay small.
+//  2. The BASENAME isn't a known barrel convention
+//     (index.*, mod.rs, lib.rs, main.rs, __init__.py,
+//     Dockerfile, Makefile). Those files legitimately
+//     re-export and stay small.
+//  3. The task declared MORE THAN ONE file. A single-file
+//     task that wrote a small file is plausibly a thin
+//     wrapper — the content judge handles that case. The
+//     multi-file-with-one-tiny-sibling pattern is the
+//     classic partial-stub shape run 40 repeatedly
+//     produced.
 //
 // Returns the offending files (empty slice when everything
 // passes). The content-judge LLM pass runs AFTER this for
@@ -4529,14 +4537,14 @@ func buildSOWNativePrompt(sowDoc *plan.SOW, session plan.Session, task plan.Task
 // reasoned about yet, and runs the multi-analyst + judge reasoning
 // loop on each. Based on the verdict:
 //
-//   code_bug         — appends a CODE FIX DIRECTIVE to the hint blob
-//                      for the next repair prompt
-//   ac_bug           — mutates effectiveCriteria IN PLACE, replacing
-//                      the criterion's Command with ACRewrite
-//   both             — does both
-//   acceptable_as_is — marks the criterion with an inline override
-//                      flag (we rewrite it to "true" so the next AC
-//                      pass succeeds automatically) and logs why
+//	code_bug         — appends a CODE FIX DIRECTIVE to the hint blob
+//	                   for the next repair prompt
+//	ac_bug           — mutates effectiveCriteria IN PLACE, replacing
+//	                   the criterion's Command with ACRewrite
+//	both             — does both
+//	acceptable_as_is — marks the criterion with an inline override
+//	                   flag (we rewrite it to "true" so the next AC
+//	                   pass succeeds automatically) and logs why
 //
 // Returns hint text to prepend to the repair prompt. Empty string if
 // nothing reasoned or no actionable hints came back.
