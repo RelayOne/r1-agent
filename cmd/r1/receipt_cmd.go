@@ -155,9 +155,21 @@ func runReceiptVerify(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("receipt verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	ledgerDir := fs.String("ledger", "", "explicit ledger root (default: <cwd>/.r1/ledger or .stoke/ledger)")
+	anchor := fs.Bool("anchor", false, "verify a canonical record's inclusion under an anchor proof via the honest-crypto Anchorer seam (--record, --proof)")
+	recordPath := fs.String("record", "", "path to a canonical honest-crypto record JSON (with --anchor)")
+	proofPath := fs.String("proof", "", "path to an AnchorProof JSON (with --anchor)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
+	// Canonical Anchorer seam: verify a record's inclusion under an anchor
+	// proof via internal/honestcrypto.GetAnchorer() (backend-agnostic; default
+	// is a trusted timestamp over a Merkle commitment). This extends receipt
+	// verify beyond the legacy interval-anchor chain to the canonical record.
+	if *anchor {
+		return runAnchorVerify(*recordPath, *proofPath, stdout, stderr)
+	}
+
 	rest := fs.Args()
 	rawPath := ""
 	if len(rest) > 0 {
@@ -531,7 +543,7 @@ func inspectSingleAnchor(path string, jsonOut bool, stdout, stderr io.Writer) in
 	}
 	if jsonOut {
 		out := struct {
-			File   string        `json:"file"`
+			File   string              `json:"file"`
 			Anchor legacyanchor.Anchor `json:"anchor"`
 		}{File: path, Anchor: anchor}
 		enc := json.NewEncoder(stdout)
@@ -591,9 +603,9 @@ func inspectAnchorChain(chainDir string, limit int, jsonOut bool, stdout, stderr
 	}
 	if jsonOut {
 		out := struct {
-			ChainDir   string          `json:"chain_dir"`
-			TotalCount int             `json:"total_count"`
-			Shown      int             `json:"shown"`
+			ChainDir   string                `json:"chain_dir"`
+			TotalCount int                   `json:"total_count"`
+			Shown      int                   `json:"shown"`
 			Anchors    []legacyanchor.Anchor `json:"anchors"`
 		}{ChainDir: chainDir, TotalCount: len(chain), Shown: len(shown), Anchors: shown}
 		enc := json.NewEncoder(stdout)

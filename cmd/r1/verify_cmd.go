@@ -56,11 +56,11 @@ type VerifyCriterion struct {
 
 // VerifyResponse is the JSON body returned by POST /verify.
 //
-//   passed          = every criterion resolved PASS or SOFT-PASS
-//   evidence        = one human-readable line per criterion (same order
-//                     as the request's criteria list)
-//   tiers_attempted = union of tiers that fired across all criteria,
-//                     sorted by tier number (e.g. ["T1","T2","T3"])
+//	passed          = every criterion resolved PASS or SOFT-PASS
+//	evidence        = one human-readable line per criterion (same order
+//	                  as the request's criteria list)
+//	tiers_attempted = union of tiers that fired across all criteria,
+//	                  sorted by tier number (e.g. ["T1","T2","T3"])
 type VerifyResponse struct {
 	Passed         bool     `json:"passed"`
 	Evidence       []string `json:"evidence"`
@@ -75,13 +75,24 @@ func verifyCmd(args []string) {
 	fs := flag.NewFlagSet("verify", flag.ExitOnError)
 	serve := fs.Bool("serve", false, "run as HTTP server instead of one-shot")
 	addr := fs.String("addr", ":9944", "listen address when --serve is set")
+	anchor := fs.Bool("anchor", false, "verify a canonical record's inclusion under an anchor proof (--record, --proof)")
+	recordPath := fs.String("record", "", "path to a canonical honest-crypto record JSON (with --anchor)")
+	proofPath := fs.String("proof", "", "path to an AnchorProof JSON (with --anchor)")
 	if err := fs.Parse(args); err != nil {
 		fatal("verify: flag parse: %v", err)
 	}
 
+	// Canonical Anchorer seam: `r1 verify --anchor --record R --proof P`
+	// verifies the record envelope + its inclusion under the proof via the
+	// active Anchorer (default: trusted timestamp over a Merkle commitment).
+	if *anchor {
+		os.Exit(runAnchorVerify(*recordPath, *proofPath, os.Stdout, os.Stderr))
+	}
+
 	if !*serve {
-		fmt.Fprintln(os.Stderr, "r1 verify: --serve is required")
+		fmt.Fprintln(os.Stderr, "r1 verify: --serve or --anchor is required")
 		fmt.Fprintln(os.Stderr, "    r1 verify --serve [--addr :9944]")
+		fmt.Fprintln(os.Stderr, "    r1 verify --anchor --record <record.json> --proof <proof.json>")
 		os.Exit(2)
 	}
 
