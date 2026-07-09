@@ -220,6 +220,24 @@ func (c *Coordinator) Receipt(ctx context.Context, ref string) (int, error) {
 	})
 }
 
+// LoopGate adapts a Coordinator to the minimal acquire(bool)/release gate the
+// agentloop consumes (agentloop.Coordinator), so the git-native lock can gate
+// worker dispatch with zero coupling from the loop to this package.
+type LoopGate struct{ C *Coordinator }
+
+// Acquire reports whether the lock was taken.
+func (g LoopGate) Acquire(ctx context.Context) (bool, error) {
+	res, err := g.C.Acquire(ctx)
+	return res.Acquired, err
+}
+
+// Release frees the lock (no-op-safe: a non-holder release surfaces as an error
+// the caller may ignore at run end).
+func (g LoopGate) Release(ctx context.Context) error {
+	_, err := g.C.Release(ctx)
+	return err
+}
+
 // State returns the latest coordination state (after a fetch).
 func (c *Coordinator) State(ctx context.Context) (State, error) {
 	if err := c.sync(ctx); err != nil {

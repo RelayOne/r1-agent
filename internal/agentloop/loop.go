@@ -49,11 +49,11 @@ type CortexHook interface {
 
 // Config configures the agent loop.
 type Config struct {
-	Model              string        // e.g. "claude-sonnet-4-5-20250929"
-	MaxTurns           int           // hard limit on API calls (default 25)
-	MaxConsecutiveErrs int           // consecutive tool errors before abort (default 3)
-	MaxTokens          int           // max output tokens per turn (default 16000)
-	SystemPrompt       string        // static system prompt (cached)
+	Model              string // e.g. "claude-sonnet-4-5-20250929"
+	MaxTurns           int    // hard limit on API calls (default 25)
+	MaxConsecutiveErrs int    // consecutive tool errors before abort (default 3)
+	MaxTokens          int    // max output tokens per turn (default 16000)
+	SystemPrompt       string // static system prompt (cached)
 	// ThinkingBudget enables extended thinking. 0 = disabled (today's
 	// behavior for every existing call site). The value is a hint:
 	// adaptive-thinking models get {"type":"adaptive"} and ignore the
@@ -174,6 +174,14 @@ type Config struct {
 	//
 	// Optional. nil = no pre-turn gate.
 	PreTurnHook func(ctx context.Context, turn int, messages []Message) error
+
+	// Coordinator, when non-nil, gates worker dispatch: the loop ACQUIRES it
+	// before the first turn and RELEASES it when the run ends. If Acquire
+	// reports acquired=false the loop declines without dispatching
+	// (StopReason "coordination_declined"). Cooperates with — does not
+	// replace — higher-level scheduling/collision rules. nil = no
+	// coordination (default). See internal/acp for the git-native default.
+	Coordinator Coordinator
 
 	// EndTurnContinuation fires when the model emits end_turn (after
 	// the build-verification gate has accepted the turn) and lets a
@@ -313,9 +321,9 @@ func (c *Config) defaults() {
 type ContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`         // tool_use ID
-	Name      string          `json:"name,omitempty"`       // tool name
-	Input     json.RawMessage `json:"input,omitempty"`      // tool input JSON
+	ID        string          `json:"id,omitempty"`          // tool_use ID
+	Name      string          `json:"name,omitempty"`        // tool name
+	Input     json.RawMessage `json:"input,omitempty"`       // tool input JSON
 	ToolUseID string          `json:"tool_use_id,omitempty"` // for tool_result
 	Content   string          `json:"content,omitempty"`     // tool_result content
 	IsError   bool            `json:"is_error,omitempty"`    // tool_result error flag
@@ -372,6 +380,16 @@ type ThrottleGate interface {
 // cares about the decision shape; whether it scans patterns or runs
 // an LLM secondary check is the validator's business.
 type ToolInputValidator func(ctx context.Context, sessionID, tenantID, tool string, input json.RawMessage) ToolInputDecision
+
+// Coordinator is an optional coordination gate (e.g. the git-native ACP lock in
+// internal/acp) the loop ACQUIRES before dispatching any work and RELEASES when
+// the run ends. Declared as a minimal interface here so the agentloop takes no
+// dependency on a concrete coordinator. When Acquire reports acquired=false the
+// loop declines the run without dispatching. nil = no coordination (default).
+type Coordinator interface {
+	Acquire(ctx context.Context) (acquired bool, err error)
+	Release(ctx context.Context) error
+}
 
 // ToolInputDecision is the parallel-branch promptguard return.
 // Allowed=false replaces the tool result with Message + IsError.
@@ -501,6 +519,25 @@ func (l *Loop) Run(ctx context.Context, userMessage string) (*Result, error) {
 func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result, error) {
 	result := &Result{Messages: messages}
 	consecutiveErrors := 0
+
+	// Coordination gate (ACP): acquire before dispatching any work, release
+	// when the run ends. A declined acquire returns without dispatching.
+	if l.config.Coordinator != nil {
+		acquired, err := l.config.Coordinator.Acquire(ctx)
+		if err != nil {
+			result.StopReason = "coordination_error"
+			return result, err
+		}
+		if !acquired {
+			result.StopReason = "coordination_declined"
+			return result, nil
+		}
+		defer func() {
+			// Release on a fresh context so a cancelled run still frees the
+			// lock for the next contender.
+			_ = l.config.Coordinator.Release(context.Background())
+		}()
+	}
 
 	for turn := 0; turn < l.config.MaxTurns; turn++ {
 		select {
@@ -1039,7 +1076,7 @@ func estimateMessagesTokens(messages []Message) int {
 		for _, c := range m.Content {
 			chars += len(c.Type) + 4
 			chars += len(c.Text)
-			chars += len(c.Content)   // tool_result content
+			chars += len(c.Content) // tool_result content
 			chars += len(c.Thinking)
 			if len(c.Input) > 0 {
 				chars += len(c.Input)
