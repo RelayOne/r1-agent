@@ -40,7 +40,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/RelayOne/r1/internal/ledger"
+	legacyanchor "github.com/RelayOne/r1/archive/ledger-anchor-pre-honestcrypto"
 	"github.com/RelayOne/r1/internal/r1dir"
 	"github.com/RelayOne/r1/internal/receipts"
 )
@@ -295,7 +295,7 @@ func verifySingleAnchor(path string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "receipt verify: read %s: %v\n", path, err)
 		return 2
 	}
-	var anchor ledger.Anchor
+	var anchor legacyanchor.Anchor
 	if err := json.Unmarshal(data, &anchor); err != nil {
 		fmt.Fprintf(stderr, "receipt verify: parse %s: %v\n", path, err)
 		return 2
@@ -415,7 +415,7 @@ func bytesTrimSpace(b []byte) []byte {
 // verifyAnchorChain walks the entire chain via AnchorStore.VerifyChain
 // and returns 0 on clean, 1 on any violation.
 func verifyAnchorChain(chainDir string, stdout, stderr io.Writer) int {
-	store, err := ledger.NewAnchorStore(chainDir)
+	store, err := legacyanchor.NewAnchorStore(chainDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "receipt verify: open anchor store at %s: %v\n", chainDir, err)
 		return 2
@@ -456,7 +456,7 @@ func verifyAnchorChain(chainDir string, stdout, stderr io.Writer) int {
 // genuinely absent. A 0 with the field present (or null) must NOT
 // reach this function — verifySingleAnchor rejects those upstream as
 // downgrade-attack tampers. See HIGH-3 in PR #24.
-func computeAnchorHash(a ledger.Anchor, schemaVersionPresent bool) string {
+func computeAnchorHash(a legacyanchor.Anchor, schemaVersionPresent bool) string {
 	end := a.IntervalEnd.UTC().Format(time.RFC3339Nano)
 	start := a.IntervalStart.UTC().Format(time.RFC3339Nano)
 	h := sha256.New()
@@ -521,7 +521,7 @@ func inspectSingleAnchor(path string, jsonOut bool, stdout, stderr io.Writer) in
 		fmt.Fprintf(stderr, "receipt inspect: read %s: %v\n", path, err)
 		return 2
 	}
-	var anchor ledger.Anchor
+	var anchor legacyanchor.Anchor
 	if err := json.Unmarshal(data, &anchor); err != nil {
 		fmt.Fprintf(stderr, "receipt inspect: parse %s: %v\n", path, err)
 		return 2
@@ -529,7 +529,7 @@ func inspectSingleAnchor(path string, jsonOut bool, stdout, stderr io.Writer) in
 	if jsonOut {
 		out := struct {
 			File   string        `json:"file"`
-			Anchor ledger.Anchor `json:"anchor"`
+			Anchor legacyanchor.Anchor `json:"anchor"`
 		}{File: path, Anchor: anchor}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -570,7 +570,7 @@ func inspectSingleAnchor(path string, jsonOut bool, stdout, stderr io.Writer) in
 
 // inspectAnchorChain renders a list of receipts under an anchor dir.
 func inspectAnchorChain(chainDir string, limit int, jsonOut bool, stdout, stderr io.Writer) int {
-	store, err := ledger.NewAnchorStore(chainDir)
+	store, err := legacyanchor.NewAnchorStore(chainDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "receipt inspect: open anchor store at %s: %v\n", chainDir, err)
 		return 2
@@ -591,7 +591,7 @@ func inspectAnchorChain(chainDir string, limit int, jsonOut bool, stdout, stderr
 			ChainDir   string          `json:"chain_dir"`
 			TotalCount int             `json:"total_count"`
 			Shown      int             `json:"shown"`
-			Anchors    []ledger.Anchor `json:"anchors"`
+			Anchors    []legacyanchor.Anchor `json:"anchors"`
 		}{ChainDir: chainDir, TotalCount: len(chain), Shown: len(shown), Anchors: shown}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")

@@ -18,7 +18,16 @@
 // existing node store, produces a separate anchor log, and never
 // mutates or reorders existing nodes. Callers that don't invoke
 // anchor.Run are unaffected.
-package ledger
+//
+// ARCHIVED 2026-07-09 (converge/r1): the canonical Merkle commitment +
+// record shape are now owned by internal/honestcrypto (the Go port of
+// RelayOne's @honest/crypto per PORTS.md). This interval-anchor chain is a
+// distinct tamper-evidence feature (empty-interval "nothing happened between
+// t1 and t2" commitments over the whole ledger) that honest-crypto does not
+// replace, so it is preserved here as package legacyanchor and still consumed
+// by `r1 receipt verify`. New anchoring goes through the canonical seam
+// (internal/ledger.AnchorRecords -> honestcrypto.GetAnchorer). See NOTE.md.
+package legacyanchor
 
 import (
 	"crypto/sha256"
@@ -31,6 +40,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/RelayOne/r1/internal/ledger"
 )
 
 // AnchorIntervalSeconds is the default commitment cadence. Matches
@@ -334,7 +345,7 @@ func (s *AnchorStore) ReadChain() ([]Anchor, error) {
 // ID and go undetected. This helper hashes the canonical JSON
 // marshal of the full Node struct so any content change breaks
 // the Merkle root — which breaks every subsequent anchor.
-func LeafDigestForNode(n Node) (string, error) {
+func LeafDigestForNode(n ledger.Node) (string, error) {
 	blob, err := json.Marshal(n)
 	if err != nil {
 		return "", err

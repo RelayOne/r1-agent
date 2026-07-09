@@ -29,13 +29,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/ledger"
+	legacyanchor "github.com/RelayOne/r1/archive/ledger-anchor-pre-honestcrypto"
 )
 
 // makeV2Anchor builds a structurally valid v2 anchor with a Hash that
 // matches its declared composition.
-func makeV2Anchor(start, end time.Time, prev, merkle string) ledger.Anchor {
-	a := ledger.Anchor{
+func makeV2Anchor(start, end time.Time, prev, merkle string) legacyanchor.Anchor {
+	a := legacyanchor.Anchor{
 		SchemaVersion: 2,
 		Seq:           0,
 		IntervalStart: start.UTC(),
@@ -57,7 +57,7 @@ func makeV2Anchor(start, end time.Time, prev, merkle string) ledger.Anchor {
 // individual tests can model the three "schema_version" tamper variants
 // (missing / null / 0) — Go's int zero collapses them in the typed
 // Anchor struct, so the only legal source of truth is the raw JSON.
-func anchorAsMap(t *testing.T, a ledger.Anchor) map[string]any {
+func anchorAsMap(t *testing.T, a legacyanchor.Anchor) map[string]any {
 	t.Helper()
 	raw, err := json.Marshal(a)
 	if err != nil {
