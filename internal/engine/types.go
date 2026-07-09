@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/RelayOne/r1/internal/honestcrypto"
 	"github.com/RelayOne/r1/internal/provider"
 	"github.com/RelayOne/r1/internal/stream"
 )
@@ -351,6 +352,20 @@ type RunSpec struct {
 	// these fields. Corpus content is gitignored; only the mechanism ships.
 	SeedProfile string
 	SeedsPath   string
+
+	// ActionAuthorizer, when non-nil, gates every tool call at the native
+	// tool boundary BEFORE the underlying side effect runs (reject-before-
+	// execute), alongside the user-rule and policy gates. A Deny or
+	// RequireApproval decision fails the tool_result with is_error=true. The
+	// default backend is a signed allowlist loaded from the session's action
+	// spec; a stronger authorizer swaps in by config with zero caller changes.
+	// nil = authz disabled (backward compatible). Subprocess-backed runners
+	// ignore this field.
+	ActionAuthorizer honestcrypto.ActionAuthorizer
+
+	// AuthzSubject is the portfolio-uniform subject stamped onto authz
+	// decision records (RelayOne OIDC subject / org / session). Optional.
+	AuthzSubject string
 }
 
 // WorkerLogContext groups correlation IDs and config snapshot data

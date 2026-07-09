@@ -17,6 +17,7 @@ import (
 	"github.com/RelayOne/r1/internal/cortex/lobes/memoryrecall"
 	"github.com/RelayOne/r1/internal/cortex/lobes/rulecheck"
 	"github.com/RelayOne/r1/internal/cortex/lobes/walkeeper"
+	"github.com/RelayOne/r1/internal/honestcrypto"
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/mcp"
 	"github.com/RelayOne/r1/internal/memory"
@@ -412,6 +413,32 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		// hook is a strict subset rather than a blanket gate.
 		if gate := gateToolCall(ctx, name, input); !gate.Allowed {
 			return "", gate.Err
+		}
+		// ActionAuthorizer seam: reject-before-execute against the session's
+		// signed action spec (default backend: signed allowlist). A Deny or
+		// RequireApproval decision stops the tool before its side effect runs.
+		// The decision is recorded to the worker log (auditable) and is
+		// expressible as a canonical anchorable record via internal/authz.
+		if spec.ActionAuthorizer != nil {
+			decision := spec.ActionAuthorizer.Authorize(honestcrypto.ActionRequest{Action: name})
+			if decision.Decision != honestcrypto.DecisionAllow {
+				if workerLog != nil {
+					entry := map[string]any{
+						"type":     "authz_decision",
+						"uuid":     newShortID("z"),
+						"ts":       time.Now().UTC().Format(time.RFC3339Nano),
+						"tool":     name,
+						"decision": string(decision.Decision),
+						"reason":   decision.Reason,
+						"specHash": spec.ActionAuthorizer.SessionSpecHash(),
+					}
+					addCtx(entry, &wlc)
+					if b, e := json.Marshal(entry); e == nil {
+						fmt.Fprintln(workerLog, string(b))
+					}
+				}
+				return "", fmt.Errorf("action authorizer %s tool %q: %s", decision.Decision, name, decision.Reason)
+			}
 		}
 		toolStart := time.Now()
 		var result string

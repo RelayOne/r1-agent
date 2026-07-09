@@ -25,6 +25,7 @@ import (
 	"github.com/RelayOne/r1/internal/analytics"
 	"github.com/RelayOne/r1/internal/app"
 	"github.com/RelayOne/r1/internal/audit"
+	"github.com/RelayOne/r1/internal/authz"
 	"github.com/RelayOne/r1/internal/boulder"
 	"github.com/RelayOne/r1/internal/checkpoint"
 	"github.com/RelayOne/r1/internal/cloud"
@@ -3734,6 +3735,16 @@ func sowCmd(args []string) {
 			SeedProfile:      *seedProfile,
 			SeedsPath:        *seedsPath,
 			RawSOWText:       rawSOWText,
+		}
+
+		// ActionAuthorizer seam: build a fail-closed signed-allowlist
+		// authorizer from the seed profile's action spec (if present). A
+		// malformed / wrongly-signed spec aborts the run — never runs
+		// unauthorized. Absent spec => nil (authz disabled).
+		if authorizer, aerr := authz.LoadFromSeedProfile(*seedsPath, *seedProfile); aerr != nil {
+			fatal("action authorizer: %v", aerr)
+		} else {
+			nativeCfg.ActionAuthorizer = authorizer
 		}
 
 		// Load up to 3 most recent meta-reports from prior runs on

@@ -20,6 +20,7 @@ import (
 	"github.com/RelayOne/r1/internal/critic"
 	"github.com/RelayOne/r1/internal/engine"
 	"github.com/RelayOne/r1/internal/hitl"
+	"github.com/RelayOne/r1/internal/honestcrypto"
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/jsonutil"
 	"github.com/RelayOne/r1/internal/memory/membus"
@@ -515,6 +516,11 @@ type sowNativeConfig struct {
 	// task) to the system prompt. Empty = off.
 	SeedProfile string
 	SeedsPath   string
+
+	// ActionAuthorizer, when non-nil, gates every tool call at the native
+	// tool boundary (reject-before-execute). Built once at startup from the
+	// seed profile's signed action spec (fail-closed). nil = authz disabled.
+	ActionAuthorizer honestcrypto.ActionAuthorizer
 
 	// RawSOWText is the original SOW content as the user wrote it
 	// (prose .md, JSON, or YAML). When non-empty, it's injected into
@@ -3870,6 +3876,8 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 		CompactThreshold: cfg.CompactThreshold,
 		SeedProfile:      cfg.SeedProfile,
 		SeedsPath:        cfg.SeedsPath,
+		ActionAuthorizer: cfg.ActionAuthorizer,
+		AuthzSubject:     sessionID,
 		WorktreeDir:      cfg.RepoRoot,
 		RuntimeDir:       taskRuntime,
 		Mode:             engine.AuthModeAPIKey,
