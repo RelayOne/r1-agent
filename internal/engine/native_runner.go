@@ -17,6 +17,7 @@ import (
 	"github.com/RelayOne/r1/internal/cortex/lobes/memoryrecall"
 	"github.com/RelayOne/r1/internal/cortex/lobes/rulecheck"
 	"github.com/RelayOne/r1/internal/cortex/lobes/walkeeper"
+	"github.com/RelayOne/r1/internal/ctxcompress"
 	"github.com/RelayOne/r1/internal/honestcrypto"
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/mcp"
@@ -692,7 +693,24 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	// telemetry reaches the same BudgetTracker as the loop's own turns.
 	if compactionEnabled(spec) {
 		cfg.CompactThreshold = spec.CompactThreshold
-		condense := buildLLMCondenser(ctx, p, n.model, eventBus, condenserOptions{})
+		// ContextCompressor seam (opt-in via R1_CTX_COMPRESS=1): a
+		// deterministic, LLM-free policy compactor (age/redundancy/budget/
+		// pinned) driven by ctxcompress.GetCompressor(). A stronger compressor
+		// swaps in by config with zero changes here. Default path (env unset)
+		// keeps the LLM condenser / byte-truncation tiers unchanged.
+		var condense agentloop.CompactFunc
+		if policyCompactorEnabled() {
+			opts := condenserOptions{}
+			opts.applyDefaults()
+			ctxcompress.SetCompressor(ctxcompress.NewPolicyCompressor(ctxcompress.Policy{
+				MaxBytes:      policyBudgetBytes(),
+				MinBytes:      opts.SummaryChars,
+				DropRedundant: true,
+			}))
+			condense = buildPolicyCompactor(opts.KeepRecent, opts.SummaryChars, condensedSentinel)
+		} else {
+			condense = buildLLMCondenser(ctx, p, n.model, eventBus, condenserOptions{})
+		}
 		// Record every history rewrite in the transcript — replay would
 		// silently diverge from what the model actually saw otherwise.
 		cfg.CompactFn = func(messages []agentloop.Message, estimatedTokens int) []agentloop.Message {
