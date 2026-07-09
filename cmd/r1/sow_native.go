@@ -509,6 +509,13 @@ type sowNativeConfig struct {
 	// value: 100_000 to stay comfortably under a 200k context window.
 	CompactThreshold int
 
+	// SeedProfile and SeedsPath drive the file-backed SeedResolver seam.
+	// When both are set (via --seed-profile / --seeds-path), the native
+	// runner PREPENDS the profile's tiered seed text (role -> domain ->
+	// task) to the system prompt. Empty = off.
+	SeedProfile string
+	SeedsPath   string
+
 	// RawSOWText is the original SOW content as the user wrote it
 	// (prose .md, JSON, or YAML). When non-empty, it's injected into
 	// the cached system prompt under a "SPEC (verbatim)" header so
@@ -3861,6 +3868,8 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 		Prompt:           userPrompt,
 		SystemPrompt:     systemPrompt,
 		CompactThreshold: cfg.CompactThreshold,
+		SeedProfile:      cfg.SeedProfile,
+		SeedsPath:        cfg.SeedsPath,
 		WorktreeDir:      cfg.RepoRoot,
 		RuntimeDir:       taskRuntime,
 		Mode:             engine.AuthModeAPIKey,

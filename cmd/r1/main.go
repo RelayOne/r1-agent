@@ -2133,6 +2133,8 @@ func sowCmd(args []string) {
 	//                        convergence reliability.
 	workflowMode := fs.String("workflow", "parallel", "sow complexity preset: 'parallel' (existing behavior — per-task worktrees + intra-session parallelism) or 'serial' (single session at a time, one task at a time, InPlace — matches simple-loop's shape)")
 	compactThreshold := fs.Int("compact-threshold", 100000, "Progressive context compaction kicks in when a task's estimated input tokens exceed this (0 = disabled)")
+	seedProfile := fs.String("seed-profile", "", "SeedResolver profile: prepend tiered seed text (role->domain->task) from <seeds-path>/<profile>/ to the worker system prompt (never replaces it). Empty = off.")
+	seedsPath := fs.String("seeds-path", "", "Directory holding SeedResolver profiles (see seeds/EXAMPLE). Required together with --seed-profile.")
 	dumpPrompts := fs.Bool("dump-task-prompts", false, "Write every task's system+user prompts to .stoke/prompt-dump/ and exit, without calling the LLM. Used to verify spec extraction before spending on a real run.")
 	outputFormat := fs.String("output-format", "", "Output mode. Empty (default): human-readable TUI + r1 banners on stdout. 'stream-json': emit Claude Code-compatible NDJSON events to stdout (S-U-020); logs route to stderr. Consumed by Multica, OpenACP, and other orchestrators that speak Claude Code's schema.")
 	resumeFrom := fs.String("resume-from", "", "Resume from a specific checkpoint ID (e.g. CP-042). Lists checkpoints: --list-checkpoints. Skips completed sessions, re-runs the checkpoint's active session with the new binary. Incompatible with --fresh.")
@@ -3729,6 +3731,8 @@ func sowCmd(args []string) {
 			VerboseStream:    *verboseStream,
 			ParallelWorkers:  *parallelTasks,
 			CompactThreshold: *compactThreshold,
+			SeedProfile:      *seedProfile,
+			SeedsPath:        *seedsPath,
 			RawSOWText:       rawSOWText,
 		}
 

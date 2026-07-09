@@ -25,6 +25,7 @@ import (
 	"github.com/RelayOne/r1/internal/rules"
 	rulesenforcer "github.com/RelayOne/r1/internal/rules/enforcer"
 	"github.com/RelayOne/r1/internal/sandbox"
+	"github.com/RelayOne/r1/internal/seed"
 	"github.com/RelayOne/r1/internal/stream"
 	"github.com/RelayOne/r1/internal/tools"
 	"github.com/RelayOne/r1/internal/wisdom"
@@ -463,6 +464,14 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	systemPrompt := spec.SystemPrompt
 	if systemPrompt == "" {
 		systemPrompt = spec.Phase.Prompt
+	}
+	// SeedResolver seam: PREPEND the resolved tiered seed prefix (role ->
+	// domain -> task) to the system prompt. This never replaces the caller's
+	// prompt — it prefixes it, so the original instruction is preserved. Empty
+	// profile/path resolves to an empty prefix (no-op). Corpus is gitignored;
+	// only the assembly mechanism is committed (internal/seed).
+	if prefix := seed.ResolvePrefix(spec.SeedProfile, spec.SeedsPath); prefix != "" {
+		systemPrompt = prefix + "\n\n" + systemPrompt
 	}
 	// Inject working directory so the model uses correct paths.
 	if spec.WorktreeDir != "" {

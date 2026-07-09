@@ -110,14 +110,14 @@ func (c ComputeAffinity) String() string {
 
 // PhaseSpec describes the configuration for a single workflow phase (plan, execute, or verify).
 type PhaseSpec struct {
-	Name         string
-	BuiltinTools []string
-	AllowedRules []string
-	DeniedRules  []string
-	MCPEnabled   bool
-	MaxTurns     int
-	Prompt       string
-	Sandbox      bool
+	Name              string
+	BuiltinTools      []string
+	AllowedRules      []string
+	DeniedRules       []string
+	MCPEnabled        bool
+	MaxTurns          int
+	Prompt            string
+	Sandbox           bool
 	ReadOnly          bool   // if true, runner uses read-only sandbox and review profile
 	CompletionPromise string // statement agent must include in output to prove task completion; empty means no promise required
 
@@ -178,14 +178,14 @@ type CommandRunner interface {
 
 // RunSpec contains all inputs needed for a single engine execution, including prompt, worktree, and sandbox config.
 type RunSpec struct {
-	Prompt            string
+	Prompt string
 	// SystemPrompt is the static, cacheable portion of the instruction.
 	// When set, the NativeRunner passes it to the agentloop as
 	// cfg.SystemPrompt, which wraps it in a cache_control breakpoint
 	// so the same block can be reused across turns and tasks without
 	// paying the full input cost. CLI-backed runners ignore this
 	// field (they don't support cache breakpoints in the same way).
-	SystemPrompt      string
+	SystemPrompt string
 	// CompactThreshold, when > 0, enables progressive context
 	// compaction inside the native agentloop: whenever the estimated
 	// input token count crosses this threshold between turns, the
@@ -245,8 +245,8 @@ type RunSpec struct {
 
 	// Container runtime fields: when set, the engine wraps the CLI command
 	// in a docker run invocation against the pool's container volume.
-	ContainerImage string   // e.g., "ghcr.io/ericmacdougall/stoke-pool:latest"
-	ContainerVol   string   // Docker volume name for credentials
+	ContainerImage     string // e.g., "ghcr.io/ericmacdougall/stoke-pool:latest"
+	ContainerVol       string // Docker volume name for credentials
 	ContainerConfigDir string // Config dir path inside the container
 
 	// ExtraTools are caller-supplied tool definitions with attached
@@ -341,6 +341,16 @@ type RunSpec struct {
 	// own completion gate. Used by Track A Task 3 to wire the
 	// live injection/exfil honeypot evaluator.
 	HoneypotCheckFn func(finalText string) string
+
+	// SeedProfile and SeedsPath drive the file-backed SeedResolver seam.
+	// When both are set, the native runner resolves the profile's tiered
+	// seed text (T0 role -> T1 domain -> T2 task) from
+	// <SeedsPath>/<SeedProfile>/ and PREPENDS the assembled prefix to the
+	// system prompt — it never replaces the caller's prompt. Empty values
+	// disable seeding (zero-value = off). Subprocess-backed runners ignore
+	// these fields. Corpus content is gitignored; only the mechanism ships.
+	SeedProfile string
+	SeedsPath   string
 }
 
 // WorkerLogContext groups correlation IDs and config snapshot data
@@ -350,18 +360,18 @@ type RunSpec struct {
 // subsequent tool_call record so grep/jq queries can trace any
 // command back to session/task/attempt/model provenance.
 type WorkerLogContext struct {
-	RunID       string // stable ID for the whole SOW run (one per `stoke sow` invocation)
-	DispatchID  string // unique ID for THIS worker dispatch (= this JSONL file)
-	SessionID   string // e.g. "S1", "S2-descent-repair-...", "S1-fix"
-	TaskID      string // task within the session
-	Attempt     int    // 1-based session retry attempt
-	Depth       int    // reviewer/decomposer recursion depth (0 = top-level)
-	Model       string // e.g. "claude-sonnet-4-6" — the backing model
-	StokeBuild  string // short git commit hash or build tag
-	SOWPath     string // absolute path to SOW snapshot for this session
-	PID         int    // this stoke process's PID
-	PPID        int    // parent process (so ladder-driver dispatch can be traced)
-	PurposeTag  string // free-form role tag, e.g. "worker", "repair", "judge", "intent-check"
+	RunID      string // stable ID for the whole SOW run (one per `stoke sow` invocation)
+	DispatchID string // unique ID for THIS worker dispatch (= this JSONL file)
+	SessionID  string // e.g. "S1", "S2-descent-repair-...", "S1-fix"
+	TaskID     string // task within the session
+	Attempt    int    // 1-based session retry attempt
+	Depth      int    // reviewer/decomposer recursion depth (0 = top-level)
+	Model      string // e.g. "claude-sonnet-4-6" — the backing model
+	StokeBuild string // short git commit hash or build tag
+	SOWPath    string // absolute path to SOW snapshot for this session
+	PID        int    // this stoke process's PID
+	PPID       int    // parent process (so ladder-driver dispatch can be traced)
+	PurposeTag string // free-form role tag, e.g. "worker", "repair", "judge", "intent-check"
 }
 
 // MidturnToolCall is the subset of agentloop tool-use info that an
@@ -370,9 +380,9 @@ type WorkerLogContext struct {
 // into these before calling the check, so callers outside
 // internal/engine don't need to import agentloop.
 type MidturnToolCall struct {
-	Name   string
-	Input  []byte
-	Result string
+	Name    string
+	Input   []byte
+	Result  string
 	IsError bool
 }
 
@@ -401,6 +411,6 @@ func (s RunSpec) Validate() error {
 type Registry struct {
 	Claude     *ClaudeRunner
 	Codex      *CodexRunner
-	Native     *NativeRunner               // Stoke native runner using Anthropic API directly
+	Native     *NativeRunner            // Stoke native runner using Anthropic API directly
 	CacheStats *stream.PromptCacheStats // shared across all runners
 }

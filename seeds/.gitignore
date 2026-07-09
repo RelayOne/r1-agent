@@ -1,0 +1,9 @@
+# Seed corpus (gitignored — per-tenant, proprietary content)
+#
+# Only the assembly MECHANISM ships (internal/seed). Corpus content is
+# per-tenant and must not be committed. Everything here is ignored EXCEPT
+# the EXAMPLE profile that documents the layout.
+*
+!.gitignore
+!EXAMPLE/
+!EXAMPLE/**
