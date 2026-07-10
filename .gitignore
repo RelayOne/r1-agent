@@ -54,3 +54,6 @@ desktop/.DS_Store
 desktop/package-lock.json
 desktop/pnpm-lock.yaml
 desktop/yarn.lock
+
+# built binary (build from source; do not track)
+/r1
