@@ -47,6 +47,12 @@ func TestExchangeCodeAndFetchUserInfo(t *testing.T) {
 				http.Error(w, "wrong method", http.StatusMethodNotAllowed)
 				return
 			}
+			// The RelayOne control plane rejects cookie-less POSTs without
+			// the anti-CSRF header; the token request must send it.
+			if r.Header.Get("X-CSRF-Protection") != "1" {
+				http.Error(w, "csrf_header_missing", http.StatusForbidden)
+				return
+			}
 			_ = r.ParseForm()
 			if r.PostForm.Get("code") != "the-code" {
 				http.Error(w, "wrong code", http.StatusBadRequest)

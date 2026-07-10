@@ -108,6 +108,13 @@ func (c *RelayOneSsoClient) ExchangeCode(ctx context.Context, code string) (*Tok
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	// RelayOne's control plane guards every cookie-less state-changing POST
+	// with a custom-header anti-CSRF check (X-CSRF-Protection: 1). This
+	// token request authenticates via client_secret in the body
+	// (client_secret_post), so it carries neither a Bearer token nor an
+	// API-key header that would otherwise exempt it — send the header so the
+	// exchange is not rejected with csrf_header_missing.
+	req.Header.Set("X-CSRF-Protection", "1")
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
