@@ -1,0 +1,33 @@
+# r1-demo-coord-api live verification — 2026-07-10T07:11:44Z
+# URL: https://r1-demo-coord-api-927350204262.us-central1.run.app
+# image: honest-demo/r1-demo-coord-api@sha256:becdf863f128b1dbeb8519c80175edf50737fe094b683932a94b5ff6d7de5844
+
+## 1. GET /livez (public liveness) — expect 200
+{"ok":true,"service":"r1-coord-api","env":"demo","version":"9103efd5","uptime_sec":21}
+
+[http_code=200]
+
+## 2. GET /v1/version (public) — expect 200 JSON
+{"env":"demo","service":"r1-coord-api","version":"9103efd5"}
+
+[http_code=200]
+
+## 3. GET /v1/sessions with NO bearer — expect 401 (auth gating proof)
+{"ok":false,"error":"missing or malformed Authorization header"}
+
+[http_code=401]
+
+## 4. POST /v1/sessions/report with operator JWT (synthetic session) — expect 200 accepted
+{"accepted":true,"ok":true}
+
+[http_code=200]
+
+## 5. GET /v1/sessions with operator JWT — expect 200 with the reported row
+{"active_ttl_sec":300,"ok":true,"page":1,"page_size":50,"sessions":[{"daemon_id":"demo-daemon-1","session_id":"sess-synthetic-001","workdir":"/synthetic/demo-repo","status":"active","started_at":"0001-01-01T00:00:00Z","last_activity":"2026-07-10T07:11:44.712569875Z","cost_usd":0.0123}],"total":1}
+
+[http_code=200]
+
+## 6. GET /v1/sessions with a NON-operator JWT — expect 403 (role gating proof)
+{"error":"operator role required","ok":false}
+
+[http_code=403]

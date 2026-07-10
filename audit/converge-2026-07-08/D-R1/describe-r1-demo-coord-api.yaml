@@ -1,0 +1,20 @@
+metadata:
+  name: r1-demo-coord-api
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: '4'
+status:
+  conditions:
+  - lastTransitionTime: '2026-07-10T07:11:23.685366Z'
+    status: 'True'
+    type: Ready
+  - lastTransitionTime: '2026-07-10T07:11:20.467929Z'
+    status: 'True'
+    type: ConfigurationsReady
+  - lastTransitionTime: '2026-07-10T07:11:23.651790Z'
+    status: 'True'
+    type: RoutesReady
+  latestReadyRevisionName: r1-demo-coord-api-00001-lzb
+  url: https://r1-demo-coord-api-nsycly55ka-uc.a.run.app

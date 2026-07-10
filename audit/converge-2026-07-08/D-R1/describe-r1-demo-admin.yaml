@@ -1,0 +1,20 @@
+metadata:
+  name: r1-demo-admin
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: '4'
+status:
+  conditions:
+  - lastTransitionTime: '2026-07-10T07:13:36.414855Z'
+    status: 'True'
+    type: Ready
+  - lastTransitionTime: '2026-07-10T07:13:04.636240Z'
+    status: 'True'
+    type: ConfigurationsReady
+  - lastTransitionTime: '2026-07-10T07:13:36.381661Z'
+    status: 'True'
+    type: RoutesReady
+  latestReadyRevisionName: r1-demo-admin-00001-prw
+  url: https://r1-demo-admin-nsycly55ka-uc.a.run.app

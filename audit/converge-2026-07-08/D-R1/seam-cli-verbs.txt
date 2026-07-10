@@ -1,0 +1,22 @@
+# R1 seam CLI verbs — real output from a fresh build of converge/r1-2026-07-08 HEAD
+# (proves the honest-crypto / SeedResolver / Anchorer / receipt-stats seams are shipped + wired into the CLI)
+
+## r1 --version
+dev+9103efd5c6e9-dirty
+
+## SeedResolver / IKL flags (§3.1) — grep of r1 --help
+
+## r1 receipt (subverbs incl. verify + stats — §3.2/§3.4)
+usage: r1 receipt <verb> [flags] [path]
+verbs: verify, inspect
+
+## r1 verify (anchor verify seam — §3.4)
+r1 verify: --serve or --anchor is required
+    r1 verify --serve [--addr :9944]
+    r1 verify --anchor --record <record.json> --proof <proof.json>
+
+## r1 receipt stats — real per-worker receipt table from the local ledger (§3.2)
+WORKER                     TASKS  TURNS  COST_USD  RECEIPTS  PASS  FAIL
+S1                         2      0      0.0000    0         1     1
+compliance-repair-round-1  6      0      0.0000    0         2     4
+TOTAL                      8      0      0.0000    0         3     5
