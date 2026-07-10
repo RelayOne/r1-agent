@@ -8,6 +8,28 @@ The "refuses to lie about completion" claim is now measurable. The **TruthfulCom
 
 Current repo + infra truth-state is tracked in [`plans/TRUTH-STATE-2026-05-15.md`](plans/TRUTH-STATE-2026-05-15.md). Use that file, not older deploy handoffs, for the confirmed live state.
 
+## Live demo — hosted governance surface
+
+The lowest-cost hosted footprint of R1 is live for evaluation on GCP Cloud Run
+(project `resolute-parity-484218-g1`, region `us-central1`, `--min-instances=0`
+scale-to-zero — first request after idle pays a cold start):
+
+| Surface | URL | Try it |
+|---|---|---|
+| Coordination API | `https://r1-demo-coord-api-927350204262.us-central1.run.app` | `curl <url>/livez` · `curl <url>/v1/version` |
+| Admin / governance | `https://r1-demo-admin-927350204262.us-central1.run.app` | open in a browser (operator-gated) |
+
+The `/v1/sessions` fleet view and the admin dashboard are operator-JWT-gated: an
+unauthenticated request returns **401** (coord-api) or a **302 to SSO** (admin)
+**by design** — that is the honest governance posture, not an outage. Unwired
+dashboard cards render an explicit "Unavailable" rather than fabricated numbers.
+The full playable walkthrough — the `honest.yaml` + Claude Code hooks POC, and
+the exact verified happy-path output for these URLs — is in
+[`docs/DEMO-SCRIPT.md`](docs/DEMO-SCRIPT.md); the EU-later seam is in
+[`docs/EU-EXPANSION.md`](docs/EU-EXPANSION.md). These scale-to-zero demo
+services supersede the earlier `*.r1.run` prod footprint, which ran on a
+now-retired GCP project.
+
 ## Completion SOW — shipped 2026-05-14
 
 Fourteen specs took r1 from "technically honest agent runtime" to "operationally honest hosted product." All fourteen are merged. The original Tier A/B/C/D enumeration with duplicate per-spec descriptions has been collapsed into the canonical list below; full per-spec acceptance criteria, dependencies, and BUILD_ORDER live in [`specs/`](specs/). The companion entries in [`docs/FEATURE-MAP.md`](docs/FEATURE-MAP.md), [`docs/BUSINESS-VALUE.md`](docs/BUSINESS-VALUE.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) cover the operator-facing detail, the marketing rationale, the new internal package layout, and the runtime integration points.
@@ -253,7 +275,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 |---|---|---|
 | Final-sweep PRs #168 / #169 / #170 / #171 | **Done — merged to main (commit `242af4a8`)** | Skill-aware compactor + signed-redaction + release-rehearsal CI + tracebundle v2 export. |
 | Specs 1-9 (cortex / lanes / multi-surface / agentic / anti-trunc) | **Done — merged to main** | Specs 6/7/8/9 + r1.run SaaS shipped via PRs #128 / #143 / #150 / #151. |
-| 12 Cloud Run SaaS surfaces (4 services × 3 envs) | **Live — 12/12 HTTPS-200 on /livez** | dev/staging/prod for r1-coord-api, r1-docs, r1-downloads-cdn, r1-admin. All r1.run subdomains resolve. |
+| Hosted footprint | **Live — low-cost demo on `resolute-parity-484218-g1`** | `r1-demo-coord-api` + `r1-demo-admin` on Cloud Run `us-central1`, scale-to-zero, verified happy-path in [`docs/DEMO-SCRIPT.md`](docs/DEMO-SCRIPT.md). The earlier `*.r1.run` 12-surface prod footprint ran on a now-retired GCP project (`relayone-488319`) and is superseded by this demo. |
 | Cloud SQL (r1-{prod,staging,dev}-pg, POSTGRES_16) | **Live** | All RUNNABLE; DSN secrets in Secret Manager + bound via `--add-cloudsql-instances`. |
 | `go build`/`vet`/`test` | **All green** | Full `go list ./...` set green (281 packages at last count); sequential test suite passes; race-detector clean on the bus. |
 | Web + desktop + web-components vitest | **All green** | 295 tests pass (web 212 + components 19 + desktop 64). React 19 + jsdom 26 stack. |
