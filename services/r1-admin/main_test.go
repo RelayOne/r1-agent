@@ -635,6 +635,39 @@ func TestDashboardActiveSessionsCardLiveCount(t *testing.T) {
 	}
 }
 
+// TestVerifyAdminJWTTamperedFinalSigCharFails: replacing the FINAL signature
+// character with ANY other base64url character must fail verifyAdminJWT. An
+// HS256 signature (32 bytes) encodes to 43 unpadded chars with 2 unused
+// trailing bits; the lenient default decoder ignores those bits, so the 3
+// other alphabet chars sharing the final char's top 4 bits decoded to the
+// IDENTICAL signature and verified — token malleability. Strict() decoding
+// rejects them.
+func TestVerifyAdminJWTTamperedFinalSigCharFails(t *testing.T) {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	cfg := adminJWTConfig{
+		issuer:   "iss-1",
+		audience: "aud-1",
+		secret:   strings.Repeat("s", 32),
+	}
+	token := mustSignAdminToken(t, cfg.issuer, cfg.audience, cfg.secret, map[string]any{
+		"roles": []string{"operator"},
+		"sub":   "operator-1",
+	})
+	if _, err := verifyAdminJWT(token, cfg); err != nil {
+		t.Fatalf("untampered token must verify: %v", err)
+	}
+	last := token[len(token)-1]
+	for i := 0; i < len(alphabet); i++ {
+		if alphabet[i] == last {
+			continue
+		}
+		tampered := token[:len(token)-1] + string(alphabet[i])
+		if _, err := verifyAdminJWT(tampered, cfg); err == nil {
+			t.Errorf("final sig char %q -> %q: verifyAdminJWT accepted a tampered token", string(last), string(alphabet[i]))
+		}
+	}
+}
+
 func mustSignAdminToken(
 	t *testing.T,
 	issuer string,

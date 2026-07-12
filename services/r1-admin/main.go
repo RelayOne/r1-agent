@@ -808,7 +808,11 @@ func verifyAdminJWT(token string, cfg adminJWTConfig) (map[string]any, error) {
 		return nil, errors.New("jwt must have three parts")
 	}
 
-	encoding := base64.RawURLEncoding
+	// Strict(): reject non-canonical base64url (lenient decoding ignores the
+	// 2 unused trailing bits of the 43-char HS256 sig segment, making N
+	// distinct token strings verify as the same token). The only minter is
+	// r1-coord-api's Go JwtService, which always emits canonical encodings.
+	encoding := base64.RawURLEncoding.Strict()
 	headerBytes, err := encoding.DecodeString(parts[0])
 	if err != nil {
 		return nil, err

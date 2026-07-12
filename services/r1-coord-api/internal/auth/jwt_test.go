@@ -138,6 +138,32 @@ func TestRS256SignVerifyRoundTrip(t *testing.T) {
 	}
 }
 
+// TestVerifyTamperedFinalSigCharFails: replacing the FINAL signature
+// character with ANY other base64url character must fail Verify. An HS256
+// signature (32 bytes) encodes to 43 unpadded chars with 2 unused trailing
+// bits; the lenient default decoder ignores those bits, so the 3 other
+// alphabet chars sharing the final char's top 4 bits decoded to the
+// IDENTICAL signature and verified — token malleability (N distinct token
+// strings verify as the same token). Strict() decoding rejects them.
+func TestVerifyTamperedFinalSigCharFails(t *testing.T) {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	s := newTestService()
+	tok, err := s.Sign(Claims{Sub: "user-1"})
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	last := tok[len(tok)-1]
+	for i := 0; i < len(alphabet); i++ {
+		if alphabet[i] == last {
+			continue
+		}
+		tampered := tok[:len(tok)-1] + string(alphabet[i])
+		if _, err := s.Verify(tampered); err == nil {
+			t.Errorf("final sig char %q -> %q: Verify accepted a tampered token", string(last), string(alphabet[i]))
+		}
+	}
+}
+
 func TestSignClampsExpiryToMaxAge(t *testing.T) {
 	s := newTestService()
 	s.Now = func() time.Time { return time.Unix(1_000_000_000, 0) }

@@ -186,7 +186,7 @@ func (s *JwtService) Verify(token string) (*Claims, error) {
 	if len(parts) != 3 {
 		return nil, errors.New("invalid JWT: not 3 parts")
 	}
-	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	headerBytes, err := base64.RawURLEncoding.Strict().DecodeString(parts[0])
 	if err != nil {
 		return nil, fmt.Errorf("decode header: %w", err)
 	}
@@ -202,7 +202,7 @@ func (s *JwtService) Verify(token string) (*Claims, error) {
 	}
 
 	signingInput := parts[0] + "." + parts[1]
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	sig, err := base64.RawURLEncoding.Strict().DecodeString(parts[2])
 	if err != nil {
 		return nil, fmt.Errorf("decode signature: %w", err)
 	}
@@ -210,7 +210,7 @@ func (s *JwtService) Verify(token string) (*Claims, error) {
 		return nil, fmt.Errorf("signature: %w", err)
 	}
 
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	payloadBytes, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
 	if err != nil {
 		return nil, fmt.Errorf("decode payload: %w", err)
 	}
