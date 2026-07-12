@@ -31,6 +31,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/RelayOne/r1/internal/honestcrypto"
 )
 
 // TrustRootFile is the on-disk path (relative to the repo's data
@@ -176,7 +178,8 @@ func VerifyTrustRoot(doc *TrustRootDocument, rootPub ed25519.PublicKey) error {
 	if err != nil {
 		return fmt.Errorf("trustroot: canonicalize: %w", err)
 	}
-	sig, derr := base64.StdEncoding.DecodeString(doc.Signature)
+	// Strict (canonical-only) decode on the verification path — PORTS.md §7.
+	sig, derr := honestcrypto.DecodeBase64Strict(doc.Signature)
 	if derr != nil {
 		return fmt.Errorf("%w: decode signature: %v", ErrTrustRootSignatureInvalid, derr)
 	}
@@ -273,7 +276,9 @@ func base16(b []byte) string {
 // Helper for callers that want to construct an ed25519.PublicKey
 // from a TrustRootEntry.
 func DecodePublicKey(entry TrustRootEntry) (ed25519.PublicKey, error) {
-	raw, err := base64.StdEncoding.DecodeString(entry.PublicKey)
+	// Strict (canonical-only) decode — this key gates signature verification
+	// downstream, so its encoding must be canonical too (PORTS.md §7).
+	raw, err := honestcrypto.DecodeBase64Strict(entry.PublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("trustroot: decode entry %q public_key: %w", entry.KeyID, err)
 	}
@@ -295,7 +300,9 @@ func LoadOrGenerateRootKey(path string) (ed25519.PrivateKey, ed25519.PublicKey, 
 	}
 	payload, err := os.ReadFile(path)
 	if err == nil {
-		raw, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(string(payload)))
+		// TrimSpace strips the trailing "\n" this function's own writer
+		// appends; the trimmed content must be canonical base64 (PORTS.md §7).
+		raw, derr := honestcrypto.DecodeBase64Strict(strings.TrimSpace(string(payload)))
 		if derr != nil {
 			return nil, nil, fmt.Errorf("trustroot: decode root key %q: %w", path, derr)
 		}

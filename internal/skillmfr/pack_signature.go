@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/RelayOne/r1/internal/honestcrypto"
 )
 
 const PackSignatureFile = "pack.sig.json"
@@ -122,14 +124,15 @@ func VerifyPackSignature(packRoot string) (*PackSignature, error) {
 	if digest != signature.PackDigest {
 		return nil, fmt.Errorf("%w: pack digest mismatch: got %s want %s", ErrPackSignatureInvalid, digest, signature.PackDigest)
 	}
-	publicKey, err := base64.StdEncoding.DecodeString(signature.PublicKey)
+	// Strict (canonical-only) decodes on the verification path — PORTS.md §7.
+	publicKey, err := honestcrypto.DecodeBase64Strict(signature.PublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("%w: decode public key: %v", ErrPackSignatureInvalid, err)
 	}
 	if len(publicKey) != ed25519.PublicKeySize {
 		return nil, fmt.Errorf("%w: invalid public key length %d", ErrPackSignatureInvalid, len(publicKey))
 	}
-	sigBytes, err := base64.StdEncoding.DecodeString(signature.Signature)
+	sigBytes, err := honestcrypto.DecodeBase64Strict(signature.Signature)
 	if err != nil {
 		return nil, fmt.Errorf("%w: decode signature: %v", ErrPackSignatureInvalid, err)
 	}

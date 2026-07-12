@@ -10,6 +10,7 @@ package main
 // key R1_TRUST_ROOT_PUBKEY; these tests exercise both.
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -184,6 +185,47 @@ func TestEnforceTrustRootLoad_MalformedPinRejected(t *testing.T) {
 
 	if err := enforceTrustRootForLoad(dir, "mypack", &skillmfr.PackSignature{KeyID: kid}); err == nil {
 		t.Fatalf("malformed R1_TRUST_ROOT_PUBKEY should error, got nil")
+	}
+}
+
+// TestEnforceTrustRootLoad_NonCanonicalPinRejected — PORTS.md §7: a
+// trailing-bit base64 variant of the pin decodes (leniently) to the exact
+// same key bytes, so a lenient decoder would accept it and verification
+// would pass. The strict decode must reject the non-canonical encoding.
+func TestEnforceTrustRootLoad_NonCanonicalPinRejected(t *testing.T) {
+	dir := t.TempDir()
+	rootPub, rootPriv := genTrustKey(t)
+	pkPub, _ := genTrustKey(t)
+	kid := skill.DeriveKeyID(pkPub)
+	doc := docWithKey(kid, b64(pkPub))
+	if err := skill.SignTrustRoot(doc, rootPriv); err != nil {
+		t.Fatalf("SignTrustRoot: %v", err)
+	}
+	writeTrustRoot(t, dir, doc)
+
+	// §7 mutation recipe: flip the lowest bit of the final significant
+	// char's alphabet index (trailing bit only).
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	pin := b64(rootPub)
+	i := strings.IndexByte(pin, '=')
+	if i == -1 {
+		i = len(pin)
+	}
+	i--
+	idx := strings.IndexByte(alphabet, pin[i])
+	if idx < 0 {
+		t.Fatalf("final significant char %q not in base64 alphabet", pin[i])
+	}
+	mutated := pin[:i] + string(alphabet[idx^1]) + pin[i+1:]
+	a, _ := base64.StdEncoding.DecodeString(pin)
+	c, err := base64.StdEncoding.DecodeString(mutated)
+	if err != nil || !bytes.Equal(a, c) {
+		t.Fatalf("mutation sanity: lenient decodes must be byte-identical (err=%v)", err)
+	}
+	t.Setenv("R1_TRUST_ROOT_PUBKEY", mutated)
+
+	if err := enforceTrustRootForLoad(dir, "mypack", &skillmfr.PackSignature{KeyID: kid}); err == nil {
+		t.Fatalf("non-canonical R1_TRUST_ROOT_PUBKEY must be rejected (PORTS.md §7)")
 	}
 }
 

@@ -1,13 +1,86 @@
 package skillmfr
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// mutateTrailingBitB64 implements the PORTS.md §7 mutation recipe: flip the
+// lowest bit of the final significant char's alphabet index. A lenient
+// decoder yields the identical bytes — a strict verifier must reject the
+// mutated string.
+func mutateTrailingBitB64(t *testing.T, b64 string) string {
+	t.Helper()
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	i := strings.IndexByte(b64, '=')
+	if i == -1 {
+		i = len(b64)
+	}
+	i-- // final significant char
+	idx := strings.IndexByte(alphabet, b64[i])
+	if idx < 0 {
+		t.Fatalf("final significant char %q not in base64 alphabet", b64[i])
+	}
+	mutated := b64[:i] + string(alphabet[idx^1]) + b64[i+1:]
+	a, err1 := base64.StdEncoding.DecodeString(b64)
+	b, err2 := base64.StdEncoding.DecodeString(mutated)
+	if err1 != nil || err2 != nil || !bytes.Equal(a, b) {
+		t.Fatalf("mutation sanity: lenient decodes must be byte-identical (err1=%v err2=%v)", err1, err2)
+	}
+	return mutated
+}
+
+// TestVerifyPackSignatureRejectsNonCanonicalBase64 — PORTS.md §7: the verify
+// path must reject non-canonical base64 for both the signature and the
+// public key (mint side SignPack emits canonical StdEncoding).
+func TestVerifyPackSignatureRejectsNonCanonicalBase64(t *testing.T) {
+	t.Parallel()
+
+	packDir := writeSignedPackFixture(t, "canon-pack")
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey(): %v", err)
+	}
+	signature, err := SignPack(packDir, "canon-key", privateKey)
+	if err != nil {
+		t.Fatalf("SignPack(): %v", err)
+	}
+
+	// Trailing-bit variant of the signature — identical bytes leniently.
+	mutated := *signature
+	mutated.Signature = mutateTrailingBitB64(t, signature.Signature)
+	if err := WritePackSignature(packDir, &mutated); err != nil {
+		t.Fatalf("WritePackSignature(): %v", err)
+	}
+	if _, err := VerifyPackSignature(packDir); !errors.Is(err, ErrPackSignatureInvalid) {
+		t.Fatalf("non-canonical signature encoding: error = %v, want ErrPackSignatureInvalid", err)
+	}
+
+	// Trailing-bit variant of the public key must be rejected too.
+	mutated = *signature
+	mutated.PublicKey = mutateTrailingBitB64(t, signature.PublicKey)
+	if err := WritePackSignature(packDir, &mutated); err != nil {
+		t.Fatalf("WritePackSignature(): %v", err)
+	}
+	if _, err := VerifyPackSignature(packDir); !errors.Is(err, ErrPackSignatureInvalid) {
+		t.Fatalf("non-canonical public key encoding: error = %v, want ErrPackSignatureInvalid", err)
+	}
+
+	// The canonical form still verifies.
+	if err := WritePackSignature(packDir, signature); err != nil {
+		t.Fatalf("WritePackSignature(): %v", err)
+	}
+	if _, err := VerifyPackSignature(packDir); err != nil {
+		t.Fatalf("canonical signature must verify: %v", err)
+	}
+}
 
 func TestSignAndVerifyPack(t *testing.T) {
 	t.Parallel()

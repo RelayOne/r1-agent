@@ -38,6 +38,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/RelayOne/r1/internal/honestcrypto"
 )
 
 // Header canonical names (outbound). Inbound readers accept either
@@ -199,7 +201,8 @@ func VerifyIdentitySignature(pub ed25519.PublicKey, method, path string, body []
 	if v.Signature == "" || v.Timestamp == "" {
 		return errors.New("truecom: verify: missing signature or timestamp header")
 	}
-	sig, err := base64.StdEncoding.DecodeString(v.Signature)
+	// Strict (canonical-only) decode on the verification path — PORTS.md §7.
+	sig, err := honestcrypto.DecodeBase64Strict(v.Signature)
 	if err != nil {
 		return fmt.Errorf("truecom: verify: decode signature: %w", err)
 	}

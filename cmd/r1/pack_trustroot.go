@@ -12,7 +12,6 @@ package main
 
 import (
 	"crypto/ed25519"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -20,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/RelayOne/r1/internal/honestcrypto"
 	"github.com/RelayOne/r1/internal/r1dir"
 	"github.com/RelayOne/r1/internal/skill"
 	"github.com/RelayOne/r1/internal/skillmfr"
@@ -37,7 +37,9 @@ func trustRootPin() (ed25519.PublicKey, bool, error) {
 	if raw == "" {
 		return nil, false, nil
 	}
-	key, err := base64.StdEncoding.DecodeString(raw)
+	// Strict (canonical-only) decode — this key gates trust-root document
+	// verification, so its encoding must be canonical too (PORTS.md §7).
+	key, err := honestcrypto.DecodeBase64Strict(raw)
 	if err != nil {
 		return nil, true, fmt.Errorf("R1_TRUST_ROOT_PUBKEY: base64 decode: %w", err)
 	}

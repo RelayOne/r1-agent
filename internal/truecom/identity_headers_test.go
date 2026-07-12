@@ -1,6 +1,7 @@
 package truecom
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -135,6 +136,54 @@ func TestIdentityHeaders_VerifyRejectsMalformedSig(t *testing.T) {
 	v.Signature = base64.StdEncoding.EncodeToString(make([]byte, 64))
 	if err := VerifyIdentitySignature(pub[:8], http.MethodGet, "/v1/x", nil, v); err == nil {
 		t.Error("expected error for malformed public key")
+	}
+}
+
+// TestIdentityHeaders_VerifyRejectsNonCanonicalSigEncoding — PORTS.md §7:
+// the verify path must reject a trailing-bit base64 variant of the signature
+// header (mint side BuildIdentityHeaders emits canonical StdEncoding). A
+// lenient decoder maps the variant to the identical signature bytes, so a
+// lenient verifier would accept it — that is the string malleability.
+func TestIdentityHeaders_VerifyRejectsNonCanonicalSigEncoding(t *testing.T) {
+	s, pub := newTestSigner(t)
+	body := []byte(`{"capability":"translate"}`)
+	h, err := s.BuildIdentityHeaders(http.MethodPost, "/v1/hire", body, "c-1")
+	if err != nil {
+		t.Fatalf("BuildIdentityHeaders: %v", err)
+	}
+	v := ReadIdentityHeaders(h)
+	if err := VerifyIdentitySignature(pub, http.MethodPost, "/v1/hire", body, v); err != nil {
+		t.Fatalf("canonical signature must verify: %v", err)
+	}
+
+	// §7 mutation recipe: flip the lowest bit of the final significant
+	// char's alphabet index (trailing bit only).
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	sig := v.Signature
+	i := strings.IndexByte(sig, '=')
+	if i == -1 {
+		i = len(sig)
+	}
+	i--
+	idx := strings.IndexByte(alphabet, sig[i])
+	if idx < 0 {
+		t.Fatalf("final significant char %q not in base64 alphabet", sig[i])
+	}
+	mutated := sig[:i] + string(alphabet[idx^1]) + sig[i+1:]
+	a, _ := base64.StdEncoding.DecodeString(sig)
+	b, err := base64.StdEncoding.DecodeString(mutated)
+	if err != nil || !bytes.Equal(a, b) {
+		t.Fatalf("mutation sanity: lenient decodes must be byte-identical (err=%v)", err)
+	}
+
+	v.Signature = mutated
+	if err := VerifyIdentitySignature(pub, http.MethodPost, "/v1/hire", body, v); err == nil {
+		t.Error("non-canonical signature encoding must be rejected (PORTS.md §7)")
+	}
+	// Whitespace-appended variant must be rejected too.
+	v.Signature = sig + "\n"
+	if err := VerifyIdentitySignature(pub, http.MethodPost, "/v1/hire", body, v); err == nil {
+		t.Error("whitespace-appended signature encoding must be rejected (PORTS.md §7)")
 	}
 }
 
