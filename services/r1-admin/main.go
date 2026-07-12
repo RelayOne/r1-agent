@@ -289,7 +289,7 @@ func sessionsPageParams(r *http.Request) (int, int) {
 }
 
 // sessionsBody composes the sessions page: an explanatory notice, the table
-// (rows or a centered placeholder note), and optional pagination metadata.
+// (rows or a centered empty-state note), and optional pagination metadata.
 func sessionsBody(notice template.HTML, rows template.HTML, meta template.HTML) template.HTML {
 	bodyRows := rows
 	if strings.TrimSpace(string(rows)) == "" {
