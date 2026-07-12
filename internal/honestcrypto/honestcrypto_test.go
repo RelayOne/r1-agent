@@ -1,6 +1,9 @@
 package honestcrypto
 
 import (
+	"bytes"
+	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 )
@@ -20,6 +23,74 @@ func TestGoldenConformanceVector(t *testing.T) {
 	}
 	if got != goldenVector {
 		t.Fatalf("golden vector mismatch:\n got  %s\n want %s", got, goldenVector)
+	}
+}
+
+// TestNegativeConformanceEncodingCanonicality is the PORTS.md §7 NEGATIVE
+// CONFORMANCE REQUIREMENT, next to the §5 golden-vector test. A 64-byte
+// Ed25519 signature encodes to 88 chars ending "=="; the final significant
+// char (index 85) carries 2 significant bits + 4 trailing bits that canonical
+// encoders leave zero. Flipping a trailing bit only (alphabet index XOR 1)
+// produces a distinct string that a lenient decoder maps to the identical 64
+// signature bytes — a strict verifier MUST reject it.
+func TestNegativeConformanceEncodingCanonicality(t *testing.T) {
+	kp, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := MakeRecord(NewRecordInput{
+		Subject: "org_1", Producer: "relayone", Kind: "audit.event",
+		TS: "2026-07-08T00:00:00Z", Body: map[string]any{"a": 1, "b": 2}, PrevHash: nil,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := SignRecord(r, kp.PrivateKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !VerifyRecordSignature(r, sig, kp.PublicKeyPEM) {
+		t.Fatal("canonical signature string must VERIFY")
+	}
+
+	if len(sig) != 88 || !strings.HasSuffix(sig, "==") {
+		t.Fatalf("canonical Ed25519 signature must be 88 chars ending \"==\", got %d chars", len(sig))
+	}
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	i := len(sig) - 3 // final significant char, before the "==" padding
+	c := sig[i]
+	if c != 'A' && c != 'Q' && c != 'g' && c != 'w' {
+		t.Fatalf("final significant char %q must be one of A/Q/g/w (trailing bits zero)", c)
+	}
+	// §7 recipe: replace with the alphabet char whose 6-bit index is index XOR 1
+	// (A<->B, Q<->R, g<->h, w<->x) — flips a trailing bit only.
+	mutated := sig[:i] + string(alphabet[strings.IndexByte(alphabet, c)^1]) + sig[i+1:]
+	if mutated == sig {
+		t.Fatal("mutation must change the string")
+	}
+	// Prove the malleability: a lenient decoder yields the identical bytes.
+	canonBytes, err := base64.StdEncoding.DecodeString(sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutBytes, err := base64.StdEncoding.DecodeString(mutated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(canonBytes, mutBytes) {
+		t.Fatal("lenient decode of the trailing-bit variant must equal the canonical bytes")
+	}
+
+	// Strict verification MUST reject the non-canonical encoding.
+	if VerifyRecordSignature(r, mutated, kp.PublicKeyPEM) {
+		t.Fatal("trailing-bit base64 variant must be REJECTED (PORTS.md §7)")
+	}
+	// Recommended additional asserts: padding-stripped and whitespace-appended.
+	if VerifyRecordSignature(r, sig[:len(sig)-2], kp.PublicKeyPEM) {
+		t.Fatal("padding-stripped variant must be REJECTED")
+	}
+	if VerifyRecordSignature(r, sig+"\n", kp.PublicKeyPEM) {
+		t.Fatal("whitespace-appended variant must be REJECTED")
 	}
 }
 

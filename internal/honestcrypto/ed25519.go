@@ -86,15 +86,36 @@ func SignBytes(data []byte, privateKeyPEM string) (string, error) {
 	return base64.StdEncoding.EncodeToString(sig), nil
 }
 
-// VerifyBytes verifies an Ed25519 signature (base64) over raw bytes. It returns
-// false (never an error) on any malformed input, matching the TS port's
+// DecodeBase64Strict decodes RFC 4648 standard base64 and rejects every
+// non-canonical encoding (PORTS.md §7): trailing-bit variants (non-zero unused
+// bits in the final significant char), missing/wrong/excess padding,
+// whitespace, and any character outside the alphabet (including base64url).
+// Go's StdEncoding is lenient about trailing padding bits, and even Strict()
+// still ignores \r\n, so this implements the §7 fallback recipe: decode,
+// re-encode with the canonical encoder, and require an exact string match —
+// reject, never repair or normalize. Exported so every verification-path
+// decode in the repo shares the single strict chokepoint.
+func DecodeBase64Strict(b64 string) ([]byte, error) {
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return nil, err
+	}
+	if base64.StdEncoding.EncodeToString(raw) != b64 {
+		return nil, errors.New("honestcrypto: non-canonical base64 encoding (PORTS.md §7)")
+	}
+	return raw, nil
+}
+
+// VerifyBytes verifies an Ed25519 signature (canonical base64 only —
+// PORTS.md §7) over raw bytes. It returns false (never an error) on any
+// malformed or non-canonical input, matching the TS port's
 // try/catch-to-false contract.
 func VerifyBytes(data []byte, signatureB64, publicKeyPEM string) bool {
 	pub, err := parsePublicKey(publicKeyPEM)
 	if err != nil {
 		return false
 	}
-	sig, err := base64.StdEncoding.DecodeString(signatureB64)
+	sig, err := DecodeBase64Strict(signatureB64)
 	if err != nil {
 		return false
 	}
