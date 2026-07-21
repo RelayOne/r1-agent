@@ -12,6 +12,10 @@ charm.land/bubbletea/v2
 ## explicit; go 1.25.0
 charm.land/lipgloss/v2
 charm.land/lipgloss/v2/compat
+# filippo.io/edwards25519 v1.2.0
+## explicit; go 1.24.0
+filippo.io/edwards25519
+filippo.io/edwards25519/field
 # github.com/99designs/go-keychain v0.0.0-20191008050251-8e49817e8af4
 ## explicit
 github.com/99designs/go-keychain

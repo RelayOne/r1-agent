@@ -21,6 +21,7 @@ require (
 	charm.land/bubbles/v2 v2.1.0
 	charm.land/bubbletea/v2 v2.0.2
 	charm.land/lipgloss/v2 v2.0.3
+	filippo.io/edwards25519 v1.2.0
 	github.com/99designs/keyring v1.2.2
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/charmbracelet/bubbletea v0.25.0

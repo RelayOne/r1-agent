@@ -11,6 +11,8 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+
+	"filippo.io/edwards25519"
 )
 
 // KeyPair holds a PEM-encoded Ed25519 keypair (PKCS8 private, SPKI public),
@@ -106,13 +108,35 @@ func DecodeBase64Strict(b64 string) ([]byte, error) {
 	return raw, nil
 }
 
+// isSmallOrderPublicKey reports whether pub decodes to a small-order Ed25519
+// point (order dividing the cofactor 8) or a non-canonical/off-curve encoding.
+// Such public keys enable low-order-key signature forgery (IACR 2020/1244):
+// ed25519-dalek's verify_strict rejects them, but Go's crypto/ed25519.Verify
+// (like OpenSSL and node:crypto in the sibling ports' default libraries) does
+// not. We gate it explicitly so the standalone-receipt verify path is equally
+// strict across every honest-crypto port (PORTS.md). The check is
+// [8]A == identity ⟺ A lies in the 8-torsion (small-order) subgroup.
+func isSmallOrderPublicKey(pub ed25519.PublicKey) bool {
+	a, err := new(edwards25519.Point).SetBytes(pub)
+	if err != nil {
+		return true // non-canonical or off-curve encoding — reject
+	}
+	cofactorA := new(edwards25519.Point).MultByCofactor(a)
+	return cofactorA.Equal(edwards25519.NewIdentityPoint()) == 1
+}
+
 // VerifyBytes verifies an Ed25519 signature (canonical base64 only —
 // PORTS.md §7) over raw bytes. It returns false (never an error) on any
 // malformed or non-canonical input, matching the TS port's
-// try/catch-to-false contract.
+// try/catch-to-false contract. A small-order (8-torsion) or
+// non-canonical/off-curve public key is rejected before verification
+// (verify_strict-equivalent, IACR 2020/1244).
 func VerifyBytes(data []byte, signatureB64, publicKeyPEM string) bool {
 	pub, err := parsePublicKey(publicKeyPEM)
 	if err != nil {
+		return false
+	}
+	if isSmallOrderPublicKey(pub) {
 		return false
 	}
 	sig, err := DecodeBase64Strict(signatureB64)
